@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Generated audio output
+*.wav
+*.mp3
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Model cache (large files downloaded at runtime)
+~/.cache/huggingface/
