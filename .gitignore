@@ -9,6 +9,9 @@ env/
 dist/
 build/
 
+# Environment variables
+.env
+
 # Generated audio output
 *.wav
 *.mp3
@@ -19,6 +22,7 @@ build/
 # IDE
 .vscode/
 .idea/
+.claude/
 
 # Model cache (large files downloaded at runtime)
 ~/.cache/huggingface/

@@ -135,13 +135,20 @@ def mix(
     voice_activity: np.ndarray,
     music_audio: np.ndarray,
     sample_rate: int = 24000,
-    duck_amount_db: float = -8.0,
+    duck_amount_db: float = -10.0,
+    music_volume_db: float = -8.0,
     music_pre_roll_sec: float = 2.0,
     fade_in_sec: float = 3.0,
     fade_out_sec: float = 5.0,
     target_lufs: float = -16.0,
 ) -> np.ndarray:
     """Mix voice and music with ducking, fades, and normalization.
+
+    Args:
+        music_volume_db: Overall music level reduction in dB (applied before
+            ducking). Keeps music sitting quietly behind the voice at all times.
+        duck_amount_db: Additional dB reduction during speech on top of
+            music_volume_db.
 
     Returns a mono float32 numpy array ready for export.
     """
@@ -150,7 +157,11 @@ def mix(
         voice_audio, music_audio, music_pre_roll_sec, sample_rate
     )
 
-    # 2. Extend voice_activity to match aligned length
+    # 2. Reduce overall music volume so it sits behind the voice
+    music_gain = np.float32(10.0 ** (music_volume_db / 20.0))
+    aligned_music = aligned_music * music_gain
+
+    # 3. Extend voice_activity to match aligned length
     pre_roll_samples = int(music_pre_roll_sec * sample_rate)
     aligned_activity = np.concatenate([
         np.zeros(pre_roll_samples, dtype=bool),
@@ -164,17 +175,17 @@ def mix(
         ])
     aligned_activity = aligned_activity[: len(aligned_voice)]
 
-    # 3. Compute and apply ducking
+    # 4. Compute and apply ducking (further reduces music during speech)
     duck_curve = compute_duck_curve(aligned_activity, sample_rate, duck_amount_db)
     ducked_music = aligned_music * duck_curve
 
-    # 4. Sum tracks
+    # 5. Sum tracks
     mixed = aligned_voice + ducked_music
 
-    # 5. Fades
+    # 6. Fades
     mixed = apply_fades(mixed, sample_rate, fade_in_sec, fade_out_sec)
 
-    # 6. Normalize
+    # 7. Normalize
     mixed = normalize_loudness(mixed, sample_rate, target_lufs)
 
     return mixed

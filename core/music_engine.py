@@ -8,27 +8,36 @@ import numpy as np
 
 NATIVE_SAMPLE_RATE = 32000
 TARGET_SAMPLE_RATE = 24000
-MAX_SEGMENT_DURATION = 30  # seconds
-CROSSFADE_DURATION = 3     # seconds
+SEGMENT_DURATION = 30       # Max seconds per MusicGen call
+CONTEXT_DURATION = 10       # Seconds of overlap fed as audio prompt for continuation
+CROSSFADE_DURATION = 2      # Seconds of crossfade at each segment seam
+MAX_UNIQUE_DURATION = 50    # Generate up to this many seconds of unique music, then loop
+LOOP_CROSSFADE = 5          # Seconds of crossfade when looping the stitched block
 
 
 class MusicEngine:
-    """Wraps Meta's MusicGen to generate instrumental background music."""
+    """Wraps Meta's MusicGen to generate instrumental background music.
+
+    Uses musicgen-medium (1.5B params) for rich ambient textures, with a
+    sliding-window continuation strategy to produce evolving, non-repetitive
+    tracks. Caps unique generation at ~50 seconds (2 segments) to keep
+    generation time reasonable on CPU, then loops with crossfade.
+    """
 
     def __init__(self):
         self.model = None
         self.model_name = None
 
     def load_model(self):
-        """Load MusicGen, falling back from melody to small on failure."""
+        """Load MusicGen-medium (1.5B params — rich ambient textures for meditation)."""
+        import warnings
+
         from audiocraft.models import MusicGen
 
-        try:
-            self.model = MusicGen.get_pretrained("facebook/musicgen-melody")
-            self.model_name = "musicgen-melody"
-        except Exception:
-            self.model = MusicGen.get_pretrained("facebook/musicgen-small")
-            self.model_name = "musicgen-small"
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=FutureWarning, message=".*weight_norm.*")
+            self.model = MusicGen.get_pretrained("facebook/musicgen-medium")
+            self.model_name = "musicgen-medium"
 
     def unload_model(self):
         """Release model and free GPU memory."""
@@ -50,10 +59,15 @@ class MusicEngine:
         total_duration_sec: float,
         progress_cb=None,
     ) -> np.ndarray:
-        """Generate background music of the requested duration.
+        """Generate background music using sliding-window continuation.
+
+        Produces up to MAX_UNIQUE_DURATION seconds of evolving music by chaining
+        MusicGen continuation calls (typically 2 segments), then loops the result
+        with crossfade if more duration is needed.
 
         Args:
-            prompt: Text description of desired music style.
+            prompt: Text description of desired music style (should already be
+                    enhanced with meditation context by the caller).
             total_duration_sec: Target duration in seconds.
             progress_cb: Called with (current_segment, total_segments) after each segment.
 
@@ -66,54 +80,85 @@ class MusicEngine:
         import torch
         import torchaudio
 
-        # Determine how many 30-second segments we need
-        effective_segment = MAX_SEGMENT_DURATION - CROSSFADE_DURATION
-        num_segments = max(1, math.ceil(total_duration_sec / effective_segment))
+        # Determine how much unique music to generate (capped at MAX_UNIQUE_DURATION)
+        unique_duration = min(total_duration_sec, MAX_UNIQUE_DURATION)
 
-        # If total duration fits in a single segment, just generate it directly
-        if total_duration_sec <= MAX_SEGMENT_DURATION:
+        # Calculate number of segments needed
+        if unique_duration <= SEGMENT_DURATION:
             num_segments = 1
-            segment_duration = total_duration_sec
         else:
-            segment_duration = MAX_SEGMENT_DURATION
-
-        segments: list[np.ndarray] = []
-
-        for i in range(num_segments):
-            self.model.set_generation_params(
-                duration=segment_duration,
-                use_sampling=True,
-                top_k=250,
-                temperature=1.0,
+            # First segment gives SEGMENT_DURATION seconds.
+            # Each continuation adds (SEGMENT_DURATION - CONTEXT_DURATION) net seconds.
+            net_per_continuation = SEGMENT_DURATION - CONTEXT_DURATION
+            num_segments = 1 + math.ceil(
+                (unique_duration - SEGMENT_DURATION) / net_per_continuation
             )
 
-            wav = self.model.generate([prompt])
-            # wav shape: (batch, channels, samples)
-            audio = wav[0].cpu().numpy()
+        # ── Segment 1: generate from text prompt ──────────────────────────
+        self.model.set_generation_params(
+            duration=SEGMENT_DURATION,
+            use_sampling=True,
+            top_k=250,
+            top_p=0.0,
+            temperature=0.8,
+            cfg_coef=3.5,
+        )
 
-            # Convert stereo to mono if needed
-            if audio.ndim == 2 and audio.shape[0] > 1:
-                audio = audio.mean(axis=0)
-            elif audio.ndim == 2:
-                audio = audio[0]
+        wav = self.model.generate([prompt])
+        # wav shape: (batch=1, channels, samples)
+        segments = [wav[0]]  # keep as tensor until stitching
 
-            segments.append(audio.astype(np.float32))
+        if progress_cb is not None:
+            progress_cb(1, num_segments)
+
+        # ── Segments 2..N: continuation with audio context ────────────────
+        for i in range(1, num_segments):
+            prev = segments[-1]  # (channels, samples)
+
+            # Extract last CONTEXT_DURATION seconds as audio prompt
+            context_samples = int(CONTEXT_DURATION * NATIVE_SAMPLE_RATE)
+            context = prev[:, -context_samples:]  # (channels, context_samples)
+            # generate_continuation expects (batch, channels, samples)
+            context_batch = context.unsqueeze(0)
+
+            self.model.set_generation_params(
+                duration=SEGMENT_DURATION,
+                use_sampling=True,
+                top_k=250,
+                top_p=0.0,
+                temperature=0.8,
+                cfg_coef=3.5,
+            )
+
+            continuation = self.model.generate_continuation(
+                prompt=context_batch,
+                prompt_sample_rate=NATIVE_SAMPLE_RATE,
+                descriptions=[prompt],
+            )
+            segments.append(continuation[0])  # (channels, samples)
 
             if progress_cb is not None:
                 progress_cb(i + 1, num_segments)
 
-        # Crossfade segments together
-        if len(segments) == 1:
-            full_audio = segments[0]
-        else:
-            full_audio = self._crossfade_segments(segments)
+        # ── Stitch segments with crossfade ────────────────────────────────
+        unique_audio = self._stitch_segments(segments)
 
-        # Trim to exact requested duration (at native sample rate)
+        # Convert to mono numpy
+        if unique_audio.ndim == 2 and unique_audio.shape[0] > 1:
+            unique_audio = unique_audio.mean(dim=0)
+        elif unique_audio.ndim == 2:
+            unique_audio = unique_audio[0]
+
+        unique_np = unique_audio.cpu().numpy().astype(np.float32)
+
+        # ── Loop if needed to fill total duration ─────────────────────────
         target_samples = int(total_duration_sec * NATIVE_SAMPLE_RATE)
-        if len(full_audio) > target_samples:
-            full_audio = full_audio[:target_samples]
+        if len(unique_np) < target_samples:
+            full_audio = self._loop_block(unique_np, target_samples)
+        else:
+            full_audio = unique_np[:target_samples]
 
-        # Resample from 32000 Hz to 24000 Hz
+        # ── Resample from 32000 Hz to 24000 Hz ───────────────────────────
         audio_tensor = torch.from_numpy(full_audio).unsqueeze(0)  # (1, N)
         resampler = torchaudio.transforms.Resample(
             orig_freq=NATIVE_SAMPLE_RATE, new_freq=TARGET_SAMPLE_RATE
@@ -122,22 +167,60 @@ class MusicEngine:
 
         return resampled.astype(np.float32)
 
-    def _crossfade_segments(self, segments: list[np.ndarray]) -> np.ndarray:
-        """Join multiple audio segments with linear crossfade."""
-        fade_len = int(CROSSFADE_DURATION * NATIVE_SAMPLE_RATE)
+    def _stitch_segments(self, segments: list) -> "torch.Tensor":
+        """Stitch continuation segments by stripping context overlap and crossfading.
+
+        Each continuation segment's first CONTEXT_DURATION seconds duplicate the
+        end of the previous segment. We strip that overlap and apply a short
+        crossfade at the seam for smooth transitions.
+        """
+        import torch
+
+        if len(segments) == 1:
+            return segments[0]
+
+        crossfade_samples = int(CROSSFADE_DURATION * NATIVE_SAMPLE_RATE)
+        context_samples = int(CONTEXT_DURATION * NATIVE_SAMPLE_RATE)
+
+        # Start with the first segment in full
         result = segments[0]
 
         for seg in segments[1:]:
-            # Ensure both have enough samples for the crossfade
-            overlap = min(fade_len, len(result), len(seg))
+            # Strip the context region (first CONTEXT_DURATION seconds)
+            new_audio = seg[:, context_samples:]
+
+            if new_audio.shape[1] == 0:
+                continue
+
+            # Apply crossfade at the seam
+            cf = min(crossfade_samples, result.shape[1], new_audio.shape[1])
+            if cf > 0:
+                fade_out = torch.linspace(1.0, 0.0, cf, device=result.device)
+                fade_in = torch.linspace(0.0, 1.0, cf, device=result.device)
+
+                # Crossfade the overlap region
+                crossfaded = result[:, -cf:] * fade_out + new_audio[:, :cf] * fade_in
+                result = torch.cat([result[:, :-cf], crossfaded, new_audio[:, cf:]], dim=1)
+            else:
+                result = torch.cat([result, new_audio], dim=1)
+
+        return result
+
+    def _loop_block(self, block: np.ndarray, target_samples: int) -> np.ndarray:
+        """Loop a stitched audio block with crossfade to fill the target duration."""
+        if len(block) >= target_samples:
+            return block[:target_samples]
+
+        crossfade_samples = int(LOOP_CROSSFADE * NATIVE_SAMPLE_RATE)
+        result = block.copy()
+
+        while len(result) < target_samples:
+            overlap = min(crossfade_samples, len(result), len(block))
 
             fade_out = np.linspace(1.0, 0.0, overlap, dtype=np.float32)
             fade_in = np.linspace(0.0, 1.0, overlap, dtype=np.float32)
 
-            # Blend the overlap region
-            crossfaded = result[-overlap:] * fade_out + seg[:overlap] * fade_in
+            crossfaded = result[-overlap:] * fade_out + block[:overlap] * fade_in
+            result = np.concatenate([result[:-overlap], crossfaded, block[overlap:]])
 
-            # Assemble: everything before overlap + crossfaded region + everything after overlap
-            result = np.concatenate([result[:-overlap], crossfaded, seg[overlap:]])
-
-        return result
+        return result[:target_samples]

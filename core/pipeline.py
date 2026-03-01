@@ -14,6 +14,24 @@ def _progress(cb, fraction, message):
         cb(fraction, message)
 
 
+def _enhance_music_prompt(user_prompt: str) -> str:
+    """Wrap the user's music prompt with MusicGen-optimized descriptors.
+
+    Uses texture vocabulary (slow attack, long release, wide reverb) and
+    spatial descriptors that MusicGen responds well to, based on community
+    prompt engineering research. Describes the music rather than commanding it.
+    """
+    prefix = (
+        "warm gentle instrumental, slow attack, long release, "
+        "soft felt piano, airy pads, wide reverb, spacious atmosphere, "
+        "very slow tempo, minimal arrangement, beatless, evolving, atmospheric, "
+        "no drums, no percussion, no vocals, no bass drops, "
+        "no sudden changes, "
+    )
+    suffix = ", peaceful, calm, warm, floating"
+    return prefix + user_prompt + suffix
+
+
 class MeditationPipeline:
     """End-to-end meditation audio generator."""
 
@@ -25,10 +43,10 @@ class MeditationPipeline:
         self,
         script: str,
         music_prompt: str,
-        voice: str = "af_heart",
-        speed: float = 0.85,
-        duck_amount_db: float = -8.0,
-        reverb_amount: float = 0.15,
+        voice: str = "af_heart,af_nicole",
+        speed: float = 0.80,
+        duck_amount_db: float = -10.0,
+        reverb_amount: float = 0.12,
         fade_in_sec: float = 3.0,
         fade_out_sec: float = 5.0,
         output_format: str = "wav",
@@ -87,8 +105,11 @@ class MeditationPipeline:
             frac = 0.45 + 0.25 * (current / max(total, 1))
             _progress(progress_cb, frac, f"Generating music segment {current}/{total}...")
 
+        # Enhance the user's prompt with meditation guardrails
+        enhanced_prompt = _enhance_music_prompt(music_prompt)
+
         music_audio = self.music.generate(
-            music_prompt, music_duration, progress_cb=music_progress
+            enhanced_prompt, music_duration, progress_cb=music_progress
         )
 
         # ── Step 6: Unload MusicGen ─────────────────────────────────────

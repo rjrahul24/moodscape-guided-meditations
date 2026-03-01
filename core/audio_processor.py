@@ -1,4 +1,4 @@
-"""Audio FX chains using Spotify's Pedalboard."""
+"""Audio FX chains using Spotify's Pedalboard, tuned for meditation."""
 
 import numpy as np
 from pedalboard import (
@@ -11,21 +11,28 @@ from pedalboard import (
 )
 
 
-def make_voice_chain(reverb_amount: float = 0.15) -> Pedalboard:
-    """FX chain for the narration voice: warmth, compression, subtle reverb."""
+def make_voice_chain(reverb_amount: float = 0.12) -> Pedalboard:
+    """FX chain for meditation narration: warmth, gentle compression, subtle space.
+
+    Gentle compression (2.5:1) smooths dynamic peaks while preserving natural
+    variation — the voice sounds calm and even without feeling over-processed.
+    A subtle, small-room reverb adds warmth without creating audible echo,
+    keeping pronunciation clean and crisp.
+    """
     return Pedalboard([
         LowShelfFilter(cutoff_frequency_hz=300, gain_db=2.0),
-        Compressor(threshold_db=-20, ratio=3.0, attack_ms=10, release_ms=100),
-        Reverb(room_size=0.3, damping=0.7, wet_level=reverb_amount, dry_level=1.0 - reverb_amount),
+        Compressor(threshold_db=-18, ratio=2.5, attack_ms=30, release_ms=400),
+        HighShelfFilter(cutoff_frequency_hz=5000, gain_db=-3.0),
+        Reverb(room_size=0.3, damping=0.9, wet_level=reverb_amount, dry_level=1.0 - reverb_amount),
         Limiter(threshold_db=-1.0),
     ])
 
 
 def make_music_chain() -> Pedalboard:
-    """FX chain for background music: warm low end, tamed highs."""
+    """FX chain for background music: warm low end, gently softened highs."""
     return Pedalboard([
         LowShelfFilter(cutoff_frequency_hz=200, gain_db=1.5),
-        HighShelfFilter(cutoff_frequency_hz=8000, gain_db=-3.0),
+        HighShelfFilter(cutoff_frequency_hz=8000, gain_db=-2.0),
         Limiter(threshold_db=-1.0),
     ])
 

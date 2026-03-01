@@ -2,19 +2,25 @@
 
 import soundfile as sf
 import gradio as gr
+from dotenv import load_dotenv
 
 from core.pipeline import MeditationPipeline
 
-# (label, voice_id) pairs shown in the dropdown
+# Load environment variables (like HF_TOKEN) from .env file
+load_dotenv()
+
+# (label, voice_id) pairs shown in the dropdown.
+# Comma-separated IDs create blended voices in Kokoro.
 VOICE_CHOICES = [
-    ("Heart — Female (default)", "af_heart"),
-    ("Bella — Female",           "af_bella"),
-    ("Nicole — Female",          "af_nicole"),
-    ("Sarah — Female",           "af_sarah"),
-    ("Sky — Female",             "af_sky"),
-    ("Nova — Female",            "af_nova"),
-    ("Adam — Male",              "am_adam"),
-    ("Michael — Male",           "am_michael"),
+    ("Heart + Nicole blend (meditation)", "af_heart,af_nicole"),
+    ("Heart — Female",                    "af_heart"),
+    ("Nicole — Female (calm/ASMR)",       "af_nicole"),
+    ("Bella — Female",                    "af_bella"),
+    ("Sarah — Female",                    "af_sarah"),
+    ("Sky — Female",                      "af_sky"),
+    ("Nova — Female (intimate)",          "af_nova"),
+    ("Adam — Male",                       "am_adam"),
+    ("Michael — Male",                    "am_michael"),
 ]
 
 pipeline = MeditationPipeline()
@@ -40,8 +46,9 @@ Slowly open your eyes. Thank you for practicing with me today. [pause:3s]\
 """
 
 DEFAULT_MUSIC_PROMPT = (
-    "Slow ambient meditation music, 60 BPM, soft piano and singing bowls, "
-    "ethereal pads, no drums, no vocals, peaceful and calming"
+    "Slow meditation music, 60 BPM, soft piano and singing bowls, "
+    "gentle strings, light melody, "
+    "no drums, no vocals, no electronic beats, peaceful and calming"
 )
 
 
@@ -125,29 +132,29 @@ with gr.Blocks(
             with gr.Accordion("Voice Settings", open=False):
                 voice_dropdown = gr.Dropdown(
                     choices=VOICE_CHOICES,
-                    value="af_heart",
+                    value="af_heart,af_nicole",
                     label="Voice",
                 )
                 speed_slider = gr.Slider(
                     minimum=0.5,
                     maximum=1.0,
-                    value=0.85,
+                    value=0.80,
                     step=0.05,
                     label="Speaking Speed",
                 )
 
             with gr.Accordion("Audio Settings", open=False):
                 duck_slider = gr.Slider(
-                    minimum=-15,
+                    minimum=-20,
                     maximum=-4,
-                    value=-8,
+                    value=-10,
                     step=1,
                     label="Music Ducking (dB)",
                 )
                 reverb_slider = gr.Slider(
                     minimum=0.0,
                     maximum=0.5,
-                    value=0.15,
+                    value=0.12,
                     step=0.05,
                     label="Voice Reverb",
                 )
@@ -193,6 +200,7 @@ with gr.Blocks(
             format_radio,
         ],
         outputs=[audio_output, status_text],
+        show_progress="full",
     )
 
 if __name__ == "__main__":
