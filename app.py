@@ -46,9 +46,8 @@ Slowly open your eyes. Thank you for practicing with me today. [pause:3s]\
 """
 
 DEFAULT_MUSIC_PROMPT = (
-    "Slow meditation music, 60 BPM, soft piano and singing bowls, "
-    "gentle strings, light melody, "
-    "no drums, no vocals, no electronic beats, peaceful and calming"
+    "Soft felt piano, warm analog synth pads, gentle singing bowls, "
+    "sustained strings, slow and evolving, spacious atmosphere"
 )
 
 
@@ -146,15 +145,15 @@ with gr.Blocks(
             with gr.Accordion("Audio Settings", open=False):
                 duck_slider = gr.Slider(
                     minimum=-20,
-                    maximum=-4,
-                    value=-10,
+                    maximum=-2,
+                    value=-4,
                     step=1,
                     label="Music Ducking (dB)",
                 )
                 reverb_slider = gr.Slider(
                     minimum=0.0,
                     maximum=0.5,
-                    value=0.12,
+                    value=0.15,
                     step=0.05,
                     label="Voice Reverb",
                 )

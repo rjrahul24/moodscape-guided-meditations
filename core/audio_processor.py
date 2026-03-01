@@ -1,4 +1,4 @@
-"""Audio FX chains using Spotify's Pedalboard, tuned for meditation."""
+"""Audio FX chains using Spotify's Pedalboard — MoodScape."""
 
 import numpy as np
 from pedalboard import (
@@ -11,28 +11,36 @@ from pedalboard import (
 )
 
 
-def make_voice_chain(reverb_amount: float = 0.12) -> Pedalboard:
-    """FX chain for meditation narration: warmth, gentle compression, subtle space.
+def make_voice_chain(reverb_amount: float = 0.15) -> Pedalboard:
+    """FX chain for Kokoro narration: warmth → compression → reverb → limit.
 
-    Gentle compression (2.5:1) smooths dynamic peaks while preserving natural
-    variation — the voice sounds calm and even without feeling over-processed.
-    A subtle, small-room reverb adds warmth without creating audible echo,
-    keeping pronunciation clean and crisp.
+    Args:
+        reverb_amount: Reverb wet level (0.0 = dry, 0.5 = very wet).
+                       Exposed as a Gradio slider (default 0.15).
     """
+    reverb_amount = float(np.clip(reverb_amount, 0.0, 0.5))
     return Pedalboard([
         LowShelfFilter(cutoff_frequency_hz=300, gain_db=2.0),
-        Compressor(threshold_db=-18, ratio=2.5, attack_ms=30, release_ms=400),
-        HighShelfFilter(cutoff_frequency_hz=5000, gain_db=-3.0),
-        Reverb(room_size=0.3, damping=0.9, wet_level=reverb_amount, dry_level=1.0 - reverb_amount),
+        Compressor(threshold_db=-20, ratio=3.0, attack_ms=10, release_ms=100),
+        Reverb(
+            room_size=0.3,
+            damping=0.7,
+            wet_level=reverb_amount,
+            dry_level=1.0 - reverb_amount,
+        ),
         Limiter(threshold_db=-1.0),
     ])
 
 
 def make_music_chain() -> Pedalboard:
-    """FX chain for background music: warm low end, gently softened highs."""
+    """FX chain for MusicGen output: warm low end → tamed highs → limit.
+
+    The HighShelfFilter is critical — it tames MusicGen's 'digital shimmer'
+    in the 8kHz+ range and creates spectral space for the voice.
+    """
     return Pedalboard([
         LowShelfFilter(cutoff_frequency_hz=200, gain_db=1.5),
-        HighShelfFilter(cutoff_frequency_hz=8000, gain_db=-2.0),
+        HighShelfFilter(cutoff_frequency_hz=8000, gain_db=-3.0),
         Limiter(threshold_db=-1.0),
     ])
 
@@ -49,17 +57,14 @@ def apply_fx(
     chain: Pedalboard,
     sample_rate: int = 24000,
 ) -> np.ndarray:
-    """Apply a Pedalboard FX chain to mono audio.
+    """Apply a Pedalboard FX chain to a mono audio array.
 
-    Args:
-        audio: 1D float32 numpy array (mono).
-        chain: Pedalboard instance.
-        sample_rate: Audio sample rate in Hz.
-
-    Returns:
-        1D float32 numpy array (mono), same length as input.
+    Handles all the shape manipulation internally.
+    Input and output are both 1D float32 arrays.
     """
-    # Pedalboard expects shape (channels, samples)
-    audio_2d = audio.astype(np.float32).reshape(1, -1)
+    audio = np.clip(audio.astype(np.float32), -1.0, 1.0)
+    audio_2d = audio.reshape(1, -1)
     processed = chain(audio_2d, sample_rate)
-    return processed.squeeze(0).astype(np.float32)
+    result = processed.squeeze(0)
+    result = result[:len(audio)]  # Trim reverb tail
+    return np.clip(result, -1.0, 1.0).astype(np.float32)

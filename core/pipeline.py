@@ -1,5 +1,7 @@
 """Orchestrates the full meditation audio generation pipeline."""
 
+import numpy as np
+
 from core.audio_processor import apply_fx, make_master_chain, make_music_chain, make_voice_chain
 from core.mixer import export_audio, mix
 from core.music_engine import MusicEngine
@@ -17,18 +19,14 @@ def _progress(cb, fraction, message):
 def _enhance_music_prompt(user_prompt: str) -> str:
     """Wrap the user's music prompt with MusicGen-optimized descriptors.
 
-    Uses texture vocabulary (slow attack, long release, wide reverb) and
-    spatial descriptors that MusicGen responds well to, based on community
-    prompt engineering research. Describes the music rather than commanding it.
+    Keeps total prompt under ~40 words to avoid diluting MusicGen's attention.
+    Focuses on the most impactful descriptors: texture, constraints, mood.
     """
     prefix = (
-        "warm gentle instrumental, slow attack, long release, "
-        "soft felt piano, airy pads, wide reverb, spacious atmosphere, "
-        "very slow tempo, minimal arrangement, beatless, evolving, atmospheric, "
-        "no drums, no percussion, no vocals, no bass drops, "
-        "no sudden changes, "
+        "warm ambient soundscape, slow evolving synth pads, spacious reverb, "
+        "beatless, no drums, no percussion, no vocals, "
     )
-    suffix = ", peaceful, calm, warm, floating"
+    suffix = ", peaceful, calm, gentle"
     return prefix + user_prompt + suffix
 
 
@@ -45,8 +43,8 @@ class MeditationPipeline:
         music_prompt: str,
         voice: str = "af_heart,af_nicole",
         speed: float = 0.80,
-        duck_amount_db: float = -10.0,
-        reverb_amount: float = 0.12,
+        duck_amount_db: float = -4.0,
+        reverb_amount: float = 0.15,
         fade_in_sec: float = 3.0,
         fade_out_sec: float = 5.0,
         output_format: str = "wav",
@@ -119,6 +117,15 @@ class MeditationPipeline:
         _progress(progress_cb, 0.72, "Applying voice effects...")
         voice_chain = make_voice_chain(reverb_amount=reverb_amount)
         voice_audio = apply_fx(voice_audio, voice_chain, SAMPLE_RATE)
+
+        # Align voice_activity to post-FX voice length (reverb tail trim
+        # may change length slightly)
+        voice_activity = voice_activity[:len(voice_audio)]
+        if len(voice_activity) < len(voice_audio):
+            pad = len(voice_audio) - len(voice_activity)
+            voice_activity = np.concatenate([
+                voice_activity, np.zeros(pad, dtype=bool)
+            ])
 
         # ── Step 8: Apply music FX ──────────────────────────────────────
         _progress(progress_cb, 0.77, "Applying music effects...")
