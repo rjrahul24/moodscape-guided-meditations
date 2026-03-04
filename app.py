@@ -1,17 +1,38 @@
 """MoodScape — Guided Meditation Audio Generator (Gradio UI)."""
 
+import os
+import warnings
+
+# Prevent HuggingFace tokenizers from warning about fork-after-parallelism.
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+# Silence noisy third-party warnings that are not actionable from user code.
+warnings.filterwarnings(
+    "ignore",
+    message="To copy construct from a tensor",
+    category=UserWarning,
+    module="transformers",
+)
+warnings.filterwarnings(
+    "ignore",
+    message="NOTE: Redirects are currently not supported in Windows or MacOs",
+)
+
 import soundfile as sf
 import gradio as gr
 from dotenv import load_dotenv
 
+from core.parler_engine import VOICE_PRESETS as PARLER_VOICE_PRESETS
 from core.pipeline import MeditationPipeline
 
 # Load environment variables (like HF_TOKEN) from .env file
 load_dotenv()
 
-# (label, voice_id) pairs shown in the dropdown.
+# ── Voice choices for Kokoro engine ──────────────────────────────────────────
+
+# (label, voice_id) pairs shown in the Kokoro dropdown.
 # Comma-separated IDs create blended voices in Kokoro.
-VOICE_CHOICES = [
+KOKORO_VOICE_CHOICES = [
     ("Heart + Nicole blend (meditation)", "af_heart,af_nicole"),
     ("Heart — Female",                    "af_heart"),
     ("Nicole — Female (calm/ASMR)",       "af_nicole"),
@@ -22,6 +43,9 @@ VOICE_CHOICES = [
     ("Adam — Male",                       "am_adam"),
     ("Michael — Male",                    "am_michael"),
 ]
+
+# Parler TTS preset labels for the dropdown
+PARLER_PRESET_CHOICES = [label for label, _ in PARLER_VOICE_PRESETS]
 
 pipeline = MeditationPipeline()
 
@@ -59,7 +83,10 @@ def _get_duration(path: str) -> float:
 def generate_meditation(
     script,
     music_prompt,
-    voice,
+    engine_choice,
+    kokoro_voice,
+    parler_preset,
+    parler_custom_desc,
     speed,
     duck_amount,
     reverb_amount,
@@ -71,12 +98,18 @@ def generate_meditation(
     def progress_cb(fraction, message):
         progress(fraction, desc=message)
 
+    # Map radio label to engine key
+    tts_engine = "parler" if engine_choice == "Parler TTS" else "kokoro"
+
     try:
-        output_path = pipeline.generate(
+        output_path, status_msg = pipeline.generate(
             script=script,
             music_prompt=music_prompt,
-            voice=voice,
+            voice=kokoro_voice,
             speed=speed,
+            tts_engine=tts_engine,
+            parler_voice_preset=parler_preset,
+            parler_custom_description=parler_custom_desc,
             duck_amount_db=duck_amount,
             reverb_amount=reverb_amount,
             fade_in_sec=fade_in,
@@ -87,7 +120,12 @@ def generate_meditation(
         duration = _get_duration(output_path)
         minutes = int(duration // 60)
         seconds = int(duration % 60)
-        status = f"Meditation generated successfully! Duration: {minutes}m {seconds}s"
+        base_status = f"Duration: {minutes}m {seconds}s"
+        if status_msg:
+            status = f"Warning: {status_msg}. {base_status}"
+        else:
+            engine_label = "Parler TTS" if tts_engine == "parler" else "Kokoro"
+            status = f"Generated with {engine_label}. {base_status}"
         return output_path, status
     except Exception as e:
         return None, f"Error: {e}"
@@ -97,7 +135,6 @@ def generate_meditation(
 
 with gr.Blocks(
     title="MoodScape — Guided Meditation Generator",
-    theme=gr.themes.Soft(),
 ) as demo:
     gr.Markdown("# MoodScape — Guided Meditation Audio Generator")
     gr.Markdown(
@@ -128,12 +165,50 @@ with gr.Blocks(
 
         # ── Right column: settings ─────────────────────────────────────
         with gr.Column(scale=1):
-            with gr.Accordion("Voice Settings", open=False):
-                voice_dropdown = gr.Dropdown(
-                    choices=VOICE_CHOICES,
+            # TTS Engine selector
+            engine_radio = gr.Radio(
+                choices=["Kokoro TTS", "Parler TTS"],
+                value="Kokoro TTS",
+                label="TTS Engine",
+                info=(
+                    "Kokoro: fast, lightweight, preset voices. "
+                    "Parler: slower, richer, description-controlled voices."
+                ),
+            )
+
+            # Kokoro settings (visible by default)
+            with gr.Accordion("Kokoro Voice Settings", open=False, visible=True) as kokoro_settings:
+                kokoro_voice_dropdown = gr.Dropdown(
+                    choices=KOKORO_VOICE_CHOICES,
                     value="af_heart,af_nicole",
                     label="Voice",
                 )
+
+            # Parler TTS settings (hidden by default)
+            with gr.Accordion("Parler TTS Settings", open=False, visible=False) as parler_settings:
+                parler_preset_dropdown = gr.Dropdown(
+                    choices=PARLER_PRESET_CHOICES,
+                    value=PARLER_PRESET_CHOICES[0],
+                    label="Voice Style",
+                    info="Select a meditation-optimized voice preset, or choose 'Custom Description' to write your own.",
+                )
+                parler_custom_textbox = gr.Textbox(
+                    label="Custom Voice Description",
+                    placeholder=(
+                        "Example: A warm, low female voice with slow, soothing delivery, "
+                        "breathy tone, and crystal clear studio recording with no background noise."
+                    ),
+                    lines=3,
+                    visible=False,
+                    info=(
+                        "Describe the voice you want. Key terms: warm/cold, breathy/clear, "
+                        "slow/fast, low/high pitch, male/female, close-mic/distant, "
+                        "reverb/no reverb. Use named speakers (Jon, Lea) for consistency."
+                    ),
+                )
+
+            # Common settings
+            with gr.Accordion("Audio Settings", open=False):
                 speed_slider = gr.Slider(
                     minimum=0.5,
                     maximum=1.0,
@@ -141,8 +216,6 @@ with gr.Blocks(
                     step=0.05,
                     label="Speaking Speed",
                 )
-
-            with gr.Accordion("Audio Settings", open=False):
                 duck_slider = gr.Slider(
                     minimum=-20,
                     maximum=-2,
@@ -178,6 +251,30 @@ with gr.Blocks(
                 label="Output Format",
             )
 
+    # Toggle visibility of engine-specific settings
+    def toggle_engine_settings(engine_choice):
+        is_kokoro = engine_choice == "Kokoro TTS"
+        return (
+            gr.update(visible=is_kokoro),       # kokoro_settings
+            gr.update(visible=not is_kokoro),    # parler_settings
+        )
+
+    engine_radio.change(
+        fn=toggle_engine_settings,
+        inputs=[engine_radio],
+        outputs=[kokoro_settings, parler_settings],
+    )
+
+    # Show/hide custom description textbox based on preset selection
+    def toggle_custom_description(preset):
+        return gr.update(visible=(preset == "Custom Description"))
+
+    parler_preset_dropdown.change(
+        fn=toggle_custom_description,
+        inputs=[parler_preset_dropdown],
+        outputs=[parler_custom_textbox],
+    )
+
     generate_btn = gr.Button("Generate Meditation", variant="primary", size="lg")
 
     with gr.Row():
@@ -190,7 +287,10 @@ with gr.Blocks(
         inputs=[
             script_input,
             music_prompt,
-            voice_dropdown,
+            engine_radio,
+            kokoro_voice_dropdown,
+            parler_preset_dropdown,
+            parler_custom_textbox,
             speed_slider,
             duck_slider,
             reverb_slider,
@@ -203,4 +303,4 @@ with gr.Blocks(
     )
 
 if __name__ == "__main__":
-    demo.launch(share=False)
+    demo.launch(share=False, theme=gr.themes.Soft())

@@ -4,7 +4,8 @@ import tempfile
 
 import numpy as np
 import pyloudnorm as pyln
-import soundfile as sf
+import torch
+import torchaudio
 from scipy.signal import butter, filtfilt
 
 
@@ -18,13 +19,14 @@ SAMPLE_RATE = 24000
 def compute_duck_curve(
     voice_activity: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
-    duck_amount_db: float = -8.0,
-    cutoff_hz: float = 3.0,
+    duck_amount_db: float = -5.0,  # Explicitly -5dB per Mastering Engine specs
+    # A Butterworth cutoff of ~2.5 Hz creates an approximate 400-500ms smooth transition curve.
+    cutoff_hz: float = 2.5,
 ) -> np.ndarray:
     """Create a smooth linear gain curve for music ducking.
 
-    Uses Butterworth lowpass at ~3 Hz to create natural attack/release.
-    At 3 Hz cutoff, the duck-down takes ~300 ms and the swell-back takes ~800 ms.
+    Uses Butterworth lowpass at ~2.5 Hz to create a ~500ms natural attack/release,
+    so the volume change is imperceptible and 'breaths' with the narrator.
 
     Returns float32 array of linear gain values in range [10^(duck_db/20), 1.0].
     """
@@ -220,6 +222,29 @@ def mix(
 
 
 # ---------------------------------------------------------------------------
+# Resampling
+# ---------------------------------------------------------------------------
+
+def resample_for_export(
+    audio: np.ndarray,
+    source_rate: int,
+    target_rate: int = 44100,
+) -> np.ndarray:
+    """Resample audio to target sample rate for final export.
+
+    Uses torchaudio's polyphase resampler.  Clips the result to [-1, 1] to
+    counter Gibbs-phenomenon overshoot introduced by the anti-alias filter.
+    """
+    if source_rate == target_rate:
+        return audio
+
+    tensor = torch.tensor(audio, dtype=torch.float32).unsqueeze(0)
+    resampled = torchaudio.functional.resample(tensor, source_rate, target_rate)
+    result = resampled.squeeze(0).numpy()
+    return np.clip(result, -1.0, 1.0).astype(np.float32)
+
+
+# ---------------------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------------------
 
@@ -227,19 +252,31 @@ def export_audio(
     audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
     output_format: str = "wav",
+    target_sample_rate: int = 44100,
 ) -> str:
-    """Export audio to a temp file. Returns absolute path."""
+    """Export audio to a temp file at 44.1 kHz / 16-bit. Returns absolute path.
+
+    Resamples to target_sample_rate (default 44100) before writing to meet
+    the mastering specification of 44.1 kHz / 16-bit PCM.
+    """
+    # Resample to target rate (usually 24000 → 44100)
+    audio = resample_for_export(audio, sample_rate, target_sample_rate)
+    export_rate = target_sample_rate
+
     suffix = f".{output_format}"
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     tmp_path = tmp.name
     tmp.close()
 
     if output_format == "wav":
-        sf.write(tmp_path, audio, sample_rate, subtype="PCM_24")
+        import scipy.io.wavfile
+        # Strict 16-bit integer conversion preventing float wrapping
+        audio_16bit = np.clip(audio * 32767.0, -32768.0, 32767.0).astype(np.int16)
+        scipy.io.wavfile.write(tmp_path, export_rate, audio_16bit)
     elif output_format == "mp3":
         from pedalboard.io import AudioFile
 
-        with AudioFile(tmp_path, "w", samplerate=sample_rate, num_channels=1, quality=0.2) as f:
+        with AudioFile(tmp_path, "w", samplerate=export_rate, num_channels=1, quality=0.2) as f:
             f.write(audio.reshape(1, -1).astype(np.float32))
     else:
         raise ValueError(f"Unsupported format: {output_format!r}")

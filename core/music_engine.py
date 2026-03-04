@@ -1,61 +1,113 @@
-"""MusicGen wrapper for generating ambient meditation background music.
+"""MusicGen wrapper — stereo-medium with sliding window continuation.
 
-Strategy: Generate a single clean 30-second segment using musicgen-small,
-then loop it with smooth equal-power crossfade. This avoids continuation
-artifacts (hum, noise) that occur when chaining multiple MusicGen calls,
-and runs ~5x faster than musicgen-medium.
+Model: facebook/musicgen-stereo-medium (1.5B params), fallback to musicgen-small
+Device: MPS (Apple Silicon GPU) with automatic CPU fallback
+Strategy: 30s initial segment, then sliding window with 5s context overlap
+Output: Mono float32 at 24 kHz (stereo generated internally, downmixed at boundary)
 
-For background ambient music that sits behind a voice, a well-looped 30s
-clip of drone/pad texture is indistinguishable from longer unique generation.
-
-Target hardware: Apple Silicon M1 Max (32 GB unified memory)
-MusicGen sample rate: 32000 Hz  →  resampled to 24000 Hz for pipeline
+Target hardware: Apple Silicon with 36 GB unified memory
 """
 
 import gc
+import logging
+import math
+import time
 
 import numpy as np
+import torch
+import torchaudio
 
+
+logger = logging.getLogger(__name__)
 
 NATIVE_SAMPLE_RATE = 32000       # MusicGen native output rate
 TARGET_SAMPLE_RATE = 24000       # Kokoro TTS / pipeline standard rate
 SEGMENT_DURATION = 30            # Seconds per MusicGen call (hard limit)
-LOOP_CROSSFADE = 5               # Seconds of equal-power crossfade when looping
+CONTEXT_DURATION = 5             # Seconds of audio context for continuation
+CROSSFADE_DURATION = 2           # Seconds of crossfade at each segment seam
+
+MODEL_ID = "facebook/musicgen-stereo-medium"
+FALLBACK_MODEL_ID = "facebook/musicgen-small"
 
 
 class MusicEngine:
-    """Generates ambient background music via a single MusicGen call + looping.
+    """Generates ambient background music via MusicGen sliding window continuation.
 
-    Uses musicgen-small (300M params) forced to CPU for stable, fast inference.
-    Generates one clean 30-second segment and loops with equal-power crossfade
-    to fill any duration. This eliminates continuation artifacts entirely.
+    Uses musicgen-stereo-medium (1.5B params) on MPS (Apple Silicon GPU) for
+    fast inference, with automatic CPU fallback if MPS is unstable. Generates
+    a 30s initial segment, then extends with continuation calls using 5s of
+    audio context per step. Stereo output is downmixed to mono at the boundary
+    to preserve the pipeline's mono contract.
+
+    Performance: MPS + disabled CFG = ~10x faster than CPU + CFG.
     """
 
     def __init__(self):
         self.model = None
         self.model_name = None
+        self.device = None
+
+    # ------------------------------------------------------------------
+    # Device selection
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _pick_device() -> str:
+        """Choose the fastest available device.
+
+        Prefers MPS (Apple Silicon GPU) for ~4-5x faster inference.
+        Falls back to CPU if MPS is not available.
+        """
+        if torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
+
+    # ------------------------------------------------------------------
+    # Model lifecycle
+    # ------------------------------------------------------------------
 
     def load_model(self):
-        """Load MusicGen-small on CPU. Falls back gracefully if unavailable."""
+        """Load MusicGen on the best available device (MPS → CPU fallback)."""
         import warnings
 
         from audiocraft.models import MusicGen
 
+        self.device = self._pick_device()
+
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=FutureWarning, message=".*weight_norm.*")
 
-            # musicgen-small: 300M params, ~1.5x realtime on M1 Max CPU
-            # Sufficient quality for ambient background behind narration
-            # Force CPU — MPS has dtype instability in AudioCraft on Apple Silicon
-            self.model = MusicGen.get_pretrained("facebook/musicgen-small", device="cpu")
-            self.model_name = "musicgen-small"
+            candidates = [MODEL_ID, FALLBACK_MODEL_ID]
+            for name in candidates:
+                # Try preferred device first, fall back to CPU
+                devices_to_try = [self.device] if self.device == "cpu" else [self.device, "cpu"]
+                for dev in devices_to_try:
+                    try:
+                        logger.info("[MusicEngine] Loading %s on %s...", name, dev)
+                        self.model = MusicGen.get_pretrained(name, device=dev)
+                        self.model_name = name
+                        self.device = dev
+                        logger.info("[MusicEngine] Loaded %s on %s", name, dev)
+                        return
+                    except Exception as e:
+                        logger.warning("[MusicEngine] %s on %s failed: %s", name, dev, e)
+                        print(f"[MusicEngine] {name} on {dev} failed: {e}")
+
+            raise RuntimeError("No MusicGen model could be loaded.")
 
     def unload_model(self):
         """Release model and free memory."""
         del self.model
         self.model = None
         self.model_name = None
+        self.device = None
         gc.collect()
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+
+    # ------------------------------------------------------------------
+    # Generation
+    # ------------------------------------------------------------------
 
     def generate(
         self,
@@ -63,11 +115,10 @@ class MusicEngine:
         total_duration_sec: float,
         progress_cb=None,
     ) -> np.ndarray:
-        """Generate background music: one clean segment, looped to fill duration.
+        """Generate background music using sliding window continuation.
 
         Args:
-            prompt: Text description of desired music style (keep under 40 words
-                    total for best MusicGen attention).
+            prompt: Text description of desired music style.
             total_duration_sec: Target duration in seconds.
             progress_cb: Called with (current_segment, total_segments).
 
@@ -77,80 +128,125 @@ class MusicEngine:
         if self.model is None:
             raise RuntimeError("Music model not loaded. Call load_model() first.")
 
-        import torch
-        import torchaudio
+        num_segments = self._num_segments(total_duration_sec)
+        logger.info(
+            "[MusicEngine] Generating %.0fs of music (%d segments) on %s",
+            total_duration_sec, num_segments, self.device,
+        )
 
-        # ── Generate a single clean 30s segment from text prompt ──────────
         self.model.set_generation_params(
             duration=SEGMENT_DURATION,
             use_sampling=True,
             top_k=250,
-            top_p=0.0,            # Use top_k exclusively — more stable for ambient
-            temperature=0.8,      # Balanced: evolving textures without artifacts (docs: 0.75–0.90)
-            cfg_coef=4.0,         # Strong prompt adherence (docs: 3.5–5.0, 4.0 is sweet spot)
+            top_p=0.0,
+            temperature=1.0,
+            cfg_coef=1.0,       # Disabled CFG — single forward pass per token
         )
 
         if progress_cb is not None:
-            progress_cb(0, 1)
+            progress_cb(0, num_segments)
 
+        t0 = time.time()
+
+        # ── Segment 1: text-only generation ─────────────────────────────
         wav = self.model.generate([prompt], progress=False)
-        # wav shape: (batch=1, channels, samples) at 32000 Hz
-        segment = wav[0]  # (channels, samples)
+        current = self._to_mono(wav[0]).cpu()
+        segments = [current]
+
+        elapsed = time.time() - t0
+        logger.info("[MusicEngine] Segment 1/%d done in %.1fs", num_segments, elapsed)
 
         if progress_cb is not None:
-            progress_cb(1, 1)
+            progress_cb(1, num_segments)
 
-        # Force mono
-        if segment.ndim == 2 and segment.shape[0] > 1:
-            segment = segment.mean(dim=0, keepdim=True)
-        elif segment.ndim == 1:
-            segment = segment.unsqueeze(0)
+        # ── Subsequent segments: continuation with audio context ────────
+        for i in range(1, num_segments):
+            seg_t0 = time.time()
+            context_samples = int(CONTEXT_DURATION * NATIVE_SAMPLE_RATE)
+            context = segments[-1][..., -context_samples:]
 
-        segment_np = segment.squeeze(0).cpu().numpy().astype(np.float32)
+            # Move context to model device for continuation
+            if self.device != "cpu":
+                context = context.to(self.device)
 
-        # Clamp to valid range
-        segment_np = np.clip(segment_np, -1.0, 1.0)
+            next_wav = self.model.generate_continuation(
+                prompt=context,
+                prompt_sample_rate=NATIVE_SAMPLE_RATE,
+                descriptions=[prompt],
+                progress=False,
+            )
+            segments.append(self._to_mono(next_wav[0]).cpu())
 
-        # ── Loop to fill the requested duration ───────────────────────────
-        target_samples = int(total_duration_sec * NATIVE_SAMPLE_RATE)
-        if len(segment_np) >= target_samples:
-            full_audio = segment_np[:target_samples]
-        else:
-            full_audio = self._loop_block(segment_np, target_samples)
+            seg_elapsed = time.time() - seg_t0
+            logger.info(
+                "[MusicEngine] Segment %d/%d done in %.1fs",
+                i + 1, num_segments, seg_elapsed,
+            )
 
-        # ── Resample from 32000 Hz to 24000 Hz ───────────────────────────
-        audio_tensor = torch.from_numpy(full_audio).unsqueeze(0)  # (1, N)
+            if progress_cb is not None:
+                progress_cb(i + 1, num_segments)
+
+        total_elapsed = time.time() - t0
+        logger.info("[MusicEngine] All %d segments done in %.1fs", num_segments, total_elapsed)
+
+        # ── Stitch segments and trim to exact duration ──────────────────
+        full_audio = self._stitch(segments)
+
+        target_samples_native = int(total_duration_sec * NATIVE_SAMPLE_RATE)
+        if full_audio.shape[-1] > target_samples_native:
+            full_audio = full_audio[..., :target_samples_native]
+
+        # ── Resample 32 kHz → 24 kHz ───────────────────────────────────
         resampled = torchaudio.functional.resample(
-            audio_tensor, NATIVE_SAMPLE_RATE, TARGET_SAMPLE_RATE
+            full_audio, NATIVE_SAMPLE_RATE, TARGET_SAMPLE_RATE
         )
+        result = resampled.squeeze(0).numpy().astype(np.float32)
+        return np.clip(result, -1.0, 1.0)
 
-        return resampled.squeeze(0).numpy().astype(np.float32)
+    # ── Private helpers ─────────────────────────────────────────────────
 
-    def _loop_block(self, block: np.ndarray, target_samples: int) -> np.ndarray:
-        """Loop a single audio block with equal-power crossfade to fill duration.
+    def _num_segments(self, duration: float) -> int:
+        """Calculate number of generation passes needed for the target duration."""
+        if duration <= SEGMENT_DURATION:
+            return 1
+        net_new_per_segment = SEGMENT_DURATION - CONTEXT_DURATION
+        return 1 + math.ceil((duration - SEGMENT_DURATION) / net_new_per_segment)
 
-        Equal-power crossfade (sqrt curves) maintains consistent perceived
-        loudness at the loop point, unlike linear crossfade which creates a
-        volume dip at the seam.
+    @staticmethod
+    def _to_mono(tensor: torch.Tensor) -> torch.Tensor:
+        """Reduce (channels, samples) to (1, samples)."""
+        if tensor.ndim == 1:
+            return tensor.unsqueeze(0)
+        if tensor.shape[0] > 1:
+            return tensor.mean(dim=0, keepdim=True)
+        return tensor
+
+    def _stitch(self, segments: list[torch.Tensor]) -> torch.Tensor:
+        """Join continuation segments, stripping the duplicated context region.
+
+        Each continuation output starts with ~CONTEXT_DURATION seconds that echo
+        the audio prompt. We strip that overlap and crossfade at the seam.
         """
-        if len(block) >= target_samples:
-            return block[:target_samples]
+        if len(segments) == 1:
+            return segments[0]
 
-        crossfade_samples = int(LOOP_CROSSFADE * NATIVE_SAMPLE_RATE)
-        # Don't let crossfade exceed half the block length
-        crossfade_samples = min(crossfade_samples, len(block) // 2)
+        ctx_samples = int(CONTEXT_DURATION * NATIVE_SAMPLE_RATE)
+        fade_samples = int(CROSSFADE_DURATION * NATIVE_SAMPLE_RATE)
+        result = segments[0]
 
-        result = block.copy()
+        for seg in segments[1:]:
+            new = seg[..., ctx_samples:]  # strip duplicate context
+            if new.shape[-1] == 0:
+                continue
 
-        while len(result) < target_samples:
-            overlap = min(crossfade_samples, len(result), len(block))
+            overlap = min(fade_samples, result.shape[-1], new.shape[-1])
+            # Fade tensors on same device as audio
+            fade_out = torch.linspace(1.0, 0.0, overlap, device=result.device)
+            fade_in = torch.linspace(0.0, 1.0, overlap, device=result.device)
 
-            # Equal-power crossfade for constant perceived loudness at seam
-            t = np.linspace(0.0, 1.0, overlap, dtype=np.float32)
-            fade_out = np.sqrt(1.0 - t)
-            fade_in = np.sqrt(t)
+            blended = result[..., -overlap:] * fade_out + new[..., :overlap] * fade_in
+            result = torch.cat(
+                [result[..., :-overlap], blended, new[..., overlap:]], dim=-1
+            )
 
-            crossfaded = result[-overlap:] * fade_out + block[:overlap] * fade_in
-            result = np.concatenate([result[:-overlap], crossfaded, block[overlap:]])
-
-        return result[:target_samples]
+        return result

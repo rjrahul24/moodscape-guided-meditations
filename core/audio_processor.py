@@ -3,16 +3,20 @@
 import numpy as np
 from pedalboard import (
     Compressor,
-    HighShelfFilter,
+    LowpassFilter,
+    NoiseGate,
+    PeakFilter,
     Limiter,
-    LowShelfFilter,
     Pedalboard,
     Reverb,
 )
 
 
 def make_voice_chain(reverb_amount: float = 0.15) -> Pedalboard:
-    """FX chain for Kokoro narration: warmth → compression → reverb → limit.
+    """FX chain for narration: compression → reverb → limit.
+
+    Warmth / EQ is handled by MasteringEngine.master_vocals() at 44.1 kHz,
+    so this chain focuses only on dynamics and spatial effects.
 
     Args:
         reverb_amount: Reverb wet level (0.0 = dry, 0.5 = very wet).
@@ -20,7 +24,7 @@ def make_voice_chain(reverb_amount: float = 0.15) -> Pedalboard:
     """
     reverb_amount = float(np.clip(reverb_amount, 0.0, 0.5))
     return Pedalboard([
-        LowShelfFilter(cutoff_frequency_hz=300, gain_db=2.0),
+        NoiseGate(threshold_db=-40, ratio=10.0, attack_ms=1.0, release_ms=50),
         Compressor(threshold_db=-20, ratio=3.0, attack_ms=10, release_ms=100),
         Reverb(
             room_size=0.3,
@@ -39,8 +43,9 @@ def make_music_chain() -> Pedalboard:
     in the 8kHz+ range and creates spectral space for the voice.
     """
     return Pedalboard([
-        LowShelfFilter(cutoff_frequency_hz=200, gain_db=1.5),
-        HighShelfFilter(cutoff_frequency_hz=8000, gain_db=-3.0),
+        PeakFilter(cutoff_frequency_hz=300, gain_db=2.0, q=0.7),
+        PeakFilter(cutoff_frequency_hz=1500, gain_db=-2.5, q=0.5),  # vocal pocket
+        LowpassFilter(cutoff_frequency_hz=10000),                    # gentle HF rolloff
         Limiter(threshold_db=-1.0),
     ])
 
