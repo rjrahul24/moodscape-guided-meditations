@@ -6,41 +6,77 @@ import numpy as np
 import pyloudnorm as pyln
 import torch
 import torchaudio
-from scipy.signal import butter, filtfilt
-
+import math
+from pedalboard import Pedalboard, Gain
 
 SAMPLE_RATE = 24000
 
-
 # ---------------------------------------------------------------------------
-# Ducking
+# Ducking (Envelope Follower)
 # ---------------------------------------------------------------------------
 
-def compute_duck_curve(
-    voice_activity: np.ndarray,
+def apply_ducking_envelope_follower(
+    voice_audio: np.ndarray,
+    music_audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
-    duck_amount_db: float = -5.0,  # Explicitly -5dB per Mastering Engine specs
-    # A Butterworth cutoff of ~2.5 Hz creates an approximate 400-500ms smooth transition curve.
-    cutoff_hz: float = 2.5,
+    duck_amount_db: float = -5.0,
+    chunk_ms: float = 10.0,
+    attack_ms: float = 50.0,
+    release_ms: float = 500.0,
 ) -> np.ndarray:
-    """Create a smooth linear gain curve for music ducking.
-
-    Uses Butterworth lowpass at ~2.5 Hz to create a ~500ms natural attack/release,
-    so the volume change is imperceptible and 'breaths' with the narrator.
-
-    Returns float32 array of linear gain values in range [10^(duck_db/20), 1.0].
+    """Chunk-based Envelope Follower for auto-ducking music under voice.
+    
+    Processes audio in short chunks (~10ms). Calculates the RMS of the voice
+    in that chunk to detect presence. Drives a smoothed target gain curve
+    applied to the music via a Pedalboard Gain effect.
     """
-    envelope = voice_activity.astype(np.float32)
-
-    nyquist = sample_rate / 2.0
-    b, a = butter(N=2, Wn=cutoff_hz / nyquist, btype="low")
-    smoothed = filtfilt(b, a, envelope).astype(np.float32)
-    smoothed = np.clip(smoothed, 0.0, 1.0)
-
-    gain_db = smoothed * duck_amount_db
-    gain_linear = np.power(10.0, gain_db / 20.0).astype(np.float32)
-
-    return gain_linear
+    chunk_samples = int((chunk_ms / 1000.0) * sample_rate)
+    total_samples = len(music_audio)
+    
+    # Pre-allocate output array
+    ducked_music = np.zeros_like(music_audio, dtype=np.float32)
+    
+    # Envelope state
+    current_gain_db = 0.0
+    
+    # Calculate smoothing factors (alpha) for exponential moving average
+    # formula: alpha = exp(-chunk_time / time_constant)
+    attack_alpha = math.exp(-(chunk_ms) / attack_ms)
+    release_alpha = math.exp(-(chunk_ms) / release_ms)
+    
+    duck_threshold_rms = 0.03
+    
+    for start in range(0, total_samples, chunk_samples):
+        end = min(start + chunk_samples, total_samples)
+        
+        # 1. Measure voice RMS in this chunk
+        voice_chunk = voice_audio[start:end]
+        if len(voice_chunk) == 0:
+            rms = 0.0
+        else:
+            rms = np.sqrt(np.mean(voice_chunk**2))
+            
+        # 2. Determine target gain based on voice presence
+        target_gain_db = duck_amount_db if rms > duck_threshold_rms else 0.0
+        
+        # 3. Smooth the gain transition (Attack/Release logistics)
+        if target_gain_db < current_gain_db:
+            # Ducking in (Attack) - moving from 0dB down to e.g. -5dB
+            current_gain_db = (attack_alpha * current_gain_db) + ((1.0 - attack_alpha) * target_gain_db)
+        else:
+            # Recovering (Release) - moving from e.g. -5dB back up to 0dB
+            current_gain_db = (release_alpha * current_gain_db) + ((1.0 - release_alpha) * target_gain_db)
+            
+        # 4. Apply gain to music chunk via Pedalboard
+        pb = Pedalboard([Gain(gain_db=current_gain_db)])
+        music_chunk = music_audio[start:end]
+        # reshape(1,-1) into pedalboard, squeeze back out
+        music_chunk_2d = music_chunk.reshape(1, -1)
+        processed_chunk = pb(music_chunk_2d, sample_rate).squeeze(0)
+        
+        ducked_music[start:end] = processed_chunk
+        
+    return ducked_music
 
 
 # ---------------------------------------------------------------------------
@@ -123,32 +159,40 @@ def apply_fades(
 # Loudness normalization
 # ---------------------------------------------------------------------------
 
+def calculate_loudness_gain(
+    audio: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+    target_lufs: float = -16.0,
+) -> float:
+    """Calculate the linear gain multiplier to hit a target LUFS."""
+    min_samples = int(0.4 * sample_rate)
+    if len(audio) < min_samples:
+        return 1.0
+
+    meter = pyln.Meter(sample_rate)
+    try:
+        loudness = meter.integrated_loudness(audio)
+    except Exception:
+        return 1.0
+
+    if not np.isfinite(loudness):
+        return 1.0
+
+    if abs(target_lufs - loudness) > 40.0:
+        return 1.0
+
+    gain_db = target_lufs - loudness
+    gain_linear = 10.0 ** (gain_db / 20.0)
+    return float(gain_linear)
+
 def normalize_loudness(
     audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
     target_lufs: float = -16.0,
 ) -> np.ndarray:
     """Normalize audio to target LUFS. Returns float32, clipped to [-1, 1]."""
-    # pyloudnorm requires at least 400ms of audio for BS.1770 gating blocks
-    min_samples = int(0.4 * sample_rate)
-    if len(audio) < min_samples:
-        return audio
-
-    meter = pyln.Meter(sample_rate)
-
-    try:
-        loudness = meter.integrated_loudness(audio)
-    except Exception:
-        return audio
-
-    if not np.isfinite(loudness):
-        return audio
-
-    # Guard against extreme gain changes that indicate a problem
-    if abs(target_lufs - loudness) > 40.0:
-        return audio
-
-    normalized = pyln.normalize.loudness(audio, loudness, target_lufs)
+    gain = calculate_loudness_gain(audio, sample_rate, target_lufs)
+    normalized = audio * gain
     return np.clip(normalized, -1.0, 1.0).astype(np.float32)
 
 
@@ -198,16 +242,23 @@ def mix(
     ])
     # Match exact length
     target_len = len(aligned_voice)
-    if len(aligned_activity) < target_len:
-        aligned_activity = np.concatenate([
-            aligned_activity,
-            np.zeros(target_len - len(aligned_activity), dtype=bool),
+    if len(aligned_music) < target_len:
+        aligned_music = np.concatenate([
+            aligned_music,
+            np.zeros(target_len - len(aligned_music), dtype=np.float32),
         ])
-    aligned_activity = aligned_activity[:target_len]
+    aligned_music = aligned_music[:target_len]
 
     # 4. Compute and apply ducking (further reduces music during speech)
-    duck_curve = compute_duck_curve(aligned_activity, sample_rate, duck_amount_db)
-    ducked_music = aligned_music * duck_curve
+    ducked_music = apply_ducking_envelope_follower(
+        aligned_voice,
+        aligned_music,
+        sample_rate=sample_rate,
+        duck_amount_db=duck_amount_db,
+        chunk_ms=10.0,
+        attack_ms=50.0,
+        release_ms=500.0,
+    )
 
     # 5. Sum voice + ducked music
     mixed = aligned_voice + ducked_music
@@ -215,8 +266,8 @@ def mix(
     # 6. Apply fades
     mixed = apply_fades(mixed, sample_rate, fade_in_sec, fade_out_sec)
 
-    # 7. Normalize loudness
-    mixed = normalize_loudness(mixed, sample_rate, target_lufs)
+    # 7. Do not normalize loudness here, as we will chunk-stream the mix through 
+    # mastering EQ and normalizing logic in export_audio to save heap memory.
 
     return mixed.astype(np.float32)
 
@@ -287,32 +338,50 @@ def export_audio(
     sample_rate: int = SAMPLE_RATE,
     output_format: str = "wav",
     target_sample_rate: int = 44100,
+    master_chain: Pedalboard | None = None,
 ) -> str:
-    """Export audio to a temp file at 44.1 kHz / 16-bit. Returns absolute path.
-
-    Resamples to target_sample_rate (default 44100) before writing to meet
-    the mastering specification of 44.1 kHz / 16-bit PCM.
+    """Stream audio out to temp file with Pedalboard plugins and normalization.
+    
+    Reads from the memory array in bounded chunks, applies a calculated linear 
+    target -16.0 LUFS gain, applies the final Pedalboard master chain, and streams 
+    directly to a file to prevent immense memory spikes.
     """
-    # Resample to target rate (usually 24000 → 44100)
-    audio = resample_for_export(audio, sample_rate, target_sample_rate)
+    from pedalboard.io import AudioFile
+    
     export_rate = target_sample_rate
-
     suffix = f".{output_format}"
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     tmp_path = tmp.name
     tmp.close()
 
-    if output_format == "wav":
-        import scipy.io.wavfile
-        # Strict 16-bit integer conversion preventing float wrapping
-        audio_16bit = np.clip(audio * 32767.0, -32768.0, 32767.0).astype(np.int16)
-        scipy.io.wavfile.write(tmp_path, export_rate, audio_16bit)
-    elif output_format == "mp3":
-        from pedalboard.io import AudioFile
+    # Pre-calculate the linear gain to bring the whole file to -16 LUFS
+    mix_lufs_gain = calculate_loudness_gain(audio, sample_rate, -16.0)
+    
+    # 20 second chunks
+    chunk_samples = int(20.0 * sample_rate)
+    total_samples = len(audio)
 
-        with AudioFile(tmp_path, "w", samplerate=export_rate, num_channels=1, quality=0.2) as f:
-            f.write(audio.reshape(1, -1).astype(np.float32))
-    else:
-        raise ValueError(f"Unsupported format: {output_format!r}")
+    # Initialize Pedalboard AudioFile struct
+    f = AudioFile(tmp_path, "w", samplerate=export_rate, num_channels=1)
 
+    for start in range(0, total_samples, chunk_samples):
+        end = min(start + chunk_samples, total_samples)
+        chunk = audio[start:end]
+        
+        # Resample chunk if needed
+        if sample_rate != export_rate:
+            chunk = resample_for_export(chunk, sample_rate, export_rate)
+            
+        # Apply normalization gain
+        chunk = chunk * mix_lufs_gain
+        
+        # Apply Pedalboard mastering chain if present
+        if master_chain:
+            chunk_2d = chunk.reshape(1, -1)
+            chunk = master_chain(chunk_2d, export_rate).squeeze(0)
+            
+        # write directly as float32
+        f.write(chunk.reshape(1, -1).astype(np.float32))
+
+    f.close()
     return tmp_path

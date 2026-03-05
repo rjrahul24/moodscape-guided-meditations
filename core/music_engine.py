@@ -24,7 +24,7 @@ NATIVE_SAMPLE_RATE = 32000       # MusicGen native output rate
 TARGET_SAMPLE_RATE = 24000       # Kokoro TTS / pipeline standard rate
 SEGMENT_DURATION = 30            # Seconds per MusicGen call (hard limit)
 CONTEXT_DURATION = 5             # Seconds of audio context for continuation
-CROSSFADE_DURATION = 2           # Seconds of crossfade at each segment seam
+CROSSFADE_DURATION = 0.05        # Seconds of crossfade at each segment seam
 
 MODEL_ID = "facebook/musicgen-stereo-medium"
 FALLBACK_MODEL_ID = "facebook/musicgen-small"

@@ -15,6 +15,7 @@ from core.tts_engine import TTSEngine
 
 logger = logging.getLogger("moodscape")
 
+TARGET_SR = 44100
 SAMPLE_RATE = 24000
 
 
@@ -195,6 +196,17 @@ class MeditationPipeline:
 
             logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
 
+            # Upsample Voice immediately to Target Sample Rate
+            from core.audio_processor import resample_to_44100
+            _progress(progress_cb, 0.39, "Upsampling TTS audio to 44.1kHz standard...")
+            voice_audio = resample_to_44100(voice_audio, SAMPLE_RATE)
+            voice_activity = np.repeat(voice_activity, TARGET_SR // SAMPLE_RATE)
+            pad_diff = len(voice_audio) - len(voice_activity)
+            if pad_diff > 0:
+                 voice_activity = np.concatenate([voice_activity, np.zeros(pad_diff, dtype=bool)])
+            else:
+                 voice_activity = voice_activity[:len(voice_audio)]
+
             # ── Step 4: Unload TTS, load MusicGen ───────────────────────────
             _progress(progress_cb, 0.40, "Switching to music model...")
             tts.unload_model()
@@ -203,7 +215,7 @@ class MeditationPipeline:
             self.music.load_model()
 
             # ── Step 5: Generate background music ───────────────────────────
-            voice_duration = len(voice_audio) / SAMPLE_RATE
+            voice_duration = len(voice_audio) / TARGET_SR
             music_duration = voice_duration + 10  # extra for pre-roll + fade-out
 
             _progress(progress_cb, 0.45, "Generating background music...")
@@ -219,13 +231,19 @@ class MeditationPipeline:
                 enhanced_prompt, music_duration, progress_cb=music_progress
             )
 
+            # Upsample MusicGen audio immediately to Target Sample Rate
+            _progress(progress_cb, 0.70, "Upsampling MusicGen audio to 44.1kHz standard...")
+            from core.audio_processor import resample_to_44100
+            from core.music_engine import SAMPLE_RATE as MUSIC_SR
+            music_audio = resample_to_44100(music_audio, MUSIC_SR)
+
             # ── Step 6: Unload MusicGen ─────────────────────────────────────
             self.music.unload_model()
 
             # ── Step 7: Apply voice FX ──────────────────────────────────────
             _progress(progress_cb, 0.72, "Applying voice effects...")
             voice_chain = make_voice_chain(reverb_amount=reverb_amount)
-            voice_audio = apply_fx(voice_audio, voice_chain, SAMPLE_RATE)
+            voice_audio = apply_fx(voice_audio, voice_chain, TARGET_SR)
 
             # Align voice_activity to post-FX voice length (reverb tail trim
             # may change length slightly)
@@ -238,15 +256,15 @@ class MeditationPipeline:
 
             # ── Step 8: Apply music FX ──────────────────────────────────────
             _progress(progress_cb, 0.77, "Applying music effects...")
-            music_audio = normalize_loudness(music_audio, SAMPLE_RATE, target_lufs=-20.0)
+            music_audio = normalize_loudness(music_audio, TARGET_SR, target_lufs=-20.0)
             music_chain = make_music_chain()
-            music_audio = apply_fx(music_audio, music_chain, SAMPLE_RATE)
+            music_audio = apply_fx(music_audio, music_chain, TARGET_SR)
 
             # ── Optional: Export stems ──────────────────────────────────────
             stem_paths = None
             if do_export_stems:
                 _progress(progress_cb, 0.80, "Exporting stems...")
-                stem_paths = export_stems(voice_audio, music_audio, SAMPLE_RATE)
+                stem_paths = export_stems(voice_audio, music_audio, TARGET_SR)
                 logger.info("Stems exported: %s", stem_paths)
 
             # ── Step 9: Mix with ducking ────────────────────────────────────
@@ -255,7 +273,7 @@ class MeditationPipeline:
                 voice_audio,
                 voice_activity,
                 music_audio,
-                sample_rate=SAMPLE_RATE,
+                sample_rate=TARGET_SR,
                 duck_amount_db=duck_amount_db,
                 fade_in_sec=fade_in_sec,
                 fade_out_sec=fade_out_sec,
@@ -264,27 +282,30 @@ class MeditationPipeline:
             # ── Step 10: Master processing ──────────────────────────────────
             _progress(progress_cb, 0.90, "Applying master processing...")
             master_chain = make_master_chain()
-            mixed = apply_fx(mixed, master_chain, SAMPLE_RATE)
+            # Mixed array is not processed here to prevent memory spikes.
+            # Master FX, normalization, and resampling will be applied via
+            # chunked streaming in `export_audio()`.
 
             # ── Step 10b: QA checks ─────────────────────────────────────────
-            qa_results = run_qa_checks(mixed, SAMPLE_RATE)
+            qa_results = run_qa_checks(mixed, TARGET_SR)
             if qa_results["silence"]:
                 status_message += f"QA: {len(qa_results['silence'])} long silence(s) detected. "
             if not qa_results["clipping"]["passed"]:
-                status_message += "QA: Clipping detected. "
+                status_message += "QA: Pre-master clipping detected. "
 
             # ── Step 11: Export ─────────────────────────────────────────────
             _progress(progress_cb, 0.95, f"Exporting {output_format.upper()}...")
 
-            # Optional 48 kHz upsampling
-            if upsample_48k:
-                from core.audio_processor import upsample_audio
-                mixed = upsample_audio(mixed, from_sr=SAMPLE_RATE, to_sr=48000)
-                export_sr = 48000
-            else:
-                export_sr = SAMPLE_RATE
+            # Optional 48 kHz upsampling target
+            export_sr = 48000 if upsample_48k else TARGET_SR
 
-            output_path = export_audio(mixed, export_sr, output_format)
+            output_path = export_audio(
+                mixed,
+                sample_rate=TARGET_SR,
+                output_format=output_format,
+                target_sample_rate=export_sr,
+                master_chain=master_chain
+            )
 
         finally:
             # Prevent PyTorch/MPS teardown segfaults

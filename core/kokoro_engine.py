@@ -1,10 +1,13 @@
 """Kokoro TTS engine — wraps Kokoro-82M for meditation narration."""
 
 import gc
+import logging
 import random
 import re
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from core.speech_engine import SAMPLE_RATE, SpeechEngine
 from core.voice_manager import BRITISH_VOICES, is_british_voice
@@ -157,6 +160,121 @@ def _crossfade_chunks(chunks: list[np.ndarray], crossfade_samples: int = CROSSFA
     return result
 
 
+# ---------------------------------------------------------------------------
+# Post-generation artifact trimmer
+# ---------------------------------------------------------------------------
+
+# Energy threshold for silence detection: RMS below this (linear) is silence.
+_SILENCE_THRESHOLD_LINEAR = 10 ** (-45.0 / 20)  # -45 dBFS ≈ 0.00562
+
+# Window for energy-based silence scan (20 ms at 24 kHz = 480 samples)
+_SILENCE_WINDOW_SAMPLES = int(0.020 * SAMPLE_RATE)
+
+# Minimum tail to preserve after trimming so crossfade always has audio.
+_MIN_TAIL_SAMPLES = int(0.020 * SAMPLE_RATE)
+
+# Spectral-flatness threshold: values > this on a long tail indicate
+# tonal loops / noise rather than natural speech trailing off.
+_FLATNESS_THRESHOLD = 0.85
+
+# Only run flatness check if the suspected tail is longer than this.
+_FLATNESS_MIN_TAIL_SAMPLES = int(0.200 * SAMPLE_RATE)  # 200 ms
+
+# FFT size used for spectral flatness computation.
+_FLATNESS_FFT_SIZE = 2048
+
+
+def _spectral_flatness(frame: np.ndarray) -> float:
+    """Wiener entropy (spectral flatness) of a short audio frame.
+
+    Returns a value in [0, 1]:
+      ~0 = tonal / speech-like
+      ~1 = noise-like / flat spectrum (possible repetition artifact)
+    """
+    win = np.hanning(len(frame))
+    spectrum = np.abs(np.fft.rfft(frame * win, n=_FLATNESS_FFT_SIZE))
+    # Avoid log(0)
+    spectrum = np.where(spectrum < 1e-10, 1e-10, spectrum)
+    log_mean = np.mean(np.log(spectrum))
+    arithmetic_mean = np.mean(spectrum)
+    if arithmetic_mean < 1e-10:
+        return 0.0
+    return float(np.exp(log_mean) / arithmetic_mean)
+
+
+def trim_tts_artifacts(audio: np.ndarray, sr: int = SAMPLE_RATE) -> np.ndarray:
+    """Strip trailing silence and repetition-loop artifacts from a TTS chunk.
+
+    Conservative by design: only modifies audio when conditions are clearly
+    anomalous.  Normal narration output is returned unchanged.
+
+    Steps:
+      1. Hard-clip guard — clamp any out-of-range samples.
+      2. Trailing silence trim — strip near-zero RMS windows from the tail,
+         preserving a minimum 20 ms tail for crossfades.
+      3. Spectral flatness check — if the trimmed tail (≥200 ms) has very
+         high spectral flatness (noise-like), trim that region too.
+
+    Args:
+        audio: 1-D float32 array from Kokoro synthesis.
+        sr:    Sample rate (default 24000 Hz).
+
+    Returns:
+        Trimmed 1-D float32 array.  May be shorter than input.
+    """
+    if len(audio) == 0:
+        return audio
+
+    # 1. Hard-clip guard
+    audio = np.clip(audio.astype(np.float32), -1.0, 1.0)
+
+    original_len = len(audio)
+
+    # 2. Trailing silence trim (scan RMS windows from the end)
+    keep_end = len(audio)  # index of last sample to keep (exclusive)
+    win = _SILENCE_WINDOW_SAMPLES
+
+    while keep_end - win >= _MIN_TAIL_SAMPLES:
+        window = audio[keep_end - win : keep_end]
+        rms = float(np.sqrt(np.mean(window ** 2)))
+        if rms < _SILENCE_THRESHOLD_LINEAR:
+            keep_end -= win
+        else:
+            break
+
+    # Always keep at least _MIN_TAIL_SAMPLES from the end
+    keep_end = max(keep_end, _MIN_TAIL_SAMPLES)
+
+    silence_trimmed = original_len - keep_end
+    if silence_trimmed > 0:
+        audio = audio[:keep_end]
+        logger.debug(
+            "[TrimArtifacts] trimmed %dms trailing silence",
+            int(silence_trimmed / sr * 1000),
+        )
+
+    # 3. Spectral flatness check on trailing region
+    tail_samples = min(_FLATNESS_MIN_TAIL_SAMPLES * 4, len(audio))
+    if tail_samples >= _FLATNESS_MIN_TAIL_SAMPLES:
+        tail = audio[-tail_samples:]
+        flatness = _spectral_flatness(tail)
+        if flatness > _FLATNESS_THRESHOLD:
+            # Trim the flat-spectrum tail; walk backwards in segments
+            # until we find a genuinely speech-like region.
+            trim_end = len(audio) - tail_samples
+            trim_end = max(trim_end, _MIN_TAIL_SAMPLES)
+            loop_trimmed = len(audio) - trim_end
+            audio = audio[:trim_end]
+            logger.debug(
+                "[TrimArtifacts] trimmed %dms flat-spectrum repetition tail "
+                "(flatness=%.3f)",
+                int(loop_trimmed / sr * 1000),
+                flatness,
+            )
+
+    return audio
+
+
 class KokoroEngine(SpeechEngine):
     """Wraps Kokoro-TTS to synthesize speech from parsed script segments."""
 
@@ -291,7 +409,9 @@ class KokoroEngine(SpeechEngine):
                             chunk_audio_parts.append(audio)
 
                     if chunk_audio_parts:
-                        speech_parts_for_crossfade.append(np.concatenate(chunk_audio_parts))
+                        raw_chunk = np.concatenate(chunk_audio_parts)
+                        cleaned_chunk = trim_tts_artifacts(raw_chunk, sr=SAMPLE_RATE)
+                        speech_parts_for_crossfade.append(cleaned_chunk)
 
                 # Crossfade all speech chunks within this segment
                 if speech_parts_for_crossfade:
