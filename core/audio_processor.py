@@ -5,7 +5,9 @@ from pedalboard import (
     Compressor,
     Gain,
     HighpassFilter,
+    HighShelfFilter,
     LowpassFilter,
+    LowShelfFilter,
     NoiseGate,
     PeakFilter,
     Limiter,
@@ -47,27 +49,33 @@ def make_voice_chain(reverb_amount: float = 0.09) -> Pedalboard:
 
 
 def make_music_chain() -> Pedalboard:
-    """FX chain for MusicGen output: warm low end → tamed highs → limit.
+    """FX chain for MusicGen output: low-end warmth → vocal pocket notch → gentle HF shelf → limit.
 
-    The HighShelfFilter is critical — it tames MusicGen's 'digital shimmer'
-    in the 8kHz+ range and creates spectral space for the voice.
+    The HighShelfFilter replaces the previous aggressive 3kHz LowpassFilter.
+    It preserves natural ambient timbre while softening the 'digital shimmer'
+    above 10kHz that MusicGen produces.
     """
     return Pedalboard([
-        PeakFilter(cutoff_frequency_hz=300, gain_db=2.0, q=0.7),
-        PeakFilter(cutoff_frequency_hz=1500, gain_db=-2.5, q=0.5),  # vocal pocket
-        LowpassFilter(cutoff_frequency_hz=3000.0),                    # gentle HF rolloff
+        PeakFilter(cutoff_frequency_hz=300, gain_db=2.0, q=0.7),      # Low-end warmth
+        PeakFilter(cutoff_frequency_hz=1800, gain_db=-3.0, q=0.6),   # Vocal pocket notch
+        HighShelfFilter(cutoff_frequency_hz=10000.0, gain_db=-4.0),   # Gentle HF rolloff
         Limiter(threshold_db=-1.0),
     ])
 
 
 def make_master_chain() -> Pedalboard:
-    """Final mastering chain: gain → glue compressor → brickwall limiter.
+    """Final mastering chain: subsonic HPF → gain → glue compressor → brickwall limiter.
+
+    The HighpassFilter at 35 Hz removes inaudible subsonic rumble from MusicGen
+    output that would otherwise consume digital headroom, causing the limiter
+    to trigger earlier and produce a quieter or more compressed final mix.
 
     The Compressor at 2:1 ratio with slow attack/release acts as a soft-knee
     "glue" — gently reining in peaks from music swells without the harsh,
     pumping sound of aggressive limiting alone.
     """
     return Pedalboard([
+        HighpassFilter(cutoff_frequency_hz=35.0),   # Remove inaudible MusicGen rumble
         Gain(gain_db=-3.0),
         # Bus compressor: gentle 2:1 glue before the brickwall limiter
         Compressor(threshold_db=-18.0, ratio=2.0, attack_ms=30.0, release_ms=300.0),

@@ -24,7 +24,7 @@ NATIVE_SAMPLE_RATE = 32000       # MusicGen native output rate
 TARGET_SAMPLE_RATE = 24000       # Kokoro TTS / pipeline standard rate
 SEGMENT_DURATION = 30            # Seconds per MusicGen call (hard limit)
 CONTEXT_DURATION = 5             # Seconds of audio context for continuation
-CROSSFADE_DURATION = 0.05        # Seconds of crossfade at each segment seam
+CROSSFADE_DURATION = 2.0         # Seconds of crossfade at each segment seam
 
 MODEL_ID = "facebook/musicgen-stereo-medium"
 FALLBACK_MODEL_ID = "facebook/musicgen-small"
@@ -39,7 +39,7 @@ class MusicEngine:
     audio context per step. Stereo output is downmixed to mono at the boundary
     to preserve the pipeline's mono contract.
 
-    Performance: MPS + disabled CFG = ~10x faster than CPU + CFG.
+    Performance: MPS + CFG 4.0 for stable, prompt-adherent ambient output.
     """
 
     def __init__(self):
@@ -159,10 +159,10 @@ class MusicEngine:
         self.model.set_generation_params(
             duration=SEGMENT_DURATION,
             use_sampling=True,
-            top_k=250,
-            top_p=0.0,
-            temperature=1.0,
-            cfg_coef=1.0,       # Disabled CFG — single forward pass per token
+            top_k=250,           # Keeps sampling within top-250 tokens
+            top_p=0.0,           # Disabled — top_k handles truncation
+            temperature=0.87,    # Stabilises token sampling for consonant pads (0.85-0.90 sweet spot)
+            cfg_coef=4.0,        # Strong CFG — penalises tokens that diverge from text prompt
         )
 
         if progress_cb is not None:
@@ -170,9 +170,14 @@ class MusicEngine:
 
         t0 = time.time()
 
-        # ── Segment 1: text-only generation ─────────────────────────────
-        wav = self.model.generate([prompt], progress=False)
-        current = self._to_mono(wav[0]).cpu()
+        # ── Segment 1: text-only generation with hallucination check ────
+        MAX_RETRIES = 3
+        for attempt in range(MAX_RETRIES):
+            wav = self.model.generate([prompt], progress=False)
+            current = self._to_mono(wav[0]).cpu()
+            if self._check_spectral_flux(current):
+                break
+            logger.info("[MusicEngine] Segment 1 retry %d/%d", attempt + 1, MAX_RETRIES)
         segments = [current]
 
         elapsed = time.time() - t0
@@ -191,13 +196,18 @@ class MusicEngine:
             if self.device != "cpu":
                 context = context.to(self.device)
 
-            next_wav = self.model.generate_continuation(
-                prompt=context,
-                prompt_sample_rate=NATIVE_SAMPLE_RATE,
-                descriptions=[prompt],
-                progress=False,
-            )
-            segments.append(self._to_mono(next_wav[0]).cpu())
+            for attempt in range(MAX_RETRIES):
+                next_wav = self.model.generate_continuation(
+                    prompt=context,
+                    prompt_sample_rate=NATIVE_SAMPLE_RATE,
+                    descriptions=[prompt],
+                    progress=False,
+                )
+                candidate = self._to_mono(next_wav[0]).cpu()
+                if self._check_spectral_flux(candidate):
+                    break
+                logger.info("[MusicEngine] Segment %d retry %d/%d", i + 1, attempt + 1, MAX_RETRIES)
+            segments.append(candidate)
 
             seg_elapsed = time.time() - seg_t0
             logger.info(
@@ -231,6 +241,64 @@ class MusicEngine:
         return result
 
     # ── Private helpers ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _check_spectral_flux(
+        audio: torch.Tensor,
+        sample_rate: int = NATIVE_SAMPLE_RATE,
+        hop_size: int = 512,
+        flux_threshold_multiplier: float = 4.5,
+    ) -> bool:
+        """Return True if audio passes the hallucination check (no sudden transients).
+
+        Computes per-frame spectral flux (L1 norm of the difference between
+        consecutive magnitude spectra). If any single frame's flux exceeds
+        4.5x the median flux of the segment, it indicates a sudden percussive
+        event — the segment is flagged for rejection and regeneration.
+
+        Args:
+            audio:                   1D or (1, N) float tensor at NATIVE_SAMPLE_RATE.
+            sample_rate:             Sample rate (used for frame sizing only).
+            hop_size:                STFT hop in samples.
+            flux_threshold_multiplier: How many times the median flux triggers rejection.
+
+        Returns:
+            True  = segment is clean (accept).
+            False = transient spike detected (reject and regenerate).
+        """
+        waveform = audio.squeeze()
+        if waveform.ndim > 1:
+            waveform = waveform.mean(dim=0)
+
+        # Compute STFT magnitude frames
+        n_fft = 1024
+        window = torch.hann_window(n_fft, device=waveform.device)
+        stft = torch.stft(
+            waveform, n_fft=n_fft, hop_length=hop_size,
+            window=window, return_complex=True
+        )
+        magnitude = stft.abs()  # (freq_bins, time_frames)
+
+        if magnitude.shape[-1] < 2:
+            return True  # Too short to evaluate — accept
+
+        # Spectral flux: L1 norm of frame-to-frame magnitude difference
+        flux = (magnitude[:, 1:] - magnitude[:, :-1]).abs().sum(dim=0)  # (time_frames-1,)
+
+        median_flux = flux.median()
+        if median_flux < 1e-8:
+            return True  # Silent segment — accept
+
+        peak_flux = flux.max()
+        ratio = float(peak_flux / median_flux)
+
+        is_clean = ratio < flux_threshold_multiplier
+        if not is_clean:
+            logger.warning(
+                "[MusicEngine] Hallucination detected: peak/median flux ratio=%.1f (threshold=%.1f). "
+                "Regenerating segment.", ratio, flux_threshold_multiplier
+            )
+        return is_clean
 
     def _num_segments(self, duration: float) -> int:
         """Calculate number of generation passes needed for the target duration."""

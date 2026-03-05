@@ -371,6 +371,124 @@ class ParlerTTSEngine(SpeechEngine):
 
         return audio_24k.astype(np.float32)
 
+    def _generate_speech_batch(
+        self,
+        texts: list[str],
+        description: str,
+        max_batch_size: int = 4,
+    ) -> list[np.ndarray]:
+        """Generate speech for multiple text chunks in batches.
+
+        Processes all chunks under a unified latent state per batch,
+        reducing inter-chunk voice drift compared to sequential calls.
+        Batches are capped at max_batch_size to stay within memory limits.
+
+        Falls back to sequential _generate_speech_chunk() on any error.
+
+        Returns list of float32 numpy arrays at 24000 Hz, one per text.
+        """
+        if not texts:
+            return []
+
+        all_audio: list[np.ndarray] = []
+
+        # Split into sub-batches to respect memory constraints
+        for batch_start in range(0, len(texts), max_batch_size):
+            batch_texts = texts[batch_start:batch_start + max_batch_size]
+
+            try:
+                audio_arrays = self._generate_batch_internal(batch_texts, description)
+                all_audio.extend(audio_arrays)
+            except Exception as e:
+                print(f"[ParlerTTS] Batch generation failed, falling back to sequential: {e}")
+                for text in batch_texts:
+                    all_audio.append(self._generate_speech_chunk(text, description))
+
+        return all_audio
+
+    def _generate_batch_internal(
+        self,
+        texts: list[str],
+        description: str,
+    ) -> list[np.ndarray]:
+        """Internal: generate a single batch of texts.
+
+        Tokenizes all description/text pairs together with padding so the
+        model processes them under a single latent state.
+
+        Returns list of float32 numpy arrays at 24000 Hz.
+        """
+        if self.model is None or self.tokenizer is None:
+            raise RuntimeError("Model not loaded. Call load_model() first.")
+
+        batch_size = len(texts)
+
+        # Identity lock: set seed once per batch for unified latent state
+        set_seed(VOICE_IDENTITY_SEED)
+
+        # Tokenize descriptions (same description repeated for each chunk)
+        descriptions_batch = [description] * batch_size
+        desc_inputs = self.tokenizer(
+            descriptions_batch, return_tensors="pt", padding=True
+        )
+        prompt_inputs = self.tokenizer(
+            texts, return_tensors="pt", padding=True
+        )
+
+        input_ids = desc_inputs.input_ids.to(self.device)
+        attention_mask = desc_inputs.attention_mask.to(self.device)
+        prompt_input_ids = prompt_inputs.input_ids.to(self.device)
+        prompt_attention_mask = prompt_inputs.attention_mask.to(self.device)
+
+        with torch.no_grad():
+            generation = self.model.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                prompt_input_ids=prompt_input_ids,
+                prompt_attention_mask=prompt_attention_mask,
+                do_sample=True,
+                temperature=0.8,
+            )
+
+        # generation is (batch_size, sequence_length) — extract each item
+        generation = generation.cpu().float()
+
+        results: list[np.ndarray] = []
+        for i in range(batch_size):
+            audio_native = generation[i].numpy().squeeze()
+
+            # NaN / Inf guard
+            if np.isnan(audio_native).any() or not np.isfinite(audio_native).all():
+                print(f"[ParlerTTS] WARNING: Batch item {i} has NaN/Inf, falling back to sequential.")
+                audio_native = self._generate_speech_chunk(texts[i], description)
+                results.append(audio_native)
+                continue
+
+            # Hard normalization
+            max_val = np.abs(audio_native).max()
+            if max_val > 1.0:
+                audio_native = audio_native / max_val
+
+            # Handle empty generation
+            if audio_native.size == 0:
+                results.append(np.zeros(int(0.1 * SAMPLE_RATE), dtype=np.float32))
+                continue
+
+            # Resample native SR -> 24000 Hz
+            if self._native_sr != SAMPLE_RATE:
+                audio_tensor = torch.tensor(audio_native).unsqueeze(0)
+                audio_24k = torchaudio.functional.resample(
+                    audio_tensor,
+                    orig_freq=self._native_sr,
+                    new_freq=SAMPLE_RATE,
+                ).squeeze(0).numpy()
+            else:
+                audio_24k = audio_native
+
+            results.append(audio_24k.astype(np.float32))
+
+        return results
+
     def synthesize(
         self,
         segments: list[dict],
@@ -414,9 +532,11 @@ class ParlerTTSEngine(SpeechEngine):
                 if not sentences:
                     sentences = [segment["text"]]
 
-                for j, sentence in enumerate(sentences):
-                    speech_audio = self._generate_speech_chunk(sentence, description)
+                # Batch-generate all sentences in this segment for unified
+                # latent state (prevents inter-chunk voice drift).
+                speech_arrays = self._generate_speech_batch(sentences, description)
 
+                for j, speech_audio in enumerate(speech_arrays):
                     audio_chunks.append(speech_audio)
                     activity_chunks.append(np.ones(len(speech_audio), dtype=bool))
 
@@ -424,7 +544,7 @@ class ParlerTTSEngine(SpeechEngine):
                     if j < len(sentences) - 1:
                         pause_sec = (
                             ELLIPSIS_PAUSE_SEC
-                            if sentence.rstrip().endswith(("...", "\u2026"))
+                            if sentences[j].rstrip().endswith(("...", "\u2026"))
                             else INTER_SENTENCE_PAUSE_SEC
                         )
                         pause_samples = int(pause_sec * SAMPLE_RATE)

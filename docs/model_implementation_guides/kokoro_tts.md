@@ -470,7 +470,7 @@ def calculate_adjusted_speed(
 | Channels | **Mono (1 channel)** |
 | WAV export | 24-bit WAV via `soundfile.write` — always generate WAV first |
 | MP3 export | Convert WAV → MP3 at the very end only (`pedalboard.io.AudioFile`) |
-| Target LUFS | −16 LUFS (Daytime Meditation) or −19 LUFS (Sleep Journey) — selectable via Session Mode |
+| Target LUFS | −14 LUFS (streaming distribution standard — Spotify, Apple Music, YouTube) |
 
 > **Critical rule from Research doc 1:** Always generate WAV first. Converting directly to MP3 during synthesis can introduce click artifacts in the silence regions between segments. Only convert to MP3 as the final export step after all mixing is done.
 
@@ -484,7 +484,7 @@ Research doc 3 mentions several post-processing options. Here is how they map to
 
 | Recommendation | MoodScape Implementation |
 |----------------|--------------------------|
-| Normalize loudness | ✅ Parameterised via `pyloudnorm` (−16 LUFS daytime / −19 LUFS sleep) in `mixer.py` |
+| Normalize loudness | ✅ Unified −14 LUFS (streaming standard) via `pyloudnorm` in `mixer.py` |
 | Gentle reverb on voice | ✅ Already done via Pedalboard `Reverb` in `audio_processor.py` |
 | Fade in/out | ✅ Already done in `mixer.py` |
 | EQ warmth (low shelf) | ✅ Already done via Pedalboard `LowShelfFilter` in `audio_processor.py` |

@@ -483,11 +483,11 @@ class ParlerTTSEngine:
                 if not sentences:
                     sentences = [segment["text"]]
 
-                for j, sentence in enumerate(sentences):
-                    speech_audio = self._generate_speech_chunk(
-                        sentence, description
-                    )
+                # Batch-generate all sentences in this segment for unified
+                # latent state (prevents inter-chunk voice drift).
+                speech_arrays = self._generate_speech_batch(sentences, description)
 
+                for j, speech_audio in enumerate(speech_arrays):
                     audio_chunks.append(speech_audio)
                     activity_chunks.append(
                         np.ones(len(speech_audio), dtype=bool)
@@ -497,7 +497,7 @@ class ParlerTTSEngine:
                     if j < len(sentences) - 1:
                         pause_sec = (
                             ELLIPSIS_PAUSE_SEC
-                            if sentence.rstrip().endswith(("...", "\u2026"))
+                            if sentences[j].rstrip().endswith(("...", "\u2026"))
                             else INTER_SENTENCE_PAUSE_SEC
                         )
                         pause_samples = int(pause_sec * SAMPLE_RATE)
@@ -844,6 +844,36 @@ For scripts longer than ~30 seconds of speech, generate sentence-by-sentence (al
 - Quality drift where the voice changes characteristics mid-generation
 
 After generating all chunks, they're concatenated with appropriate inter-sentence pauses. The silence insertion (from `[pause:Xs]` markers) is handled identically to Kokoro — as numpy zero arrays.
+
+### 6.4 Batched Generation for Voice Consistency
+
+The Parler TTS engine now uses **batched generation** to prevent inter-chunk voice drift. Instead of generating each sentence independently (which risks sampling from slightly different latent speaker regions), all sentences in a speech segment are batched together:
+
+```python
+# Batched generation pattern:
+descriptions_batch = [description] * len(sentences)
+desc_inputs = tokenizer(descriptions_batch, return_tensors="pt", padding=True)
+prompt_inputs = tokenizer(sentences, return_tensors="pt", padding=True)
+
+set_seed(VOICE_IDENTITY_SEED)  # Set seed ONCE per batch, not per chunk
+
+generation = model.generate(
+    input_ids=desc_inputs.input_ids,
+    attention_mask=desc_inputs.attention_mask,
+    prompt_input_ids=prompt_inputs.input_ids,
+    prompt_attention_mask=prompt_inputs.attention_mask,
+)
+
+# Extract each audio array from batch dimension
+audio_arrays = [generation[i].cpu().numpy().squeeze() for i in range(len(sentences))]
+```
+
+**Key implementation details:**
+- **Sub-batching**: Batches are capped at 4 chunks (memory constraint). Larger segments are split into sub-batches of 4.
+- **`padding=True`**: Mandatory for batched inputs of varying lengths. Without it, the tokenizer raises a dimension mismatch.
+- **Seed placement**: `set_seed(42)` is called once per batch, not before each individual tokenization.
+- **Fallback**: If batch generation fails (e.g. MPS error), falls back to sequential `_generate_speech_chunk()` per-item.
+- **Per-item NaN/Inf guard**: Each batch item is individually checked — corrupted items fall back to sequential generation.
 
 ### 6.4 torch.compile Optimization (Optional, Test First)
 

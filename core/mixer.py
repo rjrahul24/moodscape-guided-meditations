@@ -15,7 +15,7 @@ SAMPLE_RATE = 24000
 # Ducking (Lookahead Sidechain)
 # ---------------------------------------------------------------------------
 
-def apply_lookahead_ducking(
+def apply_rms_ducking(
     voice_audio: np.ndarray,
     music_audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
@@ -102,6 +102,74 @@ def apply_lookahead_ducking(
     return (music_audio[:total_samples] * gain_linear).astype(np.float32)
 
 
+def apply_mask_ducking(
+    voice_activity: np.ndarray,
+    music_audio: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+    duck_amount_db: float = -9.0,
+    attack_ms: float = 150.0,
+    release_ms: float = 2000.0,
+    lookahead_ms: float = 100.0,
+) -> np.ndarray:
+    """Apply ducking using a pre-computed voice activity boolean mask.
+
+    Constructs a dB automation curve from the voice_activity mask, applies
+    lookahead shift, smooths with exponential attack/release envelopes, and
+    multiplies the music array by the resulting linear gain envelope.
+
+    This is the preferred method when using Kokoro TTS (Method A from the
+    architecture guide) because the mask is sample-accurate and requires
+    no additional acoustic analysis.
+
+    Args:
+        voice_activity:  bool array, True where voice is active, aligned to music.
+        music_audio:     1D float32 music array to duck.
+        sample_rate:     Sample rate of both arrays.
+        duck_amount_db:  dB reduction during speech (negative value, e.g. -9.0).
+        attack_ms:       Time to reach full duck after voice onset.
+        release_ms:      Time to recover after voice stops (long for meditation).
+        lookahead_ms:    Shift duck earlier than voice onset (pre-duck).
+
+    Returns:
+        Ducked music as 1D float32 array.
+    """
+    total_samples = len(music_audio)
+
+    # 1. Build raw dB automation from the boolean mask
+    target_db = np.where(
+        voice_activity[:total_samples],
+        float(duck_amount_db),
+        0.0
+    ).astype(np.float64)
+
+    # 2. Lookahead: shift envelope earlier so music starts fading before
+    #    the first syllable of each phrase.
+    lookahead_samples = int((lookahead_ms / 1000.0) * sample_rate)
+    if lookahead_samples > 0:
+        target_db = np.roll(target_db, -lookahead_samples)
+        target_db[-lookahead_samples:] = 0.0
+
+    # 3. Sample-by-sample EMA smoothing for attack and release.
+    #    Attack: how fast music ducks when voice starts.
+    #    Release: how slowly music recovers when voice stops.
+    attack_coeff = math.exp(-1.0 / max(1, attack_ms * sample_rate / 1000.0))
+    release_coeff = math.exp(-1.0 / max(1, release_ms * sample_rate / 1000.0))
+
+    smoothed = np.zeros(total_samples, dtype=np.float64)
+    current = 0.0
+    for i in range(total_samples):
+        t = target_db[i]
+        if t < current:
+            current = attack_coeff * current + (1.0 - attack_coeff) * t
+        else:
+            current = release_coeff * current + (1.0 - release_coeff) * t
+        smoothed[i] = current
+
+    # 4. Convert dB → linear and apply
+    gain_linear = np.power(10.0, smoothed / 20.0).astype(np.float32)
+    return (music_audio[:total_samples] * gain_linear).astype(np.float32)
+
+
 # ---------------------------------------------------------------------------
 # Track overlay / alignment
 # ---------------------------------------------------------------------------
@@ -110,15 +178,18 @@ def _loop_with_crossfade(
     music: np.ndarray,
     target_length: int,
     sample_rate: int = SAMPLE_RATE,
-    crossfade_sec: float = 1.0,
+    crossfade_sec: float = 2.0,
 ) -> np.ndarray:
-    """Loop music array to target_length with crossfade at boundaries."""
+    """Loop music array to target_length with equal-power crossfade at boundaries."""
     crossfade_samples = min(int(crossfade_sec * sample_rate), len(music) // 2)
     result = music.copy()
 
     while len(result) < target_length + crossfade_samples:
-        fo = np.linspace(1.0, 0.0, crossfade_samples, dtype=np.float32)
-        fi = np.linspace(0.0, 1.0, crossfade_samples, dtype=np.float32)
+        # Equal-power cosine crossfade (replaces linear np.linspace)
+        t = np.linspace(0, np.pi / 2, crossfade_samples, dtype=np.float32)
+        fo = np.cos(t) ** 2               # fade out: 1.0 → 0.0
+        fi = np.cos(np.pi / 2 - t) ** 2   # fade in:  0.0 → 1.0
+
         overlap = result[-crossfade_samples:] * fo + music[:crossfade_samples] * fi
         result = np.concatenate([result[:-crossfade_samples], overlap, music[crossfade_samples:]])
 
@@ -185,7 +256,7 @@ def apply_fades(
 def calculate_loudness_gain(
     audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
-    target_lufs: float = -18.0,
+    target_lufs: float = -14.0,
 ) -> float:
     """Calculate the linear gain multiplier to hit a target LUFS."""
     min_samples = int(0.4 * sample_rate)
@@ -211,7 +282,7 @@ def calculate_loudness_gain(
 def normalize_loudness(
     audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
-    target_lufs: float = -18.0,
+    target_lufs: float = -14.0,
 ) -> np.ndarray:
     """Normalize audio to target LUFS. Returns float32, clipped to [-1, 1]."""
     gain = calculate_loudness_gain(audio, sample_rate, target_lufs)
@@ -233,7 +304,7 @@ def mix(
     music_pre_roll_sec: float = 2.0,
     fade_in_sec: float = 3.0,
     fade_out_sec: float = 5.0,
-    target_lufs: float = -18.0,
+    target_lufs: float = -14.0,
 ) -> np.ndarray:
     """Full mix pipeline: align → level → duck → overlay → fades → normalize.
 
@@ -272,17 +343,15 @@ def mix(
         ])
     aligned_music = aligned_music[:target_len]
 
-    # 4. Compute and apply lookahead sidechain ducking
-    #    75 ms lookahead ensures music starts fading before the first syllable.
-    ducked_music = apply_lookahead_ducking(
-        aligned_voice,
+    # 4. Apply mask-based ducking (Method A — uses pre-computed voice activity)
+    ducked_music = apply_mask_ducking(
+        aligned_activity,
         aligned_music,
         sample_rate=sample_rate,
         duck_amount_db=duck_amount_db,
-        frame_ms=10.0,
-        attack_ms=50.0,
-        release_ms=500.0,
-        lookahead_ms=75.0,
+        attack_ms=150.0,
+        release_ms=2000.0,
+        lookahead_ms=100.0,
     )
 
     # 5. Sum voice + ducked music
@@ -368,7 +437,7 @@ def export_audio(
     output_format: str = "wav",
     target_sample_rate: int = 44100,
     master_chain: Pedalboard | None = None,
-    target_lufs: float = -18.0,
+    target_lufs: float = -14.0,
 ) -> str:
     """Stream audio out to temp file with Pedalboard plugins and normalization.
     
@@ -377,7 +446,7 @@ def export_audio(
     streams directly to a file to prevent immense memory spikes.
 
     Args:
-        target_lufs: Loudness target in LUFS (-18 for guided meditations).
+        target_lufs: Loudness target in LUFS (-14 for streaming distribution).
     """
     from pedalboard.io import AudioFile
     

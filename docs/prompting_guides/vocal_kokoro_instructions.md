@@ -59,12 +59,12 @@ Where `X` is an integer or a decimal number (float). Both forms are valid:
 
 ### Paragraph Breaks as Automatic Pauses
 
-Any double newline (`\n\n`) in the script is automatically converted to a `[pause:1.5s]` marker before parsing. Single newlines have no special effect — they are treated as a space within the same speech segment.
+Any double newline (`\n\n`) in the script is automatically converted to a `[pause:2.5s]` marker before parsing. Single newlines have no special effect — they are treated as a space within the same speech segment.
 
 ```
 This is one sentence on a single line. [pause:3s]      ← explicit 3-second pause
 
-This is a new paragraph.                               ← blank line above → auto 1.5s pause
+This is a new paragraph.                               ← blank line above → auto 2.5s pause
 ```
 
 ### Consecutive Pause Merging
@@ -74,11 +74,21 @@ The parser **merges consecutive pauses** into one. If two pause markers appear b
 ```
 [pause:3s] [pause:2s]    →  becomes a single 5-second pause
 [pause:3s]               }
-                         }  blank line converts to [pause:1.5s],
-Next sentence            }  total pause = 4.5s before "Next sentence"
+                         }  blank line converts to [pause:2.5s],
+Next sentence            }  total pause = 5.5s before "Next sentence"
 ```
 
 This means you should not rely on stacking small pauses; be explicit with a single adequate duration.
+
+### Automatic Number & Abbreviation Expansion
+
+The `text_preprocessor.py` module now automatically expands numbers (0–999) and common abbreviations before TTS inference:
+
+- `4` → `four`, `120` → `one hundred and twenty`
+- `sec` → `seconds`, `min` → `minutes`, `Hz` → `hertz`
+- `e.g` → `for example`, `i.e` → `that is`
+
+This means you can safely write `"breathe in for 4 seconds"` and the TTS engine will receive `"breathe in for four seconds"`. For numbers above 999, continue to spell them out manually.
 
 ---
 

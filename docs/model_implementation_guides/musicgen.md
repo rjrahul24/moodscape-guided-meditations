@@ -147,8 +147,8 @@ model.set_generation_params(
     use_sampling=True,     # ALWAYS True; greedy decoding sounds robotic
     top_k=250,             # Keep at 250; controls diversity
     top_p=0.0,             # Set to 0 to use top_k exclusively (more stable)
-    temperature=0.8,       # Lower = more stable, fewer surprises (0.7–0.9 for meditation)
-    cfg_coef=4.0,          # Classifier-free guidance — higher = stricter prompt adherence
+    temperature=0.87,      # Stabilises token sampling for consonant pads (0.85-0.90 sweet spot)
+    cfg_coef=4.0,          # Strong CFG — heavily penalises tokens that diverge from text prompt
 )
 
 prompt = "Deep ambient drone, warm synth pads, no drums, no melody, beatless, 432Hz, peaceful"
@@ -211,7 +211,7 @@ NATIVE_SR = 32000       # MusicGen native sample rate
 TARGET_SR = 24000       # Kokoro TTS sample rate (resampling target)
 SEGMENT_DURATION = 30   # Seconds per MusicGen call (hard limit)
 CONTEXT_DURATION = 10   # Seconds of previous audio used as context for continuation
-CROSSFADE_DURATION = 2  # Seconds of crossfade at each segment seam
+CROSSFADE_DURATION = 2  # Seconds of equal-power cosine crossfade at each segment seam
 
 
 class MusicEngine:
@@ -392,13 +392,26 @@ class MusicEngine:
 
 ## 7. Generation Parameters — Tuning Guide for Meditation
 
-| Parameter | Default | Meditation Range | Effect |
+| Parameter | Default | Meditation Value | Effect |
 |-----------|---------|-----------------|--------|
-| `temperature` | 1.0 | **0.75 – 0.90** | Lower = more predictable, fewer jarring transitions. Keep ≤0.9 for ambient drones. |
-| `top_k` | 250 | **200 – 250** | Lower = simpler/more focused textures. 250 is safe for all styles. |
-| `top_p` | 0.0 | **0.0** | Keep at 0 when using `top_k` to avoid combined sampling instability. |
-| `cfg_coef` | 3.0 | **3.5 – 5.0** | Higher = model sticks more strictly to "no drums", "beatless" etc. Don't exceed 6.0 — audio distorts. |
+| `temperature` | 1.0 | **0.87** | Stabilises token sampling for consonant pads. The 0.85–0.90 range is the sweet spot for ambient generation. |
+| `top_k` | 250 | **250** | Keeps sampling within the top 250 tokens. Safe default for all ambient styles. |
+| `top_p` | 0.0 | **0.0** | Disabled — top_k handles truncation exclusively. Using both can cause instability. |
+| `cfg_coef` | 3.0 | **4.0** | Strong Classifier-Free Guidance. Heavily penalises EnCodec tokens that don’t align with the text prompt (e.g., “no percussion”). Don't exceed 6.0 — audio distorts. |
 | `duration` | — | **30** | Always use the maximum 30s per call for maximum context coherence. |
+
+> **Note on `cfg_coef=4.0`:** Enabling CFG at this level means MusicGen runs **two forward passes per token** (conditional + unconditional), roughly doubling generation time compared to `cfg_coef=1.0`. This is a worthwhile trade-off for suppressing hallucinated drums and melodic intrusions.
+
+### Spectral Flux Hallucination Guard
+
+MusicGen occasionally generates sudden percussive transients or rhythmic bursts mid-generation, especially when prompt attention diffuses during continuation passes. MoodScape implements a spectral flux analysis failsafe:
+
+1. After each generated segment, compute the STFT magnitude spectra (1024-point FFT, 512-sample hop).
+2. Calculate per-frame **spectral flux** (L1 norm of frame-to-frame magnitude differences).
+3. If any frame’s flux exceeds **4.5× the median flux**, the segment is flagged as containing a percussive transient.
+4. The segment is regenerated (up to 3 retries). If all retries fail, the last attempt is used (graceful degradation).
+
+This catches hallucinated drum hits, clicks, and rhythmic events that CFG alone may miss.
 
 ---
 
@@ -565,11 +578,12 @@ import torchaudio
 NATIVE_SR = 32000
 TARGET_SR = 24000
 SEGMENT_DURATION = 30       # Max per MusicGen call
-CONTEXT_DURATION = 10       # Audio context passed to generate_continuation
-CROSSFADE_DURATION = 2      # Seconds of linear crossfade at each seam
+CONTEXT_DURATION = 5       # Audio context passed to generate_continuation
+CROSSFADE_DURATION = 2.0      # Seconds of equal-power cosine crossfade at each seam
 
 MODEL_CANDIDATES = [
-    "facebook/musicgen-medium",   # Primary — best quality for M1 Max
+    "facebook/musicgen-stereo-medium",   # Primary — best quality for M1 Max
+    "facebook/musicgen-medium",    # Fallback
     "facebook/musicgen-small",    # Fallback
 ]
 
@@ -697,6 +711,11 @@ class MusicEngine:
             fade_in  = torch.linspace(0.0, 1.0, overlap)
 
             blended = result[..., -overlap:] * fade_out + new[..., :overlap] * fade_in
+
+            # Note: The actual implementation uses equal-power cosine crossfade:
+            # t = torch.linspace(0, math.pi/2, overlap)
+            # fade_out = torch.cos(t) ** 2
+            # fade_in = torch.cos(math.pi/2 - t) ** 2
             result = torch.cat([result[..., :-overlap], blended, new[..., overlap:]], dim=-1)
 
         return result
@@ -767,9 +786,9 @@ brew install ffmpeg
 ## 14. Quick Reference — Default Parameter Values
 
 ```python
-# For use in music_engine.generate() calls
+# For use in music_engine.generate() — these are fixed internally
 MEDITATION_DEFAULTS = {
-    "temperature": 0.8,   # Stable, predictable ambient texture
+    "temperature": 0.87,  # Stabilises token sampling for ambient pads
     "top_k": 250,         # Standard diversity
     "top_p": 0.0,         # Disabled — use top_k only
     "cfg_coef": 4.0,      # Strong prompt adherence (no drums = no drums)
@@ -777,8 +796,8 @@ MEDITATION_DEFAULTS = {
 
 # Segment architecture
 SEGMENT_DURATION = 30     # Seconds per MusicGen call
-CONTEXT_DURATION = 10     # Seconds fed as audio context for continuation
-CROSSFADE_DURATION = 2    # Seconds of linear crossfade at segment seams
+CONTEXT_DURATION = 5      # Seconds fed as audio context for continuation
+CROSSFADE_DURATION = 2    # Seconds of equal-power cosine crossfade at segment seams
 
 # Sample rates
 NATIVE_SR = 32000         # MusicGen output

@@ -2,6 +2,70 @@
 
 import re
 
+# ── Abbreviation & number expansion tables ──────────────────────────
+
+# Mapping for common abbreviations in meditation scripts
+_ABBREV_MAP = {
+    r'\bsec\b': 'seconds',
+    r'\bmin\b': 'minutes',
+    r'\bhr\b': 'hours',
+    r'\bvs\b': 'versus',
+    r'\betc\b': 'et cetera',
+    r'\be\.g\b': 'for example',
+    r'\bi\.e\b': 'that is',
+    r'\bHz\b': 'hertz',
+    r'\bkHz\b': 'kilohertz',
+}
+
+# Ordinal and cardinal number words
+_ONES = ['', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight',
+         'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen',
+         'sixteen', 'seventeen', 'eighteen', 'nineteen']
+_TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy',
+         'eighty', 'ninety']
+
+
+def _int_to_words(n: int) -> str:
+    """Convert an integer 0–999 to English words."""
+    if n < 20:
+        return _ONES[n]
+    if n < 100:
+        tens, ones = divmod(n, 10)
+        return _TENS[tens] + (('-' + _ONES[ones]) if ones else '')
+    hundreds, remainder = divmod(n, 100)
+    rest = (' and ' + _int_to_words(remainder)) if remainder else ''
+    return _ONES[hundreds] + ' hundred' + rest
+
+
+def _replace_number(match: re.Match) -> str:
+    """Replace a matched digit sequence with English words."""
+    try:
+        n = int(match.group(0))
+        if 0 <= n <= 999:
+            return _int_to_words(n) if n != 0 else 'zero'
+    except ValueError:
+        pass
+    return match.group(0)
+
+
+def expand_for_tts(text: str) -> str:
+    """Expand digits and abbreviations to their spoken equivalents.
+
+    Prevents Kokoro's G2P engine from mispronouncing or rushing through
+    numeric and abbreviated tokens.  Must be called before any TTS inference.
+    """
+    # Expand abbreviations first (before number expansion)
+    for pattern, replacement in _ABBREV_MAP.items():
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+
+    # Replace standalone integers (0–999) with word equivalents.
+    # Uses a word-boundary assertion to avoid partial matches inside
+    # larger tokens (e.g. "432Hz" is handled by the Hz abbreviation above).
+    text = re.sub(r'\b\d{1,3}\b', _replace_number, text)
+
+    return text
+
+
 
 def preprocess_for_meditation(text: str) -> str:
     """Optimise text for calm, meditation-style Kokoro TTS delivery.
@@ -17,6 +81,9 @@ def preprocess_for_meditation(text: str) -> str:
     engine.  Does NOT alter [pause:Xs] markers — those are handled by the
     script parser.
     """
+    # Expand digits and abbreviations to spoken equivalents
+    text = expand_for_tts(text)
+
     # Ensure ellipsis is properly formatted (not separate dots)
     text = re.sub(r'\.{2,}', '...', text)
 

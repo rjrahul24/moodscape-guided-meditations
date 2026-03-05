@@ -44,17 +44,18 @@ Voice FX Chain (24 kHz)
   │
   ▼
 Music FX Chain (24 kHz)
-  • LowShelf +1.5 dB @ 200 Hz (warmth)
-  • HighShelf -3 dB @ 8 kHz (tame shimmer)
+  • PeakFilter +2 dB @ 300 Hz (warmth)
+  • PeakFilter -3 dB @ 1800 Hz (vocal pocket)
+  • HighShelfFilter -4 dB @ 10 kHz (gentle HF rolloff)
   • Limiter
   │
   ▼
 Mixer (24 kHz)
   • Align voice + music (2s pre-roll)
-  • Lookahead sidechain ducking (-5 dB, 75ms lookahead, 500ms release)
+  • Mask-based ducking (-9 dB, 100ms lookahead, 150ms attack, 2000ms release)
   • Linear fades (3s in / 5s out)
-  • LUFS normalization (-16 LUFS daytime / -19 LUFS sleep)
-  • Master: Gain → Bus Compressor (2:1) → Limiter (-0.1 dB)
+  • LUFS normalization (-14 LUFS unified target)
+  • Master: HPF 35Hz → Gain → Bus Compressor (2:1) → Limiter (-0.1 dB)
   │
   ▼
 Resample → 44.1 kHz (torchaudio)
@@ -111,8 +112,9 @@ Final brick-wall limiter prevents any overs in the exported file.
 | File | Role |
 |---|---|
 | `core/post_processor.py` | `MasteringEngine` — Phase A (`restore_vocals`) and Phase B (`master_vocals`) |
-| `core/audio_processor.py` | Voice FX chain (compression + reverb + limiter), Music FX chain, Master chain (Gain → Compressor → Limiter) |
-| `core/mixer.py` | Lookahead sidechain ducking, overlay, fades, LUFS normalization, resampling, export |
+| `core/audio_processor.py` | Voice FX chain (compression + reverb + limiter), Music FX chain (HighShelfFilter), Master chain (HPF 35Hz → Gain → Compressor → Limiter) |
+| `core/mixer.py` | Mask-based ducking, overlay, equal-power crossfade looping, fades, LUFS normalization, resampling, export |
+| `core/text_preprocessor.py` | Text normalization (number/abbreviation expansion for TTS) |
 | `core/kokoro_engine.py` | TTS synthesis with per-chunk artifact trimmer (silence + spectral flatness detection) |
 | `core/pipeline.py` | Orchestrates the full signal chain end-to-end |
 
@@ -161,13 +163,17 @@ export_audio(mixed_44k, 44100, "wav")                       # Step 12: 44.1kHz/1
 ## 9. Verification Checklist
 
 - [x] Output audio has no audible hiss above 15 kHz
-- [x] Sub-bass rumble below 80 Hz is removed
+- [x] Sub-bass rumble below 80 Hz is removed from voice (HighpassFilter 80Hz)
+- [x] Subsonic energy below 35 Hz removed from master (HighpassFilter 35Hz)
 - [x] Sibilance (6–8 kHz) is attenuated without affecting other frequencies
 - [x] Only one warmth boost (+2 dB @ 200 Hz) — no duplicate EQ
 - [x] De-esser uses frequency-targeted boost→compress→cut (not full-band compression)
 - [x] EQ and filtering operate at 44.1 kHz (not 24 kHz near-Nyquist)
-- [x] Background music ducks smoothly with 75ms lookahead (music fades before first syllable)
+- [x] Background music ducks smoothly via voice-activity mask (100ms lookahead, 150ms attack, 2000ms release)
 - [x] TTS chunks are cleaned by artifact trimmer (trailing silence + spectral flatness)
 - [x] Master bus compressor (2:1, 30ms/300ms) smooths peaks before final limiter
-- [x] LUFS target is parameterised (−16 daytime / −19 sleep)
+- [x] Unified LUFS target: **−14 LUFS** (streaming distribution standard)
+- [x] Numbers and abbreviations expanded to words before TTS inference
+- [x] MusicGen spectral flux guard rejects segments with percussive transients
+- [x] Equal-power cosine crossfades used for all segment stitching and music looping
 - [x] Final file exported at **44.1 kHz / 16-bit PCM**

@@ -111,7 +111,7 @@ class MeditationPipeline:
             seed = int(time.time()) % (2**31)
 
         # Unified LUFS target for all meditation sessions
-        target_lufs = -18.0
+        target_lufs = -14.0
 
         logger.info("Starting generation — voice=%s, speed=%s, seed=%s, lufs=%s",
                     voice, speed, seed, target_lufs)
@@ -260,7 +260,7 @@ class MeditationPipeline:
 
             # ── Step 8: Apply music FX ──────────────────────────────────────
             _progress(progress_cb, 0.77, "Applying music effects...")
-            music_audio = normalize_loudness(music_audio, TARGET_SR, target_lufs=-24.0)
+            music_audio = normalize_loudness(music_audio, TARGET_SR, target_lufs=-20.0)
             music_chain = make_music_chain()
             music_audio = apply_fx(music_audio, music_chain, TARGET_SR)
 
