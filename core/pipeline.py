@@ -1,12 +1,19 @@
 """Orchestrates the full meditation audio generation pipeline."""
 
+import logging
+import time
+
 import numpy as np
 
 from core.audio_processor import apply_fx, make_master_chain, make_music_chain, make_voice_chain
-from core.mixer import export_audio, mix, normalize_loudness
+from core.mixer import export_audio, export_stems, mix, normalize_loudness
 from core.music_engine import MusicEngine
+from core.qa_monitor import run_qa_checks
 from core.script_parser import parse_script
+from core.text_preprocessor import preprocess_for_meditation
 from core.tts_engine import TTSEngine
+
+logger = logging.getLogger("moodscape")
 
 SAMPLE_RATE = 24000
 
@@ -58,8 +65,8 @@ class MeditationPipeline:
         self,
         script: str,
         music_prompt: str,
-        voice: str = "af_heart,af_nicole",
-        speed: float = 0.80,
+        voice: str = "golden_hour",
+        speed: float = 0.78,
         tts_engine: str = "kokoro",
         parler_voice_preset: str = "Serene Female — warm, calm, breathy",
         parler_custom_description: str = "",
@@ -69,13 +76,16 @@ class MeditationPipeline:
         fade_out_sec: float = 5.0,
         output_format: str = "wav",
         progress_cb=None,
+        seed: int | None = None,
+        do_export_stems: bool = False,
+        upsample_48k: bool = False,
     ) -> tuple[str, str]:
         """Run the full pipeline and return the path to the output audio file.
 
         Args:
             script: Meditation script with [pause:Xs] markers.
             music_prompt: Text description of desired background music.
-            voice: Kokoro voice name.
+            voice: Kokoro voice name, preset, or comma-separated blend.
             speed: Speaking speed (0.5–1.0).
             tts_engine: "kokoro" or "parler".
             parler_voice_preset: Parler voice preset label.
@@ -86,17 +96,38 @@ class MeditationPipeline:
             fade_out_sec: Fade-out duration for the final mix.
             output_format: "wav" or "mp3".
             progress_cb: Called with (fraction: float, message: str).
+            seed: Optional deterministic seed for reproducible generation.
+            do_export_stems: If True, save voice/music stems alongside the mix.
+            upsample_48k: If True, export at 48 kHz instead of 44.1 kHz.
 
         Returns:
             Tuple of (path_to_output_file, status_message).
         """
         status_message = ""
+
+        # Generate a session seed if not provided
+        if seed is None:
+            seed = int(time.time()) % (2**31)
+
+        logger.info("Starting generation — voice=%s, speed=%s, seed=%s", voice, speed, seed)
+
         try:
             # ── Step 1: Parse script ────────────────────────────────────────
             _progress(progress_cb, 0.0, "Parsing meditation script...")
             segments = parse_script(script)
             if not segments:
                 raise ValueError("Script is empty or contains no content.")
+
+            # Preprocess speech segments for optimal Kokoro prosody
+            for seg in segments:
+                if seg["type"] == "speech":
+                    seg["text"] = preprocess_for_meditation(seg["text"])
+
+            logger.info(
+                "Script: %d segments, %d speech blocks",
+                len(segments),
+                sum(1 for s in segments if s["type"] == "speech"),
+            )
 
             # ── Step 2: Load TTS ────────────────────────────────────────────
             if tts_engine == "parler":
@@ -158,8 +189,11 @@ class MeditationPipeline:
                 voice_audio = mastering_engine.restore_vocals(voice_audio, sr=SAMPLE_RATE)
             else:
                 voice_audio, voice_activity = tts.synthesize(
-                    segments, voice=voice, speed=speed, progress_cb=tts_progress
+                    segments, voice=voice, speed=speed,
+                    progress_cb=tts_progress, seed=seed,
                 )
+
+            logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
 
             # ── Step 4: Unload TTS, load MusicGen ───────────────────────────
             _progress(progress_cb, 0.40, "Switching to music model...")
@@ -208,6 +242,13 @@ class MeditationPipeline:
             music_chain = make_music_chain()
             music_audio = apply_fx(music_audio, music_chain, SAMPLE_RATE)
 
+            # ── Optional: Export stems ──────────────────────────────────────
+            stem_paths = None
+            if do_export_stems:
+                _progress(progress_cb, 0.80, "Exporting stems...")
+                stem_paths = export_stems(voice_audio, music_audio, SAMPLE_RATE)
+                logger.info("Stems exported: %s", stem_paths)
+
             # ── Step 9: Mix with ducking ────────────────────────────────────
             _progress(progress_cb, 0.82, "Mixing voice and music...")
             mixed = mix(
@@ -225,9 +266,25 @@ class MeditationPipeline:
             master_chain = make_master_chain()
             mixed = apply_fx(mixed, master_chain, SAMPLE_RATE)
 
+            # ── Step 10b: QA checks ─────────────────────────────────────────
+            qa_results = run_qa_checks(mixed, SAMPLE_RATE)
+            if qa_results["silence"]:
+                status_message += f"QA: {len(qa_results['silence'])} long silence(s) detected. "
+            if not qa_results["clipping"]["passed"]:
+                status_message += "QA: Clipping detected. "
+
             # ── Step 11: Export ─────────────────────────────────────────────
             _progress(progress_cb, 0.95, f"Exporting {output_format.upper()}...")
-            output_path = export_audio(mixed, SAMPLE_RATE, output_format)
+
+            # Optional 48 kHz upsampling
+            if upsample_48k:
+                from core.audio_processor import upsample_audio
+                mixed = upsample_audio(mixed, from_sr=SAMPLE_RATE, to_sr=48000)
+                export_sr = 48000
+            else:
+                export_sr = SAMPLE_RATE
+
+            output_path = export_audio(mixed, export_sr, output_format)
 
         finally:
             # Prevent PyTorch/MPS teardown segfaults

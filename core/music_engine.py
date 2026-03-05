@@ -62,6 +62,25 @@ class MusicEngine:
             return "mps"
         return "cpu"
 
+    def _patch_mps_elu(self):
+        """Monkeypatch PyTorch ELU to ensure contiguous inputs on MPS.
+        
+        Fixes a known bug in PyTorch where `F.elu` produces garbled static
+        on Apple Silicon if the input tensor is non-contiguous. EnCodec
+        relies heavily on ELU, causing random static bursts without this.
+        """
+        import torch.nn.functional as F
+        
+        if not hasattr(F, "_orig_elu"):
+            F._orig_elu = F.elu
+            
+            def safe_elu(input, alpha=1.0, inplace=False):
+                if input.device.type == "mps" and not input.is_contiguous():
+                    input = input.contiguous()
+                return F._orig_elu(input, alpha, inplace)
+            
+            F.elu = safe_elu
+
     # ------------------------------------------------------------------
     # Model lifecycle
     # ------------------------------------------------------------------
@@ -73,6 +92,8 @@ class MusicEngine:
         from audiocraft.models import MusicGen
 
         self.device = self._pick_device()
+        if self.device == "mps":
+            self._patch_mps_elu()
 
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=FutureWarning, message=".*weight_norm.*")
@@ -201,7 +222,10 @@ class MusicEngine:
             full_audio, NATIVE_SAMPLE_RATE, TARGET_SAMPLE_RATE
         )
         result = resampled.squeeze(0).numpy().astype(np.float32)
-        return np.clip(result, -1.0, 1.0)
+        # Return unclipped audio: pipeline.py will safely LUFS-normalize it.
+        # Hard clipping here causes massive distortion because MusicGen
+        # frequently generates unnormalized peaks > 1.0.
+        return result
 
     # ── Private helpers ─────────────────────────────────────────────────
 
@@ -240,9 +264,10 @@ class MusicEngine:
                 continue
 
             overlap = min(fade_samples, result.shape[-1], new.shape[-1])
-            # Fade tensors on same device as audio
-            fade_out = torch.linspace(1.0, 0.0, overlap, device=result.device)
-            fade_in = torch.linspace(0.0, 1.0, overlap, device=result.device)
+            # Equal-power cosine crossfade prevents volume dips at the seam
+            t = torch.linspace(0, math.pi / 2, overlap, device=result.device)
+            fade_out = torch.cos(t) ** 2
+            fade_in = torch.cos(math.pi / 2 - t) ** 2
 
             blended = result[..., -overlap:] * fade_out + new[..., :overlap] * fade_in
             result = torch.cat(

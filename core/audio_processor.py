@@ -3,6 +3,7 @@
 import numpy as np
 from pedalboard import (
     Compressor,
+    HighpassFilter,
     LowpassFilter,
     NoiseGate,
     PeakFilter,
@@ -13,10 +14,12 @@ from pedalboard import (
 
 
 def make_voice_chain(reverb_amount: float = 0.15) -> Pedalboard:
-    """FX chain for narration: compression → reverb → limit.
+    """FX chain for narration: highpass → compression → reverb → limit.
 
-    Warmth / EQ is handled by MasteringEngine.master_vocals() at 44.1 kHz,
-    so this chain focuses only on dynamics and spatial effects.
+    The HighpassFilter at 80 Hz removes sub-bass rumble from TTS output.
+    Warmth / presence EQ is handled by MasteringEngine.master_vocals()
+    at 44.1 kHz, so this chain focuses on cleanup, dynamics, and spatial
+    effects.
 
     Args:
         reverb_amount: Reverb wet level (0.0 = dry, 0.5 = very wet).
@@ -24,8 +27,12 @@ def make_voice_chain(reverb_amount: float = 0.15) -> Pedalboard:
     """
     reverb_amount = float(np.clip(reverb_amount, 0.0, 0.5))
     return Pedalboard([
+        # Remove sub-bass rumble from TTS output
+        HighpassFilter(cutoff_frequency_hz=80),
+        # Noise gate to clean up quiet sections
         NoiseGate(threshold_db=-40, ratio=10.0, attack_ms=1.0, release_ms=50),
-        Compressor(threshold_db=-20, ratio=3.0, attack_ms=10, release_ms=100),
+        # Gentle compression — 2:1 ratio is more natural for meditation delivery
+        Compressor(threshold_db=-20, ratio=2.0, attack_ms=10, release_ms=100),
         Reverb(
             room_size=0.3,
             damping=0.7,
@@ -73,3 +80,22 @@ def apply_fx(
     result = processed.squeeze(0)
     result = result[:len(audio)]  # Trim reverb tail
     return np.clip(result, -1.0, 1.0).astype(np.float32)
+
+
+def upsample_audio(
+    audio: np.ndarray,
+    from_sr: int = 24000,
+    to_sr: int = 48000,
+) -> np.ndarray:
+    """Upsample audio for higher-fidelity output.
+
+    Uses polyphase resampling for clean sample-rate conversion.
+    Only apply this at the final export stage, not during intermediate
+    processing.
+    """
+    from math import gcd
+
+    from scipy.signal import resample_poly
+
+    g = gcd(to_sr, from_sr)
+    return resample_poly(audio, to_sr // g, from_sr // g).astype(np.float32)

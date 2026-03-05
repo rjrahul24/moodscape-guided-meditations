@@ -245,6 +245,40 @@ def resample_for_export(
 
 
 # ---------------------------------------------------------------------------
+# Stem export
+# ---------------------------------------------------------------------------
+
+def export_stems(
+    voice_audio: np.ndarray,
+    music_audio: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+    output_dir: str | None = None,
+) -> dict[str, str]:
+    """Export voice and music as separate stem files.
+
+    Saves each stem as a 24-bit WAV so the user can re-balance or remix
+    later without regenerating.
+
+    Returns:
+        Dict with keys 'voice' and 'music' pointing to file paths.
+    """
+    import os
+    import soundfile as sf
+
+    if output_dir is None:
+        output_dir = tempfile.mkdtemp(prefix="moodscape_stems_")
+    os.makedirs(output_dir, exist_ok=True)
+
+    voice_path = os.path.join(output_dir, "narration_stem.wav")
+    music_path = os.path.join(output_dir, "music_stem.wav")
+
+    sf.write(voice_path, voice_audio, sample_rate, subtype="PCM_24")
+    sf.write(music_path, music_audio, sample_rate, subtype="PCM_24")
+
+    return {"voice": voice_path, "music": music_path}
+
+
+# ---------------------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------------------
 

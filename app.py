@@ -6,6 +6,10 @@ import warnings
 # Prevent HuggingFace tokenizers from warning about fork-after-parallelism.
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
+# Fix: MPS Autocast on Apple Silicon crashes with float16 on some PyTorch versions
+# related to audiocraft/encodec. We force disable it here for stability.
+os.environ.setdefault("AUDIOCRAFT_DISABLE_MPS_AUTOCAST", "1")
+
 # Silence noisy third-party warnings that are not actionable from user code.
 warnings.filterwarnings(
     "ignore",
@@ -15,7 +19,9 @@ warnings.filterwarnings(
 )
 warnings.filterwarnings(
     "ignore",
-    message="NOTE: Redirects are currently not supported in Windows or MacOs",
+    message="Possible clipped samples in output",
+    category=UserWarning,
+    module="pyloudnorm",
 )
 
 import soundfile as sf
@@ -31,17 +37,30 @@ load_dotenv()
 # ── Voice choices for Kokoro engine ──────────────────────────────────────────
 
 # (label, voice_id) pairs shown in the Kokoro dropdown.
-# Comma-separated IDs create blended voices in Kokoro.
+# Presets resolve to blended voice tensors via core.voice_manager.
 KOKORO_VOICE_CHOICES = [
-    ("Heart + Nicole blend (meditation)", "af_heart,af_nicole"),
-    ("Heart — Female",                    "af_heart"),
-    ("Nicole — Female (calm/ASMR)",       "af_nicole"),
-    ("Bella — Female",                    "af_bella"),
-    ("Sarah — Female",                    "af_sarah"),
-    ("Sky — Female",                      "af_sky"),
-    ("Nova — Female (intimate)",          "af_nova"),
-    ("Adam — Male",                       "am_adam"),
-    ("Michael — Male",                    "am_michael"),
+    # Presets (blended)
+    ("Deep Calm — very soft & whispery (default)", "deep_calm"),
+    ("Golden Hour — warm meditation blend",        "golden_hour"),
+    ("Heart + Nicole blend",                       "af_heart,af_nicole"),
+    ("Still Water — ASMR relaxation",              "still_water"),
+    ("Night Garden — sleep meditation",            "night_garden"),
+    ("Earth Root — grounding blend",               "earth_root"),
+    # Individual US voices
+    ("Heart — US Female (warm)",                 "af_heart"),
+    ("Nicole — US Female (calm/ASMR)",           "af_nicole"),
+    ("Sky — US Female (airy)",                   "af_sky"),
+    ("Nova — US Female (intimate)",              "af_nova"),
+    ("Bella — US Female",                        "af_bella"),
+    ("Sarah — US Female",                        "af_sarah"),
+    # British voices
+    ("Emma — UK Female (wise)",                  "bf_emma"),
+    ("Lily — UK Female (angelic)",               "bf_lily"),
+    # US Male voices
+    ("Adam — US Male (grounding)",               "am_adam"),
+    ("Michael — US Male",                        "am_michael"),
+    # British Male
+    ("George — UK Male (warm)",                  "bm_george"),
 ]
 
 # Parler TTS preset labels for the dropdown
@@ -93,6 +112,9 @@ def generate_meditation(
     fade_in,
     fade_out,
     output_format,
+    seed_value,
+    export_stems_flag,
+    upsample_flag,
     progress=gr.Progress(),
 ):
     def progress_cb(fraction, message):
@@ -100,6 +122,9 @@ def generate_meditation(
 
     # Map radio label to engine key
     tts_engine = "parler" if engine_choice == "Parler TTS" else "kokoro"
+
+    # Resolve seed: 0 means auto
+    seed = int(seed_value) if seed_value and int(seed_value) != 0 else None
 
     try:
         output_path, status_msg = pipeline.generate(
@@ -116,6 +141,9 @@ def generate_meditation(
             fade_out_sec=fade_out,
             output_format=output_format,
             progress_cb=progress_cb,
+            seed=seed,
+            do_export_stems=export_stems_flag,
+            upsample_48k=upsample_flag,
         )
         duration = _get_duration(output_path)
         minutes = int(duration // 60)
@@ -180,7 +208,7 @@ with gr.Blocks(
             with gr.Accordion("Kokoro Voice Settings", open=False, visible=True) as kokoro_settings:
                 kokoro_voice_dropdown = gr.Dropdown(
                     choices=KOKORO_VOICE_CHOICES,
-                    value="af_heart,af_nicole",
+                    value="deep_calm",
                     label="Voice",
                 )
 
@@ -210,11 +238,11 @@ with gr.Blocks(
             # Common settings
             with gr.Accordion("Audio Settings", open=False):
                 speed_slider = gr.Slider(
-                    minimum=0.5,
+                    minimum=0.50,
                     maximum=1.0,
-                    value=0.80,
-                    step=0.05,
-                    label="Speaking Speed",
+                    value=0.70,
+                    step=0.01,
+                    label="Speaking Speed (0.65-0.75 = meditation ideal)",
                 )
                 duck_slider = gr.Slider(
                     minimum=-20,
@@ -243,6 +271,22 @@ with gr.Blocks(
                     value=5,
                     step=0.5,
                     label="Fade Out (seconds)",
+                )
+
+            # Advanced settings (collapsed by default)
+            with gr.Accordion("Advanced Settings", open=False):
+                seed_input = gr.Number(
+                    label="Random Seed (0 = auto)",
+                    value=0,
+                    precision=0,
+                )
+                stems_checkbox = gr.Checkbox(
+                    label="Export separate voice/music stems",
+                    value=False,
+                )
+                upsample_checkbox = gr.Checkbox(
+                    label="48 kHz output (higher fidelity, slower export)",
+                    value=False,
                 )
 
             format_radio = gr.Radio(
@@ -297,6 +341,9 @@ with gr.Blocks(
             fade_in_slider,
             fade_out_slider,
             format_radio,
+            seed_input,
+            stems_checkbox,
+            upsample_checkbox,
         ],
         outputs=[audio_output, status_text],
         show_progress="full",
