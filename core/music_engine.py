@@ -97,6 +97,7 @@ class MusicEngine:
 
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=FutureWarning, message=".*weight_norm.*")
+            warnings.filterwarnings("ignore", category=UserWarning, message=".*MPS autocast.*")
 
             candidates = [MODEL_ID, FALLBACK_MODEL_ID]
             for name in candidates:
@@ -219,7 +220,9 @@ class MusicEngine:
 
         # ── Resample 32 kHz → 24 kHz ───────────────────────────────────
         resampled = torchaudio.functional.resample(
-            full_audio, NATIVE_SAMPLE_RATE, TARGET_SAMPLE_RATE
+            full_audio, NATIVE_SAMPLE_RATE, TARGET_SAMPLE_RATE,
+            lowpass_filter_width=64,
+            rolloff=0.9475,
         )
         result = resampled.squeeze(0).numpy().astype(np.float32)
         # Return unclipped audio: pipeline.py will safely LUFS-normalize it.

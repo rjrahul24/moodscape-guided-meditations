@@ -8,7 +8,7 @@ def parse_script(script: str) -> list[dict]:
 
     Supported markers:
         [pause:Xs]   — explicit pause of X seconds (int or float)
-        \\n\\n         — paragraph break, treated as a 1.5s pause
+        \\n\\n         — paragraph break, treated as a 2.5s pause
 
     Returns a list of dicts:
         {"type": "speech", "text": "..."}
@@ -18,7 +18,7 @@ def parse_script(script: str) -> list[dict]:
         return []
 
     # First, replace double newlines with a pause marker so we handle them uniformly
-    script = re.sub(r'\n\n+', ' [pause:1.5s] ', script)
+    script = re.sub(r'\n\n+', ' [pause:2.5s] ', script)
 
     # Split on pause markers, capturing the duration
     pause_pattern = r'\[pause:(\d+(?:\.\d+)?)s\]'

@@ -111,7 +111,6 @@ def generate_meditation(
     reverb_amount,
     fade_in,
     fade_out,
-    session_mode,
     output_format,
     seed_value,
     export_stems_flag,
@@ -145,7 +144,6 @@ def generate_meditation(
             seed=seed,
             do_export_stems=export_stems_flag,
             upsample_48k=upsample_flag,
-            session_mode=session_mode,
         )
         duration = _get_duration(output_path)
         minutes = int(duration // 60)
@@ -249,7 +247,7 @@ with gr.Blocks(
                 duck_slider = gr.Slider(
                     minimum=-20,
                     maximum=-2,
-                    value=-4,
+                    value=-9,
                     step=1,
                     label="Music Ducking (dB)",
                 )
@@ -274,15 +272,7 @@ with gr.Blocks(
                     step=0.5,
                     label="Fade Out (seconds)",
                 )
-                session_mode_radio = gr.Radio(
-                    choices=["Daytime Meditation", "Sleep Journey"],
-                    value="Daytime Meditation",
-                    label="Session Mode",
-                    info=(
-                        "Daytime: standard loudness (-16 LUFS). "
-                        "Sleep: quieter, softer master (-19 LUFS)."
-                    ),
-                )
+
 
             # Advanced settings (collapsed by default)
             with gr.Accordion("Advanced Settings", open=False):
@@ -351,7 +341,6 @@ with gr.Blocks(
             reverb_slider,
             fade_in_slider,
             fade_out_slider,
-            session_mode_radio,
             format_radio,
             seed_input,
             stems_checkbox,

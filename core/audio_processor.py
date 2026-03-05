@@ -28,8 +28,9 @@ def make_voice_chain(reverb_amount: float = 0.09) -> Pedalboard:
     """
     reverb_amount = float(np.clip(reverb_amount, 0.0, 0.5))
     return Pedalboard([
-        # Noise gate to clean up quiet sections before processing
-        NoiseGate(threshold_db=-40, ratio=10.0, attack_ms=1.0, release_ms=50),
+        # Strict noise gate: mutes TTS static in silences *before* compression
+        # and LUFS normalization can amplify it.
+        NoiseGate(threshold_db=-35, ratio=20.0, attack_ms=1.0, release_ms=50),
         # Remove sub-bass rumble and plosives from TTS output
         HighpassFilter(cutoff_frequency_hz=80.0),
         # Gentle compression to keep the guiding voice perfectly steady
@@ -105,7 +106,11 @@ def resample_to_44100(audio: np.ndarray, orig_sr: int) -> np.ndarray:
         return audio
         
     tensor_audio = torch.from_numpy(audio.astype(np.float32)).unsqueeze(0)
-    resampled = F.resample(tensor_audio, orig_sr, 44100)
+    resampled = F.resample(
+        tensor_audio, orig_sr, 44100,
+        lowpass_filter_width=64,
+        rolloff=0.9475,
+    )
     return resampled.squeeze(0).numpy()
 
 
@@ -116,13 +121,17 @@ def upsample_audio(
 ) -> np.ndarray:
     """Upsample audio for higher-fidelity output.
 
-    Uses polyphase resampling for clean sample-rate conversion.
-    Only apply this at the final export stage, not during intermediate
-    processing.
+    Uses torchaudio's Kaiser-windowed sinc interpolation for clean,
+    alias-free sample-rate conversion. Only apply at the final export
+    stage, not during intermediate processing.
     """
-    from math import gcd
+    import torch
+    import torchaudio.functional as F
 
-    from scipy.signal import resample_poly
-
-    g = gcd(to_sr, from_sr)
-    return resample_poly(audio, to_sr // g, from_sr // g).astype(np.float32)
+    tensor = torch.from_numpy(audio.astype(np.float32)).unsqueeze(0)
+    resampled = F.resample(
+        tensor, from_sr, to_sr,
+        lowpass_filter_width=64,
+        rolloff=0.9475,
+    )
+    return resampled.squeeze(0).numpy().astype(np.float32)

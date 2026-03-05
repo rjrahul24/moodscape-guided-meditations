@@ -185,7 +185,7 @@ def apply_fades(
 def calculate_loudness_gain(
     audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
-    target_lufs: float = -16.0,
+    target_lufs: float = -18.0,
 ) -> float:
     """Calculate the linear gain multiplier to hit a target LUFS."""
     min_samples = int(0.4 * sample_rate)
@@ -211,7 +211,7 @@ def calculate_loudness_gain(
 def normalize_loudness(
     audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
-    target_lufs: float = -16.0,
+    target_lufs: float = -18.0,
 ) -> np.ndarray:
     """Normalize audio to target LUFS. Returns float32, clipped to [-1, 1]."""
     gain = calculate_loudness_gain(audio, sample_rate, target_lufs)
@@ -228,18 +228,18 @@ def mix(
     voice_activity: np.ndarray,
     music_audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
-    duck_amount_db: float = -4.0,
-    music_volume_db: float = -3.0,
+    duck_amount_db: float = -9.0,
+    music_volume_db: float = -9.0,
     music_pre_roll_sec: float = 2.0,
     fade_in_sec: float = 3.0,
     fade_out_sec: float = 5.0,
-    target_lufs: float = -16.0,
+    target_lufs: float = -18.0,
 ) -> np.ndarray:
     """Full mix pipeline: align → level → duck → overlay → fades → normalize.
 
     Args:
         duck_amount_db: Additional dB reduction during speech on top of
-            music_volume_db. -4 dB is a gentle dip that keeps music present.
+            music_volume_db. -9 dB firmly ducks music during narration.
         music_volume_db: Baseline music level in dB (applied before ducking).
             Sets the music as a soothing background layer at all times.
             During pauses music sits at this level; during speech it drops
@@ -315,7 +315,11 @@ def resample_for_export(
         return audio
 
     tensor = torch.tensor(audio, dtype=torch.float32).unsqueeze(0)
-    resampled = torchaudio.functional.resample(tensor, source_rate, target_rate)
+    resampled = torchaudio.functional.resample(
+        tensor, source_rate, target_rate,
+        lowpass_filter_width=64,
+        rolloff=0.9475,
+    )
     result = resampled.squeeze(0).numpy()
     return np.clip(result, -1.0, 1.0).astype(np.float32)
 
@@ -364,7 +368,7 @@ def export_audio(
     output_format: str = "wav",
     target_sample_rate: int = 44100,
     master_chain: Pedalboard | None = None,
-    target_lufs: float = -16.0,
+    target_lufs: float = -18.0,
 ) -> str:
     """Stream audio out to temp file with Pedalboard plugins and normalization.
     
@@ -373,8 +377,7 @@ def export_audio(
     streams directly to a file to prevent immense memory spikes.
 
     Args:
-        target_lufs: Loudness target in LUFS. -16 for daytime meditation
-                     (podcast standard), -19 for sleep journeys (quieter).
+        target_lufs: Loudness target in LUFS (-18 for guided meditations).
     """
     from pedalboard.io import AudioFile
     

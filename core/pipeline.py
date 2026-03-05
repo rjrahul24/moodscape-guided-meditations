@@ -71,7 +71,7 @@ class MeditationPipeline:
         tts_engine: str = "kokoro",
         parler_voice_preset: str = "Serene Female — warm, calm, breathy",
         parler_custom_description: str = "",
-        duck_amount_db: float = -4.0,
+        duck_amount_db: float = -9.0,
         reverb_amount: float = 0.15,
         fade_in_sec: float = 3.0,
         fade_out_sec: float = 5.0,
@@ -80,7 +80,6 @@ class MeditationPipeline:
         seed: int | None = None,
         do_export_stems: bool = False,
         upsample_48k: bool = False,
-        session_mode: str = "Daytime Meditation",
     ) -> tuple[str, str]:
         """Run the full pipeline and return the path to the output audio file.
 
@@ -101,8 +100,6 @@ class MeditationPipeline:
             seed: Optional deterministic seed for reproducible generation.
             do_export_stems: If True, save voice/music stems alongside the mix.
             upsample_48k: If True, export at 48 kHz instead of 44.1 kHz.
-            session_mode: "Daytime Meditation" (-16 LUFS) or
-                          "Sleep Journey" (-19 LUFS, quieter/softer).
 
         Returns:
             Tuple of (path_to_output_file, status_message).
@@ -113,11 +110,11 @@ class MeditationPipeline:
         if seed is None:
             seed = int(time.time()) % (2**31)
 
-        logger.info("Starting generation — voice=%s, speed=%s, seed=%s, mode=%s",
-                    voice, speed, seed, session_mode)
+        # Unified LUFS target for all meditation sessions
+        target_lufs = -18.0
 
-        # Map session mode to LUFS target
-        target_lufs = -19.0 if session_mode == "Sleep Journey" else -16.0
+        logger.info("Starting generation — voice=%s, speed=%s, seed=%s, lufs=%s",
+                    voice, speed, seed, target_lufs)
 
         try:
             # ── Step 1: Parse script ────────────────────────────────────────
@@ -241,7 +238,7 @@ class MeditationPipeline:
             # Upsample MusicGen audio immediately to Target Sample Rate
             _progress(progress_cb, 0.70, "Upsampling MusicGen audio to 44.1kHz standard...")
             from core.audio_processor import resample_to_44100
-            from core.music_engine import SAMPLE_RATE as MUSIC_SR
+            from core.music_engine import TARGET_SAMPLE_RATE as MUSIC_SR
             music_audio = resample_to_44100(music_audio, MUSIC_SR)
 
             # ── Step 6: Unload MusicGen ─────────────────────────────────────
@@ -263,7 +260,7 @@ class MeditationPipeline:
 
             # ── Step 8: Apply music FX ──────────────────────────────────────
             _progress(progress_cb, 0.77, "Applying music effects...")
-            music_audio = normalize_loudness(music_audio, TARGET_SR, target_lufs=-20.0)
+            music_audio = normalize_loudness(music_audio, TARGET_SR, target_lufs=-24.0)
             music_chain = make_music_chain()
             music_audio = apply_fx(music_audio, music_chain, TARGET_SR)
 

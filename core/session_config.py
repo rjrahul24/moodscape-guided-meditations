@@ -31,7 +31,7 @@ class SessionConfig:
 
     # Audio
     sample_rate: int = 24000
-    target_lufs: float = -16.0
+    target_lufs: float = -18.0
 
     # Reproducibility
     seed: int = field(default_factory=lambda: int(time.time()) % (2**31))
