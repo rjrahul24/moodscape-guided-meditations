@@ -470,7 +470,7 @@ def calculate_adjusted_speed(
 | Channels | **Mono (1 channel)** |
 | WAV export | 24-bit WAV via `soundfile.write` — always generate WAV first |
 | MP3 export | Convert WAV → MP3 at the very end only (`pedalboard.io.AudioFile`) |
-| Target LUFS | −16 LUFS (broadcast/podcast standard) |
+| Target LUFS | −16 LUFS (Daytime Meditation) or −19 LUFS (Sleep Journey) — selectable via Session Mode |
 
 > **Critical rule from Research doc 1:** Always generate WAV first. Converting directly to MP3 during synthesis can introduce click artifacts in the silence regions between segments. Only convert to MP3 as the final export step after all mixing is done.
 
@@ -484,10 +484,13 @@ Research doc 3 mentions several post-processing options. Here is how they map to
 
 | Recommendation | MoodScape Implementation |
 |----------------|--------------------------|
-| Normalize loudness | ✅ Already done via `pyloudnorm` to −16 LUFS in `mixer.py` |
+| Normalize loudness | ✅ Parameterised via `pyloudnorm` (−16 LUFS daytime / −19 LUFS sleep) in `mixer.py` |
 | Gentle reverb on voice | ✅ Already done via Pedalboard `Reverb` in `audio_processor.py` |
 | Fade in/out | ✅ Already done in `mixer.py` |
 | EQ warmth (low shelf) | ✅ Already done via Pedalboard `LowShelfFilter` in `audio_processor.py` |
+| TTS artifact trimming | ✅ Per-chunk silence trimmer + spectral flatness detector in `kokoro_engine.py` |
+| Bus compressor (glue) | ✅ Compressor(2:1, 30ms/300ms) in master chain in `audio_processor.py` |
+| Lookahead sidechain ducking | ✅ 75ms lookahead offline ducking in `mixer.py` |
 | Pitch shifting | ❌ Not needed — voice selection handles this; librosa would add a dependency |
 | Time stretching | ❌ Avoid — use speed parameter instead; stretching degrades quality |
 | pydub for segment merging | ❌ Do not use — Pedalboard + numpy is already superior |

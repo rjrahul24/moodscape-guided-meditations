@@ -60,9 +60,16 @@ def make_music_chain() -> Pedalboard:
 
 
 def make_master_chain() -> Pedalboard:
-    """Final mastering limiter."""
+    """Final mastering chain: gain → glue compressor → brickwall limiter.
+
+    The Compressor at 2:1 ratio with slow attack/release acts as a soft-knee
+    "glue" — gently reining in peaks from music swells without the harsh,
+    pumping sound of aggressive limiting alone.
+    """
     return Pedalboard([
         Gain(gain_db=-3.0),
+        # Bus compressor: gentle 2:1 glue before the brickwall limiter
+        Compressor(threshold_db=-18.0, ratio=2.0, attack_ms=30.0, release_ms=300.0),
         Limiter(threshold_db=-0.1),
     ])
 

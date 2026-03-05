@@ -13,18 +13,18 @@ If these arrays are fed blindly into identical FX Pedals or summed together, ext
 All generative outputs are intercepted instantly to upsample to **44.1kHz (44100Hz)**. This is processed securely via TorchAudio's `functional.resample` to maintain precision format boundaries across PyTorch CUDA/MPS configurations before Pedalboard handles FX processing on CPU paths. 
 
 ## 2. Dynamic Audio Mixing Processing
-MoodScape mitigates digital overlapping via automated Auto-Ducking (ducking the music beneath the narration). 
-- **Envelope Follower**: Instead of primitive mathematical filtering, the mixer calculates the continuous Root Mean Square (RMS) measurement of the Voice Activity frame by 10ms chunked sliding windows.
-- **Attack/Release Swell**: Ducking drops the underlying Music volume rapidly linearly based on the Voice RMS. Crucially, MoodScape relies on a minimum **500ms release time** after the narrator stops speaking. This guarantees a slow, peaceful music crescendo returning to baseline without a jarring "pumping" effect. 
+MoodScape mitigates digital overlapping via automated **Lookahead Sidechain Ducking** (ducking the music beneath the narration).
+- **Offline Lookahead**: Unlike a reactive envelope follower, the complete gain curve is computed from the *entire* voice array in advance, then shifted back by **75ms** so the music starts ducking *before* the first syllable — matching broadcast/DAW behaviour.
+- **Attack/Release Swell**: Ducking drops the underlying Music volume based on the Voice RMS. A minimum **500ms release time** after the narrator stops speaking guarantees a slow, peaceful music crescendo returning to baseline without a jarring "pumping" effect.
 - **Spectral Masking**: To clarify vocal enunciation, MoodScape targets a `LowpassFilter` on ambient tracks to roll-off frequencies above ~3000Hz. This strips synthetic high-end "shimmer" to preserve a clean pocket for the voice array.
 
 ## 3. Streaming Exports (Memory Safeties)
 Exporting long audio combinations (e.g. up to 12 hour stretches of 44.1kHz `np.float32`) quickly bottlenecks local compute memory footprint and invokes out-of-memory kernel panics.
 
 **Chunked AudioFile Protocol:**
-1. A preliminary `-16 LUFS` (Loudness Units Full Scale) normalizing standard calculates across a lightweight meter implementation to discover a constant **Gain Scalar**.
+1. A **parameterised LUFS target** (`-16 LUFS` for Daytime Meditation, `-19 LUFS` for Sleep Journey) calculates a constant **Gain Scalar** via a lightweight meter implementation.
 2. MoodScape initiates Pedalboard's underlying `AudioFile` protocol, binding directly to disk buffers.
 3. The generation sweeps through the multi-hour array iteratively in **20-second chunk boundaries**.
-4. The memory blocks sequentially get normalized, wrapped inside the `Gain(-3.0)` and `Limiter(-0.1)` Master Effect protections, and written to disk without needing simultaneous loading.
+4. The memory blocks sequentially get normalized, wrapped inside the `Gain(-3.0)` → `Compressor(-18dB, 2:1, 30ms/300ms)` → `Limiter(-0.1)` Master Effect protections, and written to disk without needing simultaneous loading.
 
 This paradigm scales indefinitely for background batch generations.

@@ -11,7 +11,7 @@
 4. [Voice FX Chain — Full Implementation](#4-voice-fx-chain)
 5. [Music FX Chain — Loop Stitching & Spectral Masking](#5-music-fx-chain)
 6. [Master Chain — Full Implementation](#6-master-chain)
-7. [Auto-Ducking — Chunk-based Envelope Follower](#7-auto-ducking)
+7. [Auto-Ducking — Lookahead Sidechain Ducking](#7-auto-ducking)
 8. [Track Overlay & Alignment](#8-track-overlay--alignment)
 9. [Chunk Streaming, LUFS & Export](#9-chunk-streaming-lufs--export)
 10. [Performance & Memory Best Practices](#10-performance--memory-best-practices)
@@ -32,13 +32,16 @@ The full signal flow through Pedalboard in MoodScape:
 ┌─────────────────────────────────────────────────────────────┐
 │  Kokoro TTS Output                MusicGen Output           │
 │  float32, mono, 24000 Hz          float32, 32000 Hz         │
-└──────────┬──────────────────────────────┬───────────────────┘
+└──────────┬──────────────────────────────────────────────────┘
            │                              │
-           │                    ┌─────────▼──────────┐
-           │                    │  RESAMPLE 44.1kHz  │
-           │                    │  torchaudio        │
-           │                    └─────────┬────────────┘
-           │                              │
+           │  ┌───────────────────────┐    │
+           │  │  ARTIFACT TRIMMER     │    │
+           │  │  (per-chunk)          │    │
+           │  │  1. Hard-clip guard   │    │
+           │  │  2. Trailing silence  │    │
+           │  │  3. Spectral flatness │    │
+           │  └──────────┬────────────┘    │
+           │             │                │
   ┌────────▼─────────┐         ┌──────────▼──────────┐
   │  VOICE FX CHAIN  │         │  MUSIC FX CHAIN     │
   │  NoiseGate       │         │  Peak Filters (EQ)  │
@@ -48,12 +51,13 @@ The full signal flow through Pedalboard in MoodScape:
   │  Limiter         │                    │
   └────────┬─────────┘                    │
            │                              │
-           │  ┌──────────────────────────┐│
-           │  │  ENVELOPE FOLLOWER       ││
-           │  │  1. RMS chunk detection  ││
-           │  │  2. Gain Attack/Release  ││
-           │  │  3. Apply Gain drops     ││
-           │  └──────────────────────────┘│
+           │  ┌──────────────────────────┐ │
+           │  │  LOOKAHEAD SIDECHAIN     │ │
+           │  │  1. Offline RMS envelope │ │
+           │  │  2. 75ms lookahead shift │ │
+           │  │  3. Attack/Release EMA   │ │
+           │  │  4. np.interp upsample   │ │
+           │  └──────────────────────────┘ │
            │                              │
            └──────────────┬───────────────┘
                           │
@@ -67,6 +71,7 @@ The full signal flow through Pedalboard in MoodScape:
                  │  EXPORT STREAMER  │
                  │  (20 sec chunks)  │
                  │  * LUFS Gain      │
+                 │  * Bus Compressor │
                  │  * Master Limiter │
                  │  * AudioFile Write│
                  └───────────────────┘
@@ -131,12 +136,13 @@ def make_music_chain() -> Pedalboard:
 
 ## 6. Master Chain
 
-A final EQ adjustment provides necessary volume headroom when merging tracks summing to digital clipping bounds (0dB).
+The master chain applies headroom reduction, glue compression, and final limiting. The soft-knee bus compressor (2:1 ratio, slow attack/release) smooths out dynamic swells from the music without the harsh pumping of brickwall limiting alone.
 
 ```python
 def make_master_chain() -> Pedalboard:
     return Pedalboard([
         Gain(gain_db=-3.0),
+        Compressor(threshold_db=-18.0, ratio=2.0, attack_ms=30.0, release_ms=300.0),
         Limiter(threshold_db=-0.1),
     ])
 ```
@@ -145,10 +151,17 @@ def make_master_chain() -> Pedalboard:
 
 ## 7. Auto-Ducking
 
-MoodScape's ducking uses a manual **Chunk-Based Envelope Follower** as Pedalboard lacks built-in Sidechain Automation. 
-1. The tracker slides over 10ms chunk windows, computing the Root Mean Square (RMS) loudness of the Voice audio.
-2. When the Voice RMS triggers a threshold, it triggers an `attack_ms (50ms)` exponential downward slide of the `Gain` to apply directly to the corresponding music chunk.
-3. Critically, a slow `release_ms (500ms)` ensures the background music gracefully "swells" back to regular volume during long meditation pauses without "breathing" artifacts. 
+MoodScape's ducking uses an **offline lookahead sidechain** algorithm (`apply_lookahead_ducking` in `mixer.py`). Unlike a reactive envelope follower, the complete gain curve is computed from the full voice array in advance, then shifted back in time by 75ms so the music begins fading *before* the first syllable.
+
+Algorithm:
+1. Compute per-frame RMS (10ms frames) across the entire voice timeline.
+2. Build a binary duck target sequence (0 dB vs `duck_amount_db` per frame).
+3. **Lookahead shift** — roll the envelope back by 75ms using `np.roll`.
+4. Apply exponential attack/release smoothing (50ms attack, 500ms release).
+5. Upsample the frame-rate gain envelope to per-sample resolution via `np.interp` (eliminates stepping artefacts).
+6. Convert dB → linear gain and multiply the music array directly.
+
+This produces broadcast-quality transitions where the music is already ducked before the narrator's first syllable.
 
 ---
 
@@ -161,8 +174,8 @@ The music naturally `pre_rolls` for 2 seconds to establish the environment befor
 ## 9. Chunk Streaming, LUFS & Export
 
 To prevent massive RAM spikes (up to 14GB for a 12-hour track) caused by processing 30+ minute long `float32` arrays simultaneously through multiple pedals:
-1. **Separated LUFS target gain:** We run lightweight `pylaudnorm.Meter(sample_rate).integrated_loudness(audio)` briefly to pre-calculate a linear LUFS normalization scalar (Targeting podcast broadcast standard -16.0 LUFS) instead of loading arrays into heavy normalization transformers.
-2. **AudioFile Streaming**: The `export_audio` function processes the combined waveform iteratively in 20-second chunk block boundaries. It applies the target LUFS linear gain, executes the `make_master_chain` FX directly on the tiny chunk, and safely dumps to the disk using Pedalboard's `AudioFile` protocol. This streams infinite duration meditations indefinitely on low-memory Apple Silicon pipelines.
+1. **Parameterised LUFS targeting:** The `export_audio()` function accepts a `target_lufs` parameter driven by the **Session Mode** UI selector. "Daytime Meditation" targets −16 LUFS (broadcast standard); "Sleep Journey" targets −19 LUFS (quieter, softer, less aggressive limiting). The gain scalar is pre-calculated via `pyloudnorm.Meter`.
+2. **AudioFile Streaming**: The `export_audio` function processes the combined waveform iteratively in 20-second chunk block boundaries. It applies the target LUFS linear gain, executes the `make_master_chain` FX (Gain → Compressor → Limiter) directly on the tiny chunk, and safely dumps to the disk using Pedalboard's `AudioFile` protocol. This streams infinite duration meditations indefinitely on low-memory Apple Silicon pipelines.
 
 ---
 

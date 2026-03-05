@@ -7,76 +7,99 @@ import pyloudnorm as pyln
 import torch
 import torchaudio
 import math
-from pedalboard import Pedalboard, Gain
+from pedalboard import Pedalboard
 
 SAMPLE_RATE = 24000
 
 # ---------------------------------------------------------------------------
-# Ducking (Envelope Follower)
+# Ducking (Lookahead Sidechain)
 # ---------------------------------------------------------------------------
 
-def apply_ducking_envelope_follower(
+def apply_lookahead_ducking(
     voice_audio: np.ndarray,
     music_audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
     duck_amount_db: float = -5.0,
-    chunk_ms: float = 10.0,
+    frame_ms: float = 10.0,
     attack_ms: float = 50.0,
     release_ms: float = 500.0,
+    lookahead_ms: float = 75.0,
+    duck_threshold_rms: float = 0.03,
 ) -> np.ndarray:
-    """Chunk-based Envelope Follower for auto-ducking music under voice.
-    
-    Processes audio in short chunks (~10ms). Calculates the RMS of the voice
-    in that chunk to detect presence. Drives a smoothed target gain curve
-    applied to the music via a Pedalboard Gain effect.
+    """Vectorised offline lookahead sidechain ducker.
+
+    Unlike a reactive envelope follower, this function computes the complete
+    gain envelope from the *entire* voice array in advance, then shifts it
+    back in time by ``lookahead_ms`` so the music begins fading *before*
+    the first syllable of each phrase — matching broadcast / DAW behaviour.
+
+    Algorithm:
+      1. Compute per-frame RMS of voice across the full timeline.
+      2. Build a target-gain sequence (0 dB vs duck_amount_db per frame).
+      3. Shift the sequence back by lookahead_frames (frames before voice onset).
+      4. Apply vectorised attack/release EMA smoothing.
+      5. Upsample frame-rate envelope to sample-rate via np.interp.
+      6. Convert to linear gain and multiply music directly.
+
+    Args:
+        voice_audio:       1-D float32 voice array aligned to music_audio.
+        music_audio:       1-D float32 music to duck.
+        sample_rate:       Sample rate of both arrays.
+        duck_amount_db:    Target attenuation during speech (negative dB).
+        frame_ms:          Analysis frame size in ms (default 10 ms).
+        attack_ms:         Time to reach full duck once onset detected.
+        release_ms:        Time to recover after voice stops.
+        lookahead_ms:      How far ahead of voice onset to start ducking.
+        duck_threshold_rms: Minimum voice RMS to trigger ducking.
+
+    Returns:
+        Ducked music as 1-D float32 array, same length as music_audio.
     """
-    chunk_samples = int((chunk_ms / 1000.0) * sample_rate)
     total_samples = len(music_audio)
-    
-    # Pre-allocate output array
-    ducked_music = np.zeros_like(music_audio, dtype=np.float32)
-    
-    # Envelope state
-    current_gain_db = 0.0
-    
-    # Calculate smoothing factors (alpha) for exponential moving average
-    # formula: alpha = exp(-chunk_time / time_constant)
-    attack_alpha = math.exp(-(chunk_ms) / attack_ms)
-    release_alpha = math.exp(-(chunk_ms) / release_ms)
-    
-    duck_threshold_rms = 0.03
-    
-    for start in range(0, total_samples, chunk_samples):
-        end = min(start + chunk_samples, total_samples)
-        
-        # 1. Measure voice RMS in this chunk
-        voice_chunk = voice_audio[start:end]
-        if len(voice_chunk) == 0:
-            rms = 0.0
-        else:
-            rms = np.sqrt(np.mean(voice_chunk**2))
-            
-        # 2. Determine target gain based on voice presence
-        target_gain_db = duck_amount_db if rms > duck_threshold_rms else 0.0
-        
-        # 3. Smooth the gain transition (Attack/Release logistics)
-        if target_gain_db < current_gain_db:
-            # Ducking in (Attack) - moving from 0dB down to e.g. -5dB
-            current_gain_db = (attack_alpha * current_gain_db) + ((1.0 - attack_alpha) * target_gain_db)
-        else:
-            # Recovering (Release) - moving from e.g. -5dB back up to 0dB
-            current_gain_db = (release_alpha * current_gain_db) + ((1.0 - release_alpha) * target_gain_db)
-            
-        # 4. Apply gain to music chunk via Pedalboard
-        pb = Pedalboard([Gain(gain_db=current_gain_db)])
-        music_chunk = music_audio[start:end]
-        # reshape(1,-1) into pedalboard, squeeze back out
-        music_chunk_2d = music_chunk.reshape(1, -1)
-        processed_chunk = pb(music_chunk_2d, sample_rate).squeeze(0)
-        
-        ducked_music[start:end] = processed_chunk
-        
-    return ducked_music
+    frame_samples = max(1, int((frame_ms / 1000.0) * sample_rate))
+    lookahead_frames = max(0, int(round((lookahead_ms / 1000.0) * sample_rate / frame_samples)))
+
+    # ── 1. Compute per-frame RMS for the voice ──────────────────────────────
+    # Pad voice to a whole number of frames
+    n_frames = math.ceil(total_samples / frame_samples)
+    padded = np.zeros(n_frames * frame_samples, dtype=np.float32)
+    padded[:len(voice_audio)] = voice_audio[:total_samples]
+
+    frames = padded.reshape(n_frames, frame_samples)       # (n_frames, frame_samples)
+    frame_rms = np.sqrt(np.mean(frames ** 2, axis=1))      # (n_frames,)
+
+    # ── 2. Binary duck target per frame ─────────────────────────────────────
+    target_db = np.where(frame_rms > duck_threshold_rms,
+                         float(duck_amount_db), 0.0).astype(np.float64)
+
+    # ── 3. Lookahead shift — roll envelope earlier in time ──────────────────
+    #   np.roll wraps; we overwrite the wrapped tail with 0.0 (no duck).
+    if lookahead_frames > 0:
+        target_db = np.roll(target_db, -lookahead_frames)
+        target_db[-lookahead_frames:] = 0.0
+
+    # ── 4. Vectorised attack / release EMA smoothing ────────────────────────
+    attack_alpha = math.exp(-frame_ms / attack_ms)
+    release_alpha = math.exp(-frame_ms / release_ms)
+
+    smoothed = np.zeros(n_frames, dtype=np.float64)
+    current = 0.0
+    for i in range(n_frames):
+        t = target_db[i]
+        if t < current:                              # attacking (ducking deeper)
+            current = attack_alpha * current + (1.0 - attack_alpha) * t
+        else:                                        # releasing (recovering)
+            current = release_alpha * current + (1.0 - release_alpha) * t
+        smoothed[i] = current
+
+    # ── 5. Upsample frame envelope → sample resolution via linear interp ────
+    frame_centers = np.arange(n_frames) * frame_samples + frame_samples / 2.0
+    sample_indices = np.arange(total_samples, dtype=np.float64)
+    gain_db_samples = np.interp(sample_indices, frame_centers, smoothed)
+
+    # ── 6. Convert dB → linear and multiply ────────────────────────────────
+    gain_linear = np.power(10.0, gain_db_samples / 20.0).astype(np.float32)
+    return (music_audio[:total_samples] * gain_linear).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -249,15 +272,17 @@ def mix(
         ])
     aligned_music = aligned_music[:target_len]
 
-    # 4. Compute and apply ducking (further reduces music during speech)
-    ducked_music = apply_ducking_envelope_follower(
+    # 4. Compute and apply lookahead sidechain ducking
+    #    75 ms lookahead ensures music starts fading before the first syllable.
+    ducked_music = apply_lookahead_ducking(
         aligned_voice,
         aligned_music,
         sample_rate=sample_rate,
         duck_amount_db=duck_amount_db,
-        chunk_ms=10.0,
+        frame_ms=10.0,
         attack_ms=50.0,
         release_ms=500.0,
+        lookahead_ms=75.0,
     )
 
     # 5. Sum voice + ducked music
@@ -339,12 +364,17 @@ def export_audio(
     output_format: str = "wav",
     target_sample_rate: int = 44100,
     master_chain: Pedalboard | None = None,
+    target_lufs: float = -16.0,
 ) -> str:
     """Stream audio out to temp file with Pedalboard plugins and normalization.
     
     Reads from the memory array in bounded chunks, applies a calculated linear 
-    target -16.0 LUFS gain, applies the final Pedalboard master chain, and streams 
-    directly to a file to prevent immense memory spikes.
+    gain to reach target_lufs, applies the final Pedalboard master chain, and
+    streams directly to a file to prevent immense memory spikes.
+
+    Args:
+        target_lufs: Loudness target in LUFS. -16 for daytime meditation
+                     (podcast standard), -19 for sleep journeys (quieter).
     """
     from pedalboard.io import AudioFile
     
@@ -354,8 +384,8 @@ def export_audio(
     tmp_path = tmp.name
     tmp.close()
 
-    # Pre-calculate the linear gain to bring the whole file to -16 LUFS
-    mix_lufs_gain = calculate_loudness_gain(audio, sample_rate, -16.0)
+    # Pre-calculate the linear gain to bring the whole file to target LUFS
+    mix_lufs_gain = calculate_loudness_gain(audio, sample_rate, target_lufs)
     
     # 20 second chunks
     chunk_samples = int(20.0 * sample_rate)

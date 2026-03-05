@@ -51,10 +51,10 @@ Music FX Chain (24 kHz)
   ▼
 Mixer (24 kHz)
   • Align voice + music (2s pre-roll)
-  • Sidechain ducking (-5 dB, 500ms fade)
+  • Lookahead sidechain ducking (-5 dB, 75ms lookahead, 500ms release)
   • Linear fades (3s in / 5s out)
-  • LUFS normalization (-16 LUFS)
-  • Master limiter (-0.5 dB)
+  • LUFS normalization (-16 LUFS daytime / -19 LUFS sleep)
+  • Master: Gain → Bus Compressor (2:1) → Limiter (-0.1 dB)
   │
   ▼
 Resample → 44.1 kHz (torchaudio)
@@ -111,8 +111,9 @@ Final brick-wall limiter prevents any overs in the exported file.
 | File | Role |
 |---|---|
 | `core/post_processor.py` | `MasteringEngine` — Phase A (`restore_vocals`) and Phase B (`master_vocals`) |
-| `core/audio_processor.py` | Voice FX chain (compression + reverb + limiter), Music FX chain, Master limiter |
-| `core/mixer.py` | Ducking, overlay, fades, LUFS normalization, resampling, export |
+| `core/audio_processor.py` | Voice FX chain (compression + reverb + limiter), Music FX chain, Master chain (Gain → Compressor → Limiter) |
+| `core/mixer.py` | Lookahead sidechain ducking, overlay, fades, LUFS normalization, resampling, export |
+| `core/kokoro_engine.py` | TTS synthesis with per-chunk artifact trimmer (silence + spectral flatness detection) |
 | `core/pipeline.py` | Orchestrates the full signal chain end-to-end |
 
 ---
@@ -165,5 +166,8 @@ export_audio(mixed_44k, 44100, "wav")                       # Step 12: 44.1kHz/1
 - [x] Only one warmth boost (+2 dB @ 200 Hz) — no duplicate EQ
 - [x] De-esser uses frequency-targeted boost→compress→cut (not full-band compression)
 - [x] EQ and filtering operate at 44.1 kHz (not 24 kHz near-Nyquist)
-- [x] Background music volume ducks smoothly (-5 dB with 500ms fade)
+- [x] Background music ducks smoothly with 75ms lookahead (music fades before first syllable)
+- [x] TTS chunks are cleaned by artifact trimmer (trailing silence + spectral flatness)
+- [x] Master bus compressor (2:1, 30ms/300ms) smooths peaks before final limiter
+- [x] LUFS target is parameterised (−16 daytime / −19 sleep)
 - [x] Final file exported at **44.1 kHz / 16-bit PCM**

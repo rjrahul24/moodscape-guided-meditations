@@ -80,6 +80,7 @@ class MeditationPipeline:
         seed: int | None = None,
         do_export_stems: bool = False,
         upsample_48k: bool = False,
+        session_mode: str = "Daytime Meditation",
     ) -> tuple[str, str]:
         """Run the full pipeline and return the path to the output audio file.
 
@@ -100,6 +101,8 @@ class MeditationPipeline:
             seed: Optional deterministic seed for reproducible generation.
             do_export_stems: If True, save voice/music stems alongside the mix.
             upsample_48k: If True, export at 48 kHz instead of 44.1 kHz.
+            session_mode: "Daytime Meditation" (-16 LUFS) or
+                          "Sleep Journey" (-19 LUFS, quieter/softer).
 
         Returns:
             Tuple of (path_to_output_file, status_message).
@@ -110,7 +113,11 @@ class MeditationPipeline:
         if seed is None:
             seed = int(time.time()) % (2**31)
 
-        logger.info("Starting generation — voice=%s, speed=%s, seed=%s", voice, speed, seed)
+        logger.info("Starting generation — voice=%s, speed=%s, seed=%s, mode=%s",
+                    voice, speed, seed, session_mode)
+
+        # Map session mode to LUFS target
+        target_lufs = -19.0 if session_mode == "Sleep Journey" else -16.0
 
         try:
             # ── Step 1: Parse script ────────────────────────────────────────
@@ -304,7 +311,8 @@ class MeditationPipeline:
                 sample_rate=TARGET_SR,
                 output_format=output_format,
                 target_sample_rate=export_sr,
-                master_chain=master_chain
+                master_chain=master_chain,
+                target_lufs=target_lufs,
             )
 
         finally:
