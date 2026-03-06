@@ -63,6 +63,46 @@ def make_music_chain() -> Pedalboard:
     ])
 
 
+def make_acestep_music_chain() -> Pedalboard:
+    """FX chain tailored for ACE-Step 1.5 output for meditation use.
+
+    ACE-Step's DiT decoder has a different spectral profile than MusicGen:
+    - It can leave sub-bass energy (below 60 Hz) from diffusion noise
+    - Its output is already warm/mid-present — boosting 300 Hz makes it muddy
+    - High-frequency diffusion artefacts sit around 8–12 kHz rather than 10 kHz+
+    - Dynamic range is wider, requiring gentler, slower compression
+
+    Chain:
+      1. Sub-bass HPF at 60 Hz — removes inaudible rumble from diffusion noise
+         that wastes headroom and causes the limiter to trigger early.
+      2. Mud notch at 200 Hz (-2 dB) — ACE-Step ambient pads tend to
+         accumulate muddiness in the 180–220 Hz range. A narrow notch
+         keeps warmth while improving clarity.
+      3. Upper-mid softening at 4 kHz (-1.5 dB) — tones down any slight
+         'edge' or 'presence' that makes ambient music sound aggressive.
+      4. Gentle HF shelf at 8 kHz (-3 dB) — smooth rolloff of the top-end
+         where diffusion artefacts cluster, without dulling the mids.
+      5. Very slow compression (2:1, 500ms release) — gentle 'glue' that
+         tames occasional dynamic spikes from the LM planner without
+         creating the pumping artefact that fast release causes on drones.
+      6. Brickwall limiter at -0.5 dBFS — leaves tiny additional headroom
+         vs the standard -1.0 limit for extra safety.
+    """
+    return Pedalboard([
+        HighpassFilter(cutoff_frequency_hz=60.0),                        # Remove diffusion sub-bass
+        PeakFilter(cutoff_frequency_hz=200, gain_db=-2.0, q=1.0),        # Mud notch
+        PeakFilter(cutoff_frequency_hz=4000, gain_db=-1.5, q=0.8),       # Upper-mid edge softening
+        HighShelfFilter(cutoff_frequency_hz=8000.0, gain_db=-3.0),       # Gentle HF smoothing
+        Compressor(
+            threshold_db=-18.0,
+            ratio=2.0,
+            attack_ms=80.0,      # Slow attack: let transients through naturally
+            release_ms=500.0,    # Slow release: no pumping on slow ambient pads
+        ),
+        Limiter(threshold_db=-0.5),
+    ])
+
+
 def make_master_chain() -> Pedalboard:
     """Final mastering chain: subsonic HPF → gain → glue compressor → brickwall limiter.
 

@@ -317,7 +317,11 @@ class MeditationPipeline:
                 # ── Step 8: Apply music FX ──────────────────────────────────────
                 _progress(progress_cb, 0.77, "Applying music effects...")
                 music_audio = normalize_loudness(music_audio, TARGET_SR, target_lufs=-20.0)
-                music_chain = make_music_chain()
+                if use_acestep:
+                    from core.audio_processor import make_acestep_music_chain
+                    music_chain = make_acestep_music_chain()
+                else:
+                    music_chain = make_music_chain()
                 music_audio = apply_fx(music_audio, music_chain, TARGET_SR)
 
             # ── Optional: Export stems ──────────────────────────────────────
