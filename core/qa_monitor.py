@@ -24,8 +24,8 @@ def check_silence_gaps(
     issues: list[dict] = []
     silence_start = None
 
-    for i in range(0, len(audio) - window, window):
-        rms = np.sqrt(np.mean(audio[i:i + window] ** 2))
+    for i in range(0, audio.shape[-1] - window, window):
+        rms = np.sqrt(np.mean(audio[..., i:i + window] ** 2))
         if rms < threshold:
             if silence_start is None:
                 silence_start = i
@@ -42,7 +42,7 @@ def check_silence_gaps(
 
     # Check tail
     if silence_start is not None:
-        duration = (len(audio) - silence_start) / sample_rate
+        duration = (audio.shape[-1] - silence_start) / sample_rate
         if duration > max_silence_sec:
             issues.append({
                 "type": "long_silence",
@@ -63,8 +63,9 @@ def check_lufs(
     import pyloudnorm as pyln
 
     meter = pyln.Meter(sample_rate)
+    audio_for_meter = audio.T if audio.ndim == 2 else audio
     try:
-        loudness = meter.integrated_loudness(audio)
+        loudness = meter.integrated_loudness(audio_for_meter)
         passed = abs(loudness - target) <= tolerance
         return {"lufs": round(float(loudness), 1), "target": target, "passed": passed}
     except Exception:
@@ -74,7 +75,7 @@ def check_lufs(
 def check_clipping(audio: np.ndarray, threshold: float = 0.99) -> dict:
     """Check for clipping (samples at or near +/-1.0)."""
     clipped_samples = int(np.sum(np.abs(audio) >= threshold))
-    clipped_ratio = clipped_samples / max(len(audio), 1)
+    clipped_ratio = clipped_samples / max(audio.shape[-1] * (audio.shape[0] if audio.ndim == 2 else 1), 1)
     return {
         "clipped_samples": clipped_samples,
         "clipped_ratio": round(float(clipped_ratio), 6),

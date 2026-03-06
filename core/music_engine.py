@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 NATIVE_SAMPLE_RATE = 32000       # MusicGen native output rate
 TARGET_SAMPLE_RATE = 24000       # Kokoro TTS / pipeline standard rate
 SEGMENT_DURATION = 30            # Seconds per MusicGen call (hard limit)
-CONTEXT_DURATION = 5             # Seconds of audio context for continuation
+CONTEXT_DURATION = 10            # Seconds of audio context for continuation
 CROSSFADE_DURATION = 2.0         # Seconds of crossfade at each segment seam
 
 MODEL_ID = "facebook/musicgen-stereo-medium"
@@ -173,8 +173,14 @@ class MusicEngine:
         # ── Segment 1: text-only generation with hallucination check ────
         MAX_RETRIES = 3
         for attempt in range(MAX_RETRIES):
+            # Explicit memory cleanup against AudioCraft state leak on retry
+            if self.device == "mps":
+                torch.mps.empty_cache()
+            elif self.device == "cuda":
+                torch.cuda.empty_cache()
+                
             wav = self.model.generate([prompt], progress=False)
-            current = self._to_mono(wav[0]).cpu()
+            current = wav[0].cpu()
             if self._check_spectral_flux(current):
                 break
             logger.info("[MusicEngine] Segment 1 retry %d/%d", attempt + 1, MAX_RETRIES)
@@ -197,17 +203,31 @@ class MusicEngine:
                 context = context.to(self.device)
 
             for attempt in range(MAX_RETRIES):
+                # Explicit memory cleanup against AudioCraft state leak on retry
+                if self.device == "mps":
+                    torch.mps.empty_cache()
+                elif self.device == "cuda":
+                    torch.cuda.empty_cache()
+                    
                 next_wav = self.model.generate_continuation(
                     prompt=context,
                     prompt_sample_rate=NATIVE_SAMPLE_RATE,
                     descriptions=[prompt],
                     progress=False,
                 )
-                candidate = self._to_mono(next_wav[0]).cpu()
+                candidate = next_wav[0].cpu()
                 if self._check_spectral_flux(candidate):
                     break
                 logger.info("[MusicEngine] Segment %d retry %d/%d", i + 1, attempt + 1, MAX_RETRIES)
             segments.append(candidate)
+            
+            # Explicit memory cleanup during large sliding string of generations
+            if self.device == "mps":
+                torch.mps.empty_cache()
+            elif self.device == "cuda":
+                torch.cuda.empty_cache()
+            import gc
+            gc.collect()
 
             seg_elapsed = time.time() - seg_t0
             logger.info(
@@ -234,7 +254,7 @@ class MusicEngine:
             lowpass_filter_width=64,
             rolloff=0.9475,
         )
-        result = resampled.squeeze(0).numpy().astype(np.float32)
+        result = resampled.numpy().astype(np.float32)
         # Return unclipped audio: pipeline.py will safely LUFS-normalize it.
         # Hard clipping here causes massive distortion because MusicGen
         # frequently generates unnormalized peaks > 1.0.
@@ -307,9 +327,8 @@ class MusicEngine:
         net_new_per_segment = SEGMENT_DURATION - CONTEXT_DURATION
         return 1 + math.ceil((duration - SEGMENT_DURATION) / net_new_per_segment)
 
-    @staticmethod
     def _to_mono(tensor: torch.Tensor) -> torch.Tensor:
-        """Reduce (channels, samples) to (1, samples)."""
+        # Not used centrally anymore to support native stereo passing, but kept for legacy API compat
         if tensor.ndim == 1:
             return tensor.unsqueeze(0)
         if tensor.shape[0] > 1:

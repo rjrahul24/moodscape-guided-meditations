@@ -88,16 +88,26 @@ def apply_fx(
     chain: Pedalboard,
     sample_rate: int = 24000,
 ) -> np.ndarray:
-    """Apply a Pedalboard FX chain to a mono audio array.
+    """Apply a Pedalboard FX chain to an audio array.
 
-    Handles all the shape manipulation internally.
-    Input and output are both 1D float32 arrays.
+    Supports both 1D (mono) and 2D (stereo) float32 arrays.
     """
     audio = np.clip(audio.astype(np.float32), -1.0, 1.0)
-    audio_2d = audio.reshape(1, -1)
+    is_1d = audio.ndim == 1
+    
+    if is_1d:
+        audio_2d = audio.reshape(1, -1)
+    else:
+        audio_2d = audio
+        
     processed = chain(audio_2d, sample_rate)
-    result = processed.squeeze(0)
-    result = result[:len(audio)]  # Trim reverb tail
+    
+    if is_1d:
+        result = processed.squeeze(0)
+    else:
+        result = processed
+        
+    result = result[..., :audio.shape[-1]]  # Trim reverb tail
     return np.clip(result, -1.0, 1.0).astype(np.float32)
 
 
@@ -106,6 +116,7 @@ def resample_to_44100(audio: np.ndarray, orig_sr: int) -> np.ndarray:
     
     Uses torchaudio for high-quality, efficient resampling. Required before
     applying any Pedalboard FX or mixing Kokoro (24kHz) and MusicGen (32kHz).
+    Supports 1D and 2D arrays.
     """
     import torch
     import torchaudio.functional as F
@@ -113,13 +124,20 @@ def resample_to_44100(audio: np.ndarray, orig_sr: int) -> np.ndarray:
     if orig_sr == 44100:
         return audio
         
-    tensor_audio = torch.from_numpy(audio.astype(np.float32)).unsqueeze(0)
+    tensor_audio = torch.from_numpy(audio.astype(np.float32))
+    is_1d = tensor_audio.ndim == 1
+    if is_1d:
+        tensor_audio = tensor_audio.unsqueeze(0)
+        
     resampled = F.resample(
         tensor_audio, orig_sr, 44100,
         lowpass_filter_width=64,
         rolloff=0.9475,
     )
-    return resampled.squeeze(0).numpy()
+    
+    if is_1d:
+        return resampled.squeeze(0).numpy()
+    return resampled.numpy()
 
 
 def upsample_audio(
@@ -130,16 +148,23 @@ def upsample_audio(
     """Upsample audio for higher-fidelity output.
 
     Uses torchaudio's Kaiser-windowed sinc interpolation for clean,
-    alias-free sample-rate conversion. Only apply at the final export
-    stage, not during intermediate processing.
+    alias-free sample-rate conversion.
+    Supports 1D and 2D arrays.
     """
     import torch
     import torchaudio.functional as F
 
-    tensor = torch.from_numpy(audio.astype(np.float32)).unsqueeze(0)
+    tensor_audio = torch.from_numpy(audio.astype(np.float32))
+    is_1d = tensor_audio.ndim == 1
+    if is_1d:
+        tensor_audio = tensor_audio.unsqueeze(0)
+        
     resampled = F.resample(
-        tensor, from_sr, to_sr,
+        tensor_audio, from_sr, to_sr,
         lowpass_filter_width=64,
         rolloff=0.9475,
     )
-    return resampled.squeeze(0).numpy().astype(np.float32)
+    
+    if is_1d:
+        return resampled.squeeze(0).numpy().astype(np.float32)
+    return resampled.numpy().astype(np.float32)

@@ -13,3 +13,5 @@ scipy
 soundfile
 pyloudnorm
 python-dotenv
+mlx
+git+https://github.com/ace-step/ACE-Step-1.5.git

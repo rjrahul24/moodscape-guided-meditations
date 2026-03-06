@@ -35,16 +35,10 @@ class MasteringEngine:
         self.sample_rate = sample_rate
         logger.info("Initializing MasteringEngine on %s", self.device)
 
-        # Attempt to import resemble-enhance for neural restoration
-        try:
-            from resemble_enhance.enhancer.inference import enhancer
-            self.enhancer_fn = enhancer
-        except ImportError:
-            logger.warning(
-                "resemble-enhance is not installed. Neural denoising will be skipped. "
-                "Run 'pip install resemble-enhance' to enable AI restoration."
-            )
-            self.enhancer_fn = None
+        # The resemble-enhance library is highly unstable on Apple Silicon and newer NumPy versions,
+        # repeatedly failing with bus errors and scalar casting errors.
+        # We rely on the Phase B high-quality noise gate and EQ chain instead.
+        self.enhancer_fn = None
 
         # Pre-build the Phase B mastering chain (built lazily on first call
         # because target SR may differ from __init__ SR)
@@ -74,15 +68,23 @@ class MasteringEngine:
             return audio
 
         try:
-            tensor_wav = torch.tensor(audio, dtype=torch.float32).unsqueeze(0)
+            # enhance() expects a 1D tensor dwav: shape (T,)
+            tensor_wav = torch.tensor(audio, dtype=torch.float32)
             with torch.no_grad():
+                # enhance() signature: dwav, sr, device, nfe=32, solver='midpoint', lambd=0.5, tau=0.5
+                # The returned tuple is (enhanced_wav, new_sr)
+                # Note: using solver="euler" to bypass a bug in resemble-enhance's midpoint solver
+                # where scipy.optimize.fsolve throws a scalar casting error on newer NumPy versions.
                 restored, _ = self.enhancer_fn(
                     tensor_wav,
                     sr,
                     device=self.device,
-                    run_denoise=True,
+                    nfe=32,
+                    solver="euler",
+                    lambd=0.5,
+                    tau=0.5
                 )
-            return restored.cpu().numpy().squeeze().astype(np.float32)
+            return restored.cpu().numpy().astype(np.float32)
         except Exception as e:
             logger.error("resemble-enhance failed: %s — falling back to unprocessed audio", e)
             return audio

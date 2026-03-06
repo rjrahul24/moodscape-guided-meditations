@@ -55,7 +55,7 @@ def apply_rms_ducking(
     Returns:
         Ducked music as 1-D float32 array, same length as music_audio.
     """
-    total_samples = len(music_audio)
+    total_samples = music_audio.shape[-1]
     frame_samples = max(1, int((frame_ms / 1000.0) * sample_rate))
     lookahead_frames = max(0, int(round((lookahead_ms / 1000.0) * sample_rate / frame_samples)))
 
@@ -63,7 +63,8 @@ def apply_rms_ducking(
     # Pad voice to a whole number of frames
     n_frames = math.ceil(total_samples / frame_samples)
     padded = np.zeros(n_frames * frame_samples, dtype=np.float32)
-    padded[:len(voice_audio)] = voice_audio[:total_samples]
+    v_len = min(len(voice_audio), total_samples)
+    padded[:v_len] = voice_audio[:v_len]
 
     frames = padded.reshape(n_frames, frame_samples)       # (n_frames, frame_samples)
     frame_rms = np.sqrt(np.mean(frames ** 2, axis=1))      # (n_frames,)
@@ -99,7 +100,7 @@ def apply_rms_ducking(
 
     # ── 6. Convert dB → linear and multiply ────────────────────────────────
     gain_linear = np.power(10.0, gain_db_samples / 20.0).astype(np.float32)
-    return (music_audio[:total_samples] * gain_linear).astype(np.float32)
+    return (music_audio[..., :total_samples] * gain_linear).astype(np.float32)
 
 
 def apply_mask_ducking(
@@ -133,7 +134,7 @@ def apply_mask_ducking(
     Returns:
         Ducked music as 1D float32 array.
     """
-    total_samples = len(music_audio)
+    total_samples = music_audio.shape[-1]
 
     # 1. Build raw dB automation from the boolean mask
     target_db = np.where(
@@ -167,7 +168,7 @@ def apply_mask_ducking(
 
     # 4. Convert dB → linear and apply
     gain_linear = np.power(10.0, smoothed / 20.0).astype(np.float32)
-    return (music_audio[:total_samples] * gain_linear).astype(np.float32)
+    return (music_audio[..., :total_samples] * gain_linear).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -181,17 +182,17 @@ def _loop_with_crossfade(
     crossfade_sec: float = 2.0,
 ) -> np.ndarray:
     """Loop music array to target_length with equal-power crossfade at boundaries."""
-    crossfade_samples = min(int(crossfade_sec * sample_rate), len(music) // 2)
+    crossfade_samples = min(int(crossfade_sec * sample_rate), music.shape[-1] // 2)
     result = music.copy()
 
-    while len(result) < target_length + crossfade_samples:
+    while result.shape[-1] < target_length + crossfade_samples:
         # Equal-power cosine crossfade (replaces linear np.linspace)
         t = np.linspace(0, np.pi / 2, crossfade_samples, dtype=np.float32)
         fo = np.cos(t) ** 2               # fade out: 1.0 → 0.0
         fi = np.cos(np.pi / 2 - t) ** 2   # fade in:  0.0 → 1.0
 
-        overlap = result[-crossfade_samples:] * fo + music[:crossfade_samples] * fi
-        result = np.concatenate([result[:-crossfade_samples], overlap, music[crossfade_samples:]])
+        overlap = result[..., -crossfade_samples:] * fo + music[..., :crossfade_samples] * fi
+        result = np.concatenate([result[..., :-crossfade_samples], overlap, music[..., crossfade_samples:]], axis=-1)
 
     return result
 
@@ -208,19 +209,24 @@ def overlay_tracks(
     """
     pre_roll_samples = int(music_pre_roll_sec * sample_rate)
 
+    if voice.ndim == 1:
+        pad_shape = pre_roll_samples
+    else:
+        pad_shape = (voice.shape[0], pre_roll_samples)
+        
     # Prepend silence to voice so music plays alone briefly first
     aligned_voice = np.concatenate([
-        np.zeros(pre_roll_samples, dtype=np.float32),
+        np.zeros(pad_shape, dtype=np.float32),
         voice,
-    ])
+    ], axis=-1)
 
-    total_length = len(aligned_voice)
+    total_length = aligned_voice.shape[-1]
 
     # Loop music with crossfade if shorter than needed
-    if len(music) < total_length:
+    if music.shape[-1] < total_length:
         music = _loop_with_crossfade(music, total_length, sample_rate)
 
-    aligned_music = music[:total_length].astype(np.float32)
+    aligned_music = music[..., :total_length].astype(np.float32)
 
     return aligned_voice, aligned_music
 
@@ -239,12 +245,12 @@ def apply_fades(
     result = audio.copy()
 
     fade_in_samples = int(fade_in_sec * sample_rate)
-    if 0 < fade_in_samples < len(result):
-        result[:fade_in_samples] *= np.linspace(0.0, 1.0, fade_in_samples, dtype=np.float32)
+    if 0 < fade_in_samples < result.shape[-1]:
+        result[..., :fade_in_samples] *= np.linspace(0.0, 1.0, fade_in_samples, dtype=np.float32)
 
     fade_out_samples = int(fade_out_sec * sample_rate)
-    if 0 < fade_out_samples < len(result):
-        result[-fade_out_samples:] *= np.linspace(1.0, 0.0, fade_out_samples, dtype=np.float32)
+    if 0 < fade_out_samples < result.shape[-1]:
+        result[..., -fade_out_samples:] *= np.linspace(1.0, 0.0, fade_out_samples, dtype=np.float32)
 
     return result
 
@@ -260,12 +266,13 @@ def calculate_loudness_gain(
 ) -> float:
     """Calculate the linear gain multiplier to hit a target LUFS."""
     min_samples = int(0.4 * sample_rate)
-    if len(audio) < min_samples:
+    if audio.shape[-1] < min_samples:
         return 1.0
 
     meter = pyln.Meter(sample_rate)
+    audio_for_meter = audio.T if audio.ndim == 2 else audio
     try:
-        loudness = meter.integrated_loudness(audio)
+        loudness = meter.integrated_loudness(audio_for_meter)
     except Exception:
         return 1.0
 
@@ -335,13 +342,18 @@ def mix(
         voice_activity,
     ])
     # Match exact length
-    target_len = len(aligned_voice)
-    if len(aligned_music) < target_len:
+    target_len = aligned_voice.shape[-1]
+    if aligned_music.shape[-1] < target_len:
+        if aligned_music.ndim == 1:
+            pad_shape = target_len - aligned_music.shape[-1]
+        else:
+            pad_shape = (aligned_music.shape[0], target_len - aligned_music.shape[-1])
+            
         aligned_music = np.concatenate([
             aligned_music,
-            np.zeros(target_len - len(aligned_music), dtype=np.float32),
-        ])
-    aligned_music = aligned_music[:target_len]
+            np.zeros(pad_shape, dtype=np.float32),
+        ], axis=-1)
+    aligned_music = aligned_music[..., :target_len]
 
     # 4. Apply mask-based ducking (Method A — uses pre-computed voice activity)
     ducked_music = apply_mask_ducking(
@@ -383,13 +395,22 @@ def resample_for_export(
     if source_rate == target_rate:
         return audio
 
-    tensor = torch.tensor(audio, dtype=torch.float32).unsqueeze(0)
+    tensor = torch.tensor(audio, dtype=torch.float32)
+    is_1d = tensor.ndim == 1
+    if is_1d:
+        tensor = tensor.unsqueeze(0)
+        
     resampled = torchaudio.functional.resample(
         tensor, source_rate, target_rate,
         lowpass_filter_width=64,
         rolloff=0.9475,
     )
-    result = resampled.squeeze(0).numpy()
+    
+    if is_1d:
+        result = resampled.squeeze(0).numpy()
+    else:
+        result = resampled.numpy()
+        
     return np.clip(result, -1.0, 1.0).astype(np.float32)
 
 
@@ -421,8 +442,9 @@ def export_stems(
     voice_path = os.path.join(output_dir, "narration_stem.wav")
     music_path = os.path.join(output_dir, "music_stem.wav")
 
-    sf.write(voice_path, voice_audio, sample_rate, subtype="PCM_24")
-    sf.write(music_path, music_audio, sample_rate, subtype="PCM_24")
+    # sf.write requires (samples, channels)
+    sf.write(voice_path, voice_audio.T if voice_audio.ndim == 2 else voice_audio, sample_rate, subtype="PCM_24")
+    sf.write(music_path, music_audio.T if music_audio.ndim == 2 else music_audio, sample_rate, subtype="PCM_24")
 
     return {"voice": voice_path, "music": music_path}
 
@@ -461,14 +483,15 @@ def export_audio(
     
     # 20 second chunks
     chunk_samples = int(20.0 * sample_rate)
-    total_samples = len(audio)
+    total_samples = audio.shape[-1]
+    num_channels = audio.shape[0] if audio.ndim == 2 else 1
 
     # Initialize Pedalboard AudioFile struct
-    f = AudioFile(tmp_path, "w", samplerate=export_rate, num_channels=1)
+    f = AudioFile(tmp_path, "w", samplerate=export_rate, num_channels=num_channels)
 
     for start in range(0, total_samples, chunk_samples):
         end = min(start + chunk_samples, total_samples)
-        chunk = audio[start:end]
+        chunk = audio[..., start:end]
         
         # Resample chunk if needed
         if sample_rate != export_rate:
@@ -479,11 +502,16 @@ def export_audio(
         
         # Apply Pedalboard mastering chain if present
         if master_chain:
-            chunk_2d = chunk.reshape(1, -1)
-            chunk = master_chain(chunk_2d, export_rate).squeeze(0)
+            chunk_2d = chunk.reshape(1, -1) if chunk.ndim == 1 else chunk
+            chunk = master_chain(chunk_2d, export_rate)
+            if audio.ndim == 1:
+                chunk = chunk.squeeze(0)
             
-        # write directly as float32
-        f.write(chunk.reshape(1, -1).astype(np.float32))
+        # write directly as float32. Pedalboard expects (channels, samples).
+        if chunk.ndim == 1:
+            f.write(chunk.reshape(1, -1).astype(np.float32))
+        else:
+            f.write(chunk.astype(np.float32))
 
     f.close()
     return tmp_path

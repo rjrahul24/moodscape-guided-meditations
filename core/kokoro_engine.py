@@ -411,11 +411,33 @@ class KokoroEngine(SpeechEngine):
                     if chunk_audio_parts:
                         raw_chunk = np.concatenate(chunk_audio_parts)
                         cleaned_chunk = trim_tts_artifacts(raw_chunk, sr=SAMPLE_RATE)
+                        
+                        # Apply a 10ms fade-in to the first chunk of the segment
+                        # to eliminate digital clicks/transients from Kokoro's inference start.
+                        if not speech_parts_for_crossfade:
+                            fade_samples = int(0.010 * SAMPLE_RATE)
+                            if len(cleaned_chunk) > fade_samples:
+                                fade_curve = np.linspace(0.0, 1.0, fade_samples, dtype=np.float32)
+                                cleaned_chunk[:fade_samples] *= fade_curve
+
                         speech_parts_for_crossfade.append(cleaned_chunk)
 
                 # Crossfade all speech chunks within this segment
                 if speech_parts_for_crossfade:
                     speech_audio = _crossfade_chunks(speech_parts_for_crossfade)
+                    
+                    # Phase 2 Fix: Apply a strict 30ms fade-in and 50ms fade-out to the 
+                    # VERY EDGES of the final assembled segment. This guarantees a mathematically
+                    # perfect zero-crossing right before and after any [pause] block, eliminating clicks.
+                    fade_in_samples = int(0.030 * SAMPLE_RATE)
+                    fade_out_samples = int(0.050 * SAMPLE_RATE)
+                    
+                    if len(speech_audio) > fade_in_samples + fade_out_samples:
+                        f_in = np.linspace(0.0, 1.0, fade_in_samples, dtype=np.float32)
+                        f_out = np.linspace(1.0, 0.0, fade_out_samples, dtype=np.float32)
+                        speech_audio[:fade_in_samples] *= f_in
+                        speech_audio[-fade_out_samples:] *= f_out
+                        
                 else:
                     speech_audio = np.zeros(int(0.1 * SAMPLE_RATE), dtype=np.float32)
 

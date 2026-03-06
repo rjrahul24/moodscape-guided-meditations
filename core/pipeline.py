@@ -55,6 +55,17 @@ def _enhance_music_prompt(user_prompt: str) -> str:
     return enhanced
 
 
+def _enhance_acestep_prompt(user_prompt: str) -> str:
+    """Build an ACE-Step-optimized prompt from the user's description.
+
+    ACE-Step benefits from explicit guidance away from transients and
+    towards ambient textures.  This delegates to AceStepEngine's own
+    prompt enhancer which appends meditation-specific keywords.
+    """
+    from core.acestep_engine import AceStepEngine
+    return AceStepEngine._enhance_prompt(user_prompt)
+
+
 class MeditationPipeline:
     """End-to-end meditation audio generator."""
 
@@ -80,6 +91,9 @@ class MeditationPipeline:
         seed: int | None = None,
         do_export_stems: bool = False,
         upsample_48k: bool = False,
+        generation_mode: str = "Instrumental + Vocal",
+        instrumental_duration_m: float = 3.0,
+        music_model: str = "musicgen",
     ) -> tuple[str, str]:
         """Run the full pipeline and return the path to the output audio file.
 
@@ -113,60 +127,75 @@ class MeditationPipeline:
         # Unified LUFS target for all meditation sessions
         target_lufs = -14.0
 
-        logger.info("Starting generation — voice=%s, speed=%s, seed=%s, lufs=%s",
-                    voice, speed, seed, target_lufs)
+        is_instrumental = generation_mode == "Instrumental Only"
+        is_vocals = generation_mode == "Vocals Only"
+        use_acestep = music_model == "acestep"
+
+        logger.info("Starting generation — mode=%s, music_model=%s, voice=%s, speed=%s, seed=%s, lufs=%s",
+                    generation_mode, music_model, voice, speed, seed, target_lufs)
 
         try:
-            # ── Step 1: Parse script ────────────────────────────────────────
-            _progress(progress_cb, 0.0, "Parsing meditation script...")
-            segments = parse_script(script)
-            if not segments:
-                raise ValueError("Script is empty or contains no content.")
+            if not is_instrumental:
+                # ── Step 1: Parse script ────────────────────────────────────────
+                _progress(progress_cb, 0.0, "Parsing meditation script...")
+                segments = parse_script(script)
+                if not segments:
+                    raise ValueError("Script is empty or contains no content.")
 
-            # Preprocess speech segments for optimal Kokoro prosody
-            for seg in segments:
-                if seg["type"] == "speech":
-                    seg["text"] = preprocess_for_meditation(seg["text"])
+                # Preprocess speech segments for optimal Kokoro prosody
+                for seg in segments:
+                    if seg["type"] == "speech":
+                        seg["text"] = preprocess_for_meditation(seg["text"])
 
-            logger.info(
-                "Script: %d segments, %d speech blocks",
-                len(segments),
-                sum(1 for s in segments if s["type"] == "speech"),
-            )
-
-            # ── Step 2: Load TTS ────────────────────────────────────────────
-            if tts_engine == "parler":
-                _progress(progress_cb, 0.05, "Loading Parler TTS engine...")
-                from core.parler_engine import ParlerTTSEngine
-                tts = ParlerTTSEngine()
-                tts.load_model()
-            else:
-                _progress(progress_cb, 0.05, "Loading Kokoro voice model...")
-                tts = self.tts
-                tts.load_model()
-
-            # ── Step 3: Synthesize narration ────────────────────────────────
-            _progress(progress_cb, 0.10, "Synthesizing narration...")
-
-            def tts_progress(current, total):
-                frac = 0.10 + 0.30 * (current / max(total, 1))
-                _progress(progress_cb, frac, f"Synthesizing segment {current}/{total}...")
-
-            if tts_engine == "parler":
-                voice_param = (
-                    parler_custom_description
-                    if parler_voice_preset == "Custom Description" and parler_custom_description
-                    else parler_voice_preset
+                logger.info(
+                    "Script: %d segments, %d speech blocks",
+                    len(segments),
+                    sum(1 for s in segments if s["type"] == "speech"),
                 )
-                voice_audio, voice_activity = tts.synthesize(
-                    segments, voice=voice_param, speed=speed, progress_cb=tts_progress
-                )
+
+                # ── Step 2: Load TTS ────────────────────────────────────────────
+                if tts_engine == "parler":
+                    _progress(progress_cb, 0.05, "Loading Parler TTS engine...")
+                    from core.parler_engine import ParlerTTSEngine
+                    tts = ParlerTTSEngine()
+                    tts.load_model()
+                else:
+                    _progress(progress_cb, 0.05, "Loading Kokoro voice model...")
+                    tts = self.tts
+                    tts.load_model()
+
+                # ── Step 3: Synthesize narration ────────────────────────────────
+                _progress(progress_cb, 0.10, "Synthesizing narration...")
+
+                def tts_progress(current, total):
+                    frac = 0.10 + 0.30 * (current / max(total, 1))
+                    _progress(progress_cb, frac, f"Synthesizing segment {current}/{total}...")
+
+                if tts_engine == "parler":
+                    voice_param = (
+                        parler_custom_description
+                        if parler_voice_preset == "Custom Description" and parler_custom_description
+                        else parler_voice_preset
+                    )
+                    voice_audio, voice_activity = tts.synthesize(
+                        segments, voice=voice_param, speed=speed, progress_cb=tts_progress
+                    )
+                else:
+                    voice_audio, voice_activity = tts.synthesize(
+                        segments, voice=voice, speed=speed,
+                        progress_cb=tts_progress, seed=seed,
+                    )
+
+                logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
 
                 # ── Vocal sanity check ──────────────────────────────────
                 # Catch broken TTS output BEFORE it reaches the post-processor.
                 _progress(progress_cb, 0.36, "Validating vocal stem...")
                 vocal_ok = True
-                if np.isnan(voice_audio).any():
+                if len(voice_audio) == 0:
+                    status_message += "WARNING: Vocal stem is empty. "
+                    vocal_ok = False
+                elif np.isnan(voice_audio).any():
                     status_message += "WARNING: Vocal stem contains NaN values. "
                     vocal_ok = False
                 elif np.abs(voice_audio).max() < 1e-6:
@@ -187,101 +216,137 @@ class MeditationPipeline:
                 if not vocal_ok:
                     print(f"[Pipeline] {status_message}")
 
-                # Apply neural restoration immediately on the raw TTS output
+                # ── Phase A: Neural Denoising (Native SR) ───────────────────────
                 _progress(progress_cb, 0.38, "Applying AI vocal restoration...")
                 from core.post_processor import MasteringEngine
                 mastering_engine = MasteringEngine(sample_rate=SAMPLE_RATE)
                 voice_audio = mastering_engine.restore_vocals(voice_audio, sr=SAMPLE_RATE)
+
+                logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
+
+                # Upsample Voice immediately to Target Sample Rate
+                from core.audio_processor import resample_to_44100
+                _progress(progress_cb, 0.39, "Upsampling TTS audio to 44.1kHz standard...")
+                voice_audio = resample_to_44100(voice_audio, SAMPLE_RATE)
+                voice_activity = np.repeat(voice_activity, TARGET_SR // SAMPLE_RATE)
+                pad_diff = len(voice_audio) - len(voice_activity)
+                if pad_diff > 0:
+                     voice_activity = np.concatenate([voice_activity, np.zeros(pad_diff, dtype=bool)])
+                else:
+                     voice_activity = voice_activity[:len(voice_audio)]
+                
+                # ── Phase B: Mastering EQ / De-Ess / Limiting (44.1 kHz) ────────
+                _progress(progress_cb, 0.39, "Mastering vocal stem (EQ/De-Ess)...")
+                voice_audio = mastering_engine.master_vocals(voice_audio, sr=TARGET_SR)
             else:
-                voice_audio, voice_activity = tts.synthesize(
-                    segments, voice=voice, speed=speed,
-                    progress_cb=tts_progress, seed=seed,
+                voice_audio = np.zeros(0, dtype=np.float32)
+                voice_activity = np.zeros(0, dtype=bool)
+
+            if not is_vocals:
+                # ── Step 4: Unload TTS, load music model ────────────────────────
+                music_model_label = "ACE-Step 1.5" if use_acestep else "MusicGen"
+                _progress(progress_cb, 0.40, f"Switching to {music_model_label}...")
+                if not is_instrumental:
+                    tts.unload_model()
+                    if tts_engine == "parler":
+                        del tts
+
+                # Instantiate the selected music engine
+                if use_acestep:
+                    from core.acestep_engine import AceStepEngine
+                    music_engine = AceStepEngine()
+                else:
+                    music_engine = self.music
+                music_engine.load_model()
+
+                # ── Step 5: Generate background music ───────────────────────────
+                if is_instrumental:
+                    music_duration = instrumental_duration_m * 60.0
+                else:
+                    voice_duration = len(voice_audio) / TARGET_SR
+                    music_duration = voice_duration + 10  # extra for pre-roll + fade-out
+
+                _progress(progress_cb, 0.45, f"Generating background music ({music_model_label})...")
+
+                def music_progress(current, total):
+                    frac = 0.45 + 0.25 * (current / max(total, 1))
+                    _progress(progress_cb, frac, f"Generating music segment {current}/{total}...")
+
+                # Enhance the user's prompt with model-specific meditation guardrails
+                if use_acestep:
+                    enhanced_prompt = _enhance_acestep_prompt(music_prompt)
+                else:
+                    enhanced_prompt = _enhance_music_prompt(music_prompt)
+
+                music_audio = music_engine.generate(
+                    enhanced_prompt, music_duration, progress_cb=music_progress
                 )
 
-            logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
+                # Upsample music audio immediately to Target Sample Rate
+                _progress(progress_cb, 0.70, f"Upsampling {music_model_label} audio to 44.1kHz standard...")
+                from core.audio_processor import resample_to_44100
+                if use_acestep:
+                    from core.acestep_engine import TARGET_SAMPLE_RATE as MUSIC_SR
+                else:
+                    from core.music_engine import TARGET_SAMPLE_RATE as MUSIC_SR
+                music_audio = resample_to_44100(music_audio, MUSIC_SR)
 
-            # Upsample Voice immediately to Target Sample Rate
-            from core.audio_processor import resample_to_44100
-            _progress(progress_cb, 0.39, "Upsampling TTS audio to 44.1kHz standard...")
-            voice_audio = resample_to_44100(voice_audio, SAMPLE_RATE)
-            voice_activity = np.repeat(voice_activity, TARGET_SR // SAMPLE_RATE)
-            pad_diff = len(voice_audio) - len(voice_activity)
-            if pad_diff > 0:
-                 voice_activity = np.concatenate([voice_activity, np.zeros(pad_diff, dtype=bool)])
+                # ── Step 6: Unload music model ──────────────────────────────────
+                music_engine.unload_model()
+                if use_acestep:
+                    del music_engine
             else:
-                 voice_activity = voice_activity[:len(voice_audio)]
+                music_audio = np.zeros(0, dtype=np.float32)
 
-            # ── Step 4: Unload TTS, load MusicGen ───────────────────────────
-            _progress(progress_cb, 0.40, "Switching to music model...")
-            tts.unload_model()
-            if tts_engine == "parler":
-                del tts
-            self.music.load_model()
+            if not is_instrumental:
+                # ── Step 7: Apply voice FX ──────────────────────────────────────
+                _progress(progress_cb, 0.72, "Applying voice effects...")
+                voice_chain = make_voice_chain(reverb_amount=reverb_amount)
+                voice_audio = apply_fx(voice_audio, voice_chain, TARGET_SR)
 
-            # ── Step 5: Generate background music ───────────────────────────
-            voice_duration = len(voice_audio) / TARGET_SR
-            music_duration = voice_duration + 10  # extra for pre-roll + fade-out
+                # Align voice_activity to post-FX voice length (reverb tail trim
+                # may change length slightly)
+                voice_activity = voice_activity[:len(voice_audio)]
+                if len(voice_activity) < len(voice_audio):
+                    pad = len(voice_audio) - len(voice_activity)
+                    voice_activity = np.concatenate([
+                        voice_activity, np.zeros(pad, dtype=bool)
+                    ])
 
-            _progress(progress_cb, 0.45, "Generating background music...")
-
-            def music_progress(current, total):
-                frac = 0.45 + 0.25 * (current / max(total, 1))
-                _progress(progress_cb, frac, f"Generating music segment {current}/{total}...")
-
-            # Enhance the user's prompt with meditation guardrails
-            enhanced_prompt = _enhance_music_prompt(music_prompt)
-
-            music_audio = self.music.generate(
-                enhanced_prompt, music_duration, progress_cb=music_progress
-            )
-
-            # Upsample MusicGen audio immediately to Target Sample Rate
-            _progress(progress_cb, 0.70, "Upsampling MusicGen audio to 44.1kHz standard...")
-            from core.audio_processor import resample_to_44100
-            from core.music_engine import TARGET_SAMPLE_RATE as MUSIC_SR
-            music_audio = resample_to_44100(music_audio, MUSIC_SR)
-
-            # ── Step 6: Unload MusicGen ─────────────────────────────────────
-            self.music.unload_model()
-
-            # ── Step 7: Apply voice FX ──────────────────────────────────────
-            _progress(progress_cb, 0.72, "Applying voice effects...")
-            voice_chain = make_voice_chain(reverb_amount=reverb_amount)
-            voice_audio = apply_fx(voice_audio, voice_chain, TARGET_SR)
-
-            # Align voice_activity to post-FX voice length (reverb tail trim
-            # may change length slightly)
-            voice_activity = voice_activity[:len(voice_audio)]
-            if len(voice_activity) < len(voice_audio):
-                pad = len(voice_audio) - len(voice_activity)
-                voice_activity = np.concatenate([
-                    voice_activity, np.zeros(pad, dtype=bool)
-                ])
-
-            # ── Step 8: Apply music FX ──────────────────────────────────────
-            _progress(progress_cb, 0.77, "Applying music effects...")
-            music_audio = normalize_loudness(music_audio, TARGET_SR, target_lufs=-20.0)
-            music_chain = make_music_chain()
-            music_audio = apply_fx(music_audio, music_chain, TARGET_SR)
+            if not is_vocals:
+                # ── Step 8: Apply music FX ──────────────────────────────────────
+                _progress(progress_cb, 0.77, "Applying music effects...")
+                music_audio = normalize_loudness(music_audio, TARGET_SR, target_lufs=-20.0)
+                music_chain = make_music_chain()
+                music_audio = apply_fx(music_audio, music_chain, TARGET_SR)
 
             # ── Optional: Export stems ──────────────────────────────────────
             stem_paths = None
-            if do_export_stems:
+            if do_export_stems and not is_instrumental and not is_vocals:
                 _progress(progress_cb, 0.80, "Exporting stems...")
                 stem_paths = export_stems(voice_audio, music_audio, TARGET_SR)
                 logger.info("Stems exported: %s", stem_paths)
 
             # ── Step 9: Mix with ducking ────────────────────────────────────
-            _progress(progress_cb, 0.82, "Mixing voice and music...")
-            mixed = mix(
-                voice_audio,
-                voice_activity,
-                music_audio,
-                sample_rate=TARGET_SR,
-                duck_amount_db=duck_amount_db,
-                fade_in_sec=fade_in_sec,
-                fade_out_sec=fade_out_sec,
-            )
+            if is_instrumental:
+                _progress(progress_cb, 0.82, "Applying final fades...")
+                from core.mixer import apply_fades
+                mixed = apply_fades(music_audio, TARGET_SR, fade_in_sec, fade_out_sec)
+            elif is_vocals:
+                _progress(progress_cb, 0.82, "Applying final fades...")
+                from core.mixer import apply_fades
+                mixed = apply_fades(voice_audio, TARGET_SR, fade_in_sec, fade_out_sec)
+            else:
+                _progress(progress_cb, 0.82, "Mixing voice and music...")
+                mixed = mix(
+                    voice_audio,
+                    voice_activity,
+                    music_audio,
+                    sample_rate=TARGET_SR,
+                    duck_amount_db=duck_amount_db,
+                    fade_in_sec=fade_in_sec,
+                    fade_out_sec=fade_out_sec,
+                )
 
             # ── Step 10: Master processing ──────────────────────────────────
             _progress(progress_cb, 0.90, "Applying master processing...")

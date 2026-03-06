@@ -5,25 +5,23 @@ from huggingface_hub import hf_hub_download
 
 SAMPLE_RATE = 24000
 
-# Curated meditation voice presets
+# Curated premium meditation voice blends
 MEDITATION_PRESETS = {
-    "golden_hour": {
-        "description": "Warmth + airy clarity (best all-purpose meditation)",
-        "blend": {"af_heart": 0.6, "af_sky": 0.4},
+    "balanced_calm": {
+        "description": "Warm, natural, very human (best all-purpose)",
+        "blend": {"af_heart": 0.5, "af_nicole": 0.5},
     },
-    "night_garden": {
-        "description": "Calm with depth (sleep meditations)",
-        "blend": {"af_heart": 0.6, "af_nova": 0.4},
+    "deep_rest": {
+        "description": "Intimate, breathy, very soft (sleep/deep relaxation)",
+        "blend": {"af_heart": 0.4, "af_nicole": 0.4, "af_nova": 0.2},
     },
-    # Very soft, whisper-like, intimate (good for slow paces)
-    "deep_calm": {
-        "description": "Very soft, whisper-like, intimate (good for slow paces)",
-        "blend": {"af_nicole": 0.8, "af_nova": 0.2},
-    },
-    # ASMR-style relaxation, airy and smooth
-    "still_water": {
+    "soft_whisper": {
         "description": "ASMR-style relaxation, airy and smooth",
-        "blend": {"af_nicole": 0.7, "af_sky": 0.3},
+        "blend": {"af_nicole": 0.6, "af_nova": 0.4},
+    },
+    "golden_hour": {
+        "description": "Slightly more airy warmth",
+        "blend": {"af_heart": 0.6, "af_sky": 0.4},
     },
     "earth_root": {
         "description": "Male/female grounding blend",

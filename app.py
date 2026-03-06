@@ -39,27 +39,18 @@ load_dotenv()
 # (label, voice_id) pairs shown in the Kokoro dropdown.
 # Presets resolve to blended voice tensors via core.voice_manager.
 KOKORO_VOICE_CHOICES = [
-    # Presets (blended)
-    ("Deep Calm — very soft & whispery (default)", "deep_calm"),
-    ("Golden Hour — warm meditation blend",        "golden_hour"),
-    ("Heart + Nicole blend",                       "af_heart,af_nicole"),
-    ("Still Water — ASMR relaxation",              "still_water"),
-    ("Night Garden — sleep meditation",            "night_garden"),
+    # Premium Blends (Recommended)
+    ("Balanced Calm — natural & human (default)",  "balanced_calm"),
+    ("Deep Rest — intimate & breathy",             "deep_rest"),
+    ("Soft Whisper — ASMR relaxation",             "soft_whisper"),
+    ("Golden Hour — warm & airy",                  "golden_hour"),
     ("Earth Root — grounding blend",               "earth_root"),
-    # Individual US voices
+    # High-Quality Individual Voices
     ("Heart — US Female (warm)",                 "af_heart"),
     ("Nicole — US Female (calm/ASMR)",           "af_nicole"),
-    ("Sky — US Female (airy)",                   "af_sky"),
-    ("Nova — US Female (intimate)",              "af_nova"),
-    ("Bella — US Female",                        "af_bella"),
-    ("Sarah — US Female",                        "af_sarah"),
-    # British voices
+    # British & Male Voices
     ("Emma — UK Female (wise)",                  "bf_emma"),
-    ("Lily — UK Female (angelic)",               "bf_lily"),
-    # US Male voices
     ("Adam — US Male (grounding)",               "am_adam"),
-    ("Michael — US Male",                        "am_michael"),
-    # British Male
     ("George — UK Male (warm)",                  "bm_george"),
 ]
 
@@ -100,9 +91,12 @@ def _get_duration(path: str) -> float:
 
 
 def generate_meditation(
+    generation_mode,
     script,
     music_prompt,
+    music_duration,
     engine_choice,
+    music_model_choice,
     kokoro_voice,
     parler_preset,
     parler_custom_desc,
@@ -123,16 +117,22 @@ def generate_meditation(
     # Map radio label to engine key
     tts_engine = "parler" if engine_choice == "Parler TTS" else "kokoro"
 
+    # Map music model label to engine key
+    music_model = "acestep" if music_model_choice == "ACE-Step 1.5" else "musicgen"
+
     # Resolve seed: 0 means auto
     seed = int(seed_value) if seed_value and int(seed_value) != 0 else None
 
     try:
         output_path, status_msg = pipeline.generate(
+            generation_mode=generation_mode,
             script=script,
             music_prompt=music_prompt,
+            instrumental_duration_m=music_duration,
             voice=kokoro_voice,
             speed=speed,
             tts_engine=tts_engine,
+            music_model=music_model,
             parler_voice_preset=parler_preset,
             parler_custom_description=parler_custom_desc,
             duck_amount_db=duck_amount,
@@ -153,7 +153,8 @@ def generate_meditation(
             status = f"Warning: {status_msg}. {base_status}"
         else:
             engine_label = "Parler TTS" if tts_engine == "parler" else "Kokoro"
-            status = f"Generated with {engine_label}. {base_status}"
+            music_label = music_model_choice
+            status = f"Generated with {engine_label} + {music_label}. {base_status}"
         return output_path, status
     except Exception as e:
         return None, f"Error: {e}"
@@ -174,6 +175,11 @@ with gr.Blocks(
     with gr.Row():
         # ── Left column: main inputs ───────────────────────────────────
         with gr.Column(scale=2):
+            generation_mode = gr.Radio(
+                choices=["Instrumental Only", "Vocals Only", "Instrumental + Vocal"],
+                value="Instrumental + Vocal",
+                label="Generation Mode",
+            )
             script_input = gr.Textbox(
                 label="Meditation Script",
                 placeholder=(
@@ -190,6 +196,15 @@ with gr.Blocks(
                 value=DEFAULT_MUSIC_PROMPT,
                 lines=3,
             )
+            music_duration = gr.Slider(
+                minimum=1.0,
+                maximum=30.0,
+                value=3.0,
+                step=0.5,
+                label="Instrumental Duration (minutes)",
+                info="Only applies to 'Instrumental Only' mode.",
+                visible=False,
+            )
 
         # ── Right column: settings ─────────────────────────────────────
         with gr.Column(scale=1):
@@ -204,11 +219,22 @@ with gr.Blocks(
                 ),
             )
 
+            # Background Music Model selector
+            music_model_dropdown = gr.Dropdown(
+                choices=["MusicGen", "ACE-Step 1.5"],
+                value="MusicGen",
+                label="Background Music Model",
+                info=(
+                    "MusicGen: Meta's established model, reliable ambient generation. "
+                    "ACE-Step 1.5: newer DiT model, 48kHz native, coherent long-form via MLX."
+                ),
+            )
+
             # Kokoro settings (visible by default)
             with gr.Accordion("Kokoro Voice Settings", open=False, visible=True) as kokoro_settings:
                 kokoro_voice_dropdown = gr.Dropdown(
                     choices=KOKORO_VOICE_CHOICES,
-                    value="deep_calm",
+                    value="balanced_calm",
                     label="Voice",
                 )
 
@@ -240,7 +266,7 @@ with gr.Blocks(
                 speed_slider = gr.Slider(
                     minimum=0.50,
                     maximum=1.0,
-                    value=0.70,
+                    value=0.68,
                     step=0.01,
                     label="Speaking Speed (0.65-0.75 = meditation ideal)",
                 )
@@ -296,17 +322,45 @@ with gr.Blocks(
                 label="Output Format",
             )
 
+    # Toggle visibility of generation mode specific settings
+    def toggle_mode_settings(mode, current_engine):
+        is_inst = mode == "Instrumental Only"
+        is_voc = mode == "Vocals Only"
+        
+        show_kokoro = (not is_inst) and (current_engine == "Kokoro TTS")
+        show_parler = (not is_inst) and (current_engine == "Parler TTS")
+        
+        return (
+            gr.update(visible=not is_inst), # script_input
+            gr.update(visible=not is_voc),  # music_prompt
+            gr.update(visible=is_inst),     # music_duration
+            gr.update(visible=not is_inst), # engine_radio
+            gr.update(visible=not is_voc),  # music_model_dropdown
+            gr.update(visible=show_kokoro), # kokoro_settings
+            gr.update(visible=show_parler), # parler_settings
+            gr.update(visible=not is_inst), # speed_slider
+            gr.update(visible=not is_voc),  # duck_slider
+            gr.update(visible=not is_inst), # reverb_slider
+        )
+
+    generation_mode.change(
+        fn=toggle_mode_settings,
+        inputs=[generation_mode, engine_radio],
+        outputs=[script_input, music_prompt, music_duration, engine_radio, music_model_dropdown, kokoro_settings, parler_settings, speed_slider, duck_slider, reverb_slider],
+    )
+
     # Toggle visibility of engine-specific settings
-    def toggle_engine_settings(engine_choice):
+    def toggle_engine_settings(engine_choice, mode):
+        is_inst = mode == "Instrumental Only"
         is_kokoro = engine_choice == "Kokoro TTS"
         return (
-            gr.update(visible=is_kokoro),       # kokoro_settings
-            gr.update(visible=not is_kokoro),    # parler_settings
+            gr.update(visible=is_kokoro and not is_inst),       # kokoro_settings
+            gr.update(visible=not is_kokoro and not is_inst),    # parler_settings
         )
 
     engine_radio.change(
         fn=toggle_engine_settings,
-        inputs=[engine_radio],
+        inputs=[engine_radio, generation_mode],
         outputs=[kokoro_settings, parler_settings],
     )
 
@@ -330,9 +384,12 @@ with gr.Blocks(
     generate_btn.click(
         fn=generate_meditation,
         inputs=[
+            generation_mode,
             script_input,
             music_prompt,
+            music_duration,
             engine_radio,
+            music_model_dropdown,
             kokoro_voice_dropdown,
             parler_preset_dropdown,
             parler_custom_textbox,
