@@ -24,6 +24,7 @@ warnings.filterwarnings(
     module="pyloudnorm",
 )
 
+import numpy as np
 import soundfile as sf
 import gradio as gr
 from dotenv import load_dotenv
@@ -109,6 +110,8 @@ def generate_meditation(
     seed_value,
     export_stems_flag,
     upsample_flag,
+    stem_separation_flag,
+    reference_audio_file,
     progress=gr.Progress(),
 ):
     def progress_cb(fraction, message):
@@ -122,6 +125,21 @@ def generate_meditation(
 
     # Resolve seed: 0 means auto
     seed = int(seed_value) if seed_value and int(seed_value) != 0 else None
+
+    # Load reference audio for melody conditioning if provided
+    melody_audio = None
+    melody_sample_rate = None
+    if reference_audio_file is not None:
+        try:
+            audio_data, sr = sf.read(reference_audio_file)
+            audio_data = audio_data.astype(np.float32)
+            # Convert stereo to mono if needed
+            if audio_data.ndim > 1:
+                audio_data = audio_data.mean(axis=1)
+            melody_audio = audio_data
+            melody_sample_rate = sr
+        except Exception as e:
+            print(f"[App] Failed to load reference audio: {e}")
 
     try:
         output_path, status_msg = pipeline.generate(
@@ -144,6 +162,9 @@ def generate_meditation(
             seed=seed,
             do_export_stems=export_stems_flag,
             upsample_48k=upsample_flag,
+            stem_separation=stem_separation_flag,
+            melody_audio=melody_audio,
+            melody_sample_rate=melody_sample_rate,
         )
         duration = _get_duration(output_path)
         minutes = int(duration // 60)
@@ -204,6 +225,16 @@ with gr.Blocks(
                 label="Instrumental Duration (minutes)",
                 info="Only applies to 'Instrumental Only' mode.",
                 visible=False,
+            )
+            reference_audio = gr.Audio(
+                label="Reference Audio (Melody Conditioning)",
+                type="filepath",
+                sources=["upload"],
+                info=(
+                    "Optional: upload a reference audio file (hummed melody, singing bowl, "
+                    "MIDI chord progression) to guide the AI's melodic structure. "
+                    "MusicGen only — ignored when using ACE-Step 1.5."
+                ),
             )
 
         # ── Right column: settings ─────────────────────────────────────
@@ -302,6 +333,14 @@ with gr.Blocks(
 
             # Advanced settings (collapsed by default)
             with gr.Accordion("Advanced Settings", open=False):
+                stem_separation_checkbox = gr.Checkbox(
+                    label="AI Source Separation (remove drums/vocals from music)",
+                    value=True,
+                    info=(
+                        "Runs HT Demucs to strip any unwanted drums or vocal artefacts "
+                        "from generated music. Recommended for pure ambient output."
+                    ),
+                )
                 seed_input = gr.Number(
                     label="Random Seed (0 = auto)",
                     value=0,
@@ -326,10 +365,10 @@ with gr.Blocks(
     def toggle_mode_settings(mode, current_engine):
         is_inst = mode == "Instrumental Only"
         is_voc = mode == "Vocals Only"
-        
+
         show_kokoro = (not is_inst) and (current_engine == "Kokoro TTS")
         show_parler = (not is_inst) and (current_engine == "Parler TTS")
-        
+
         return (
             gr.update(visible=not is_inst), # script_input
             gr.update(visible=not is_voc),  # music_prompt
@@ -341,12 +380,13 @@ with gr.Blocks(
             gr.update(visible=not is_inst), # speed_slider
             gr.update(visible=not is_voc),  # duck_slider
             gr.update(visible=not is_inst), # reverb_slider
+            gr.update(visible=not is_voc),  # reference_audio
         )
 
     generation_mode.change(
         fn=toggle_mode_settings,
         inputs=[generation_mode, engine_radio],
-        outputs=[script_input, music_prompt, music_duration, engine_radio, music_model_dropdown, kokoro_settings, parler_settings, speed_slider, duck_slider, reverb_slider],
+        outputs=[script_input, music_prompt, music_duration, engine_radio, music_model_dropdown, kokoro_settings, parler_settings, speed_slider, duck_slider, reverb_slider, reference_audio],
     )
 
     # Toggle visibility of engine-specific settings
@@ -402,6 +442,8 @@ with gr.Blocks(
             seed_input,
             stems_checkbox,
             upsample_checkbox,
+            stem_separation_checkbox,
+            reference_audio,
         ],
         outputs=[audio_output, status_text],
         show_progress="full",

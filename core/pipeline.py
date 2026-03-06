@@ -95,6 +95,9 @@ class MeditationPipeline:
         instrumental_duration_m: float = 3.0,
         music_model: str = "musicgen",
         music_prompt_stages: list[tuple[str, float]] | None = None,
+        stem_separation: bool = True,
+        melody_audio: np.ndarray | None = None,
+        melody_sample_rate: int | None = None,
     ) -> tuple[str, str]:
         """Run the full pipeline and return the path to the output audio file.
 
@@ -126,6 +129,13 @@ class MeditationPipeline:
                         ("deep sleep ambient drones, very slow", 180.0),
                         ("gentle awakening, morning light, birds", 90.0),
                     ]
+            stem_separation: If True (default), run AI source separation
+                (HT Demucs) on generated music to remove any unwanted drums
+                or vocals that the model may have produced despite prompting.
+            melody_audio: Optional reference audio for melody conditioning
+                (MusicGen only). Float32 mono numpy array. Guides the model's
+                melodic/harmonic structure toward the reference.
+            melody_sample_rate: Sample rate of melody_audio.
 
         Returns:
             Tuple of (path_to_output_file, status_message).
@@ -290,6 +300,16 @@ class MeditationPipeline:
                     label = f"story stage {current}/{total}" if story_mode else f"segment {current}/{total}"
                     _progress(progress_cb, frac, f"Generating music {label}...")
 
+                # Melody conditioning is only supported by MusicGen
+                melody_kwargs = {}
+                if not use_acestep and melody_audio is not None and melody_sample_rate is not None:
+                    melody_kwargs = {
+                        "melody_audio": melody_audio,
+                        "melody_sample_rate": melody_sample_rate,
+                    }
+                    logger.info("Melody conditioning enabled — %.1fs reference audio",
+                                len(melody_audio) / melody_sample_rate)
+
                 if story_mode:
                     # Build engine-specific stages: enhance each stage prompt
                     # with its model's meditation guardrails.
@@ -315,6 +335,7 @@ class MeditationPipeline:
                         music_duration,
                         progress_cb=music_progress,
                         prompt_stages=engine_stages,
+                        **melody_kwargs,
                     )
                 else:
                     # Single-prompt generation (existing behaviour)
@@ -324,8 +345,28 @@ class MeditationPipeline:
                         enhanced_prompt = _enhance_music_prompt(music_prompt)
 
                     music_audio = music_engine.generate(
-                        enhanced_prompt, music_duration, progress_cb=music_progress
+                        enhanced_prompt, music_duration, progress_cb=music_progress,
+                        **melody_kwargs,
                     )
+
+                # ── Step 5b: Unload music model ─────────────────────────────────
+                music_engine.unload_model()
+                if use_acestep:
+                    del music_engine
+
+                # ── Step 5c: AI Source Separation (remove drums/vocals) ─────────
+                if stem_separation:
+                    _progress(progress_cb, 0.68, "Removing drums/vocals via AI source separation...")
+                    if use_acestep:
+                        from core.acestep_engine import TARGET_SAMPLE_RATE as MUSIC_SR
+                    else:
+                        from core.music_engine import TARGET_SAMPLE_RATE as MUSIC_SR
+                    from core.stem_separator import StemSeparator
+                    separator = StemSeparator()
+                    separator.load_model()
+                    music_audio = separator.remove_drums_and_vocals(music_audio, MUSIC_SR)
+                    separator.unload_model()
+                    del separator
 
                 # Upsample music audio immediately to Target Sample Rate
                 _progress(progress_cb, 0.70, f"Upsampling {music_model_label} audio to 44.1kHz standard...")
@@ -335,11 +376,6 @@ class MeditationPipeline:
                 else:
                     from core.music_engine import TARGET_SAMPLE_RATE as MUSIC_SR
                 music_audio = resample_to_44100(music_audio, MUSIC_SR)
-
-                # ── Step 6: Unload music model ──────────────────────────────────
-                music_engine.unload_model()
-                if use_acestep:
-                    del music_engine
             else:
                 music_audio = np.zeros(0, dtype=np.float32)
 

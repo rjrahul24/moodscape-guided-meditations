@@ -139,6 +139,8 @@ class MusicEngine:
         total_duration_sec: float,
         progress_cb=None,
         prompt_stages: list[tuple[str, float]] | None = None,
+        melody_audio: np.ndarray | None = None,
+        melody_sample_rate: int | None = None,
     ) -> np.ndarray:
         """Generate background music using sliding window continuation.
 
@@ -160,6 +162,13 @@ class MusicEngine:
                         ("peaceful gentle morning light, birds", 90.0),
                     ]
                 Ignored if None (falls back to single ``prompt``).
+            melody_audio: Optional reference audio for melody conditioning.
+                Float32 mono numpy array. When provided, the first segment
+                uses chroma-based melody conditioning to guide MusicGen's
+                melodic/harmonic structure toward the reference. Subsequent
+                continuation segments use standard audio context.
+            melody_sample_rate: Sample rate of melody_audio (required when
+                melody_audio is provided).
 
         Returns:
             Mono float32 numpy array at 24000 Hz.
@@ -189,12 +198,32 @@ class MusicEngine:
 
         t0 = time.time()
 
-        # ── Segment 1: text-only generation with hallucination check ────
+        # ── Segment 1: generation with optional melody conditioning ─────
         # In story mode the first segment uses the prompt for t=0.
+        # When melody_audio is provided, use chroma-based conditioning so
+        # MusicGen follows the reference's melodic/harmonic contour.
         MAX_RETRIES = 3
         seg0_prompt = (
             self._stage_prompt_for_time(0.0, prompt_stages) if story_mode else prompt
         )
+
+        use_melody = melody_audio is not None and melody_sample_rate is not None
+        melody_tensor = None
+        if use_melody:
+            melody_tensor = torch.from_numpy(melody_audio.astype(np.float32))
+            if melody_tensor.ndim == 1:
+                melody_tensor = melody_tensor.unsqueeze(0)
+            # Trim or pad melody to SEGMENT_DURATION at the melody's native SR
+            melody_samples = int(SEGMENT_DURATION * melody_sample_rate)
+            if melody_tensor.shape[-1] > melody_samples:
+                melody_tensor = melody_tensor[..., :melody_samples]
+            if self.device != "cpu":
+                melody_tensor = melody_tensor.to(self.device)
+            logger.info(
+                "[MusicEngine] Melody conditioning active — %.1fs reference at %d Hz",
+                melody_tensor.shape[-1] / melody_sample_rate, melody_sample_rate,
+            )
+
         for attempt in range(MAX_RETRIES):
             # Explicit memory cleanup against AudioCraft state leak on retry
             if self.device == "mps":
@@ -202,7 +231,15 @@ class MusicEngine:
             elif self.device == "cuda":
                 torch.cuda.empty_cache()
 
-            wav = self.model.generate([seg0_prompt], progress=False)
+            if use_melody:
+                wav = self.model.generate_with_chroma(
+                    descriptions=[seg0_prompt],
+                    melody_wavs=melody_tensor.unsqueeze(0),
+                    melody_sample_rate=melody_sample_rate,
+                    progress=False,
+                )
+            else:
+                wav = self.model.generate([seg0_prompt], progress=False)
             current = wav[0].cpu()
             if self._check_spectral_flux(current):
                 break
