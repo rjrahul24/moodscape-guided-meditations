@@ -26,3 +26,5 @@ build/
 
 # Model cache (large files downloaded at runtime)
 ~/.cache/huggingface/
+.cache/
+ACE-Step-1.5/
