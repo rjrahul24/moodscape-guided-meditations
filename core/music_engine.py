@@ -1,8 +1,10 @@
-"""MusicGen wrapper — stereo-medium with sliding window continuation.
+"""MusicGen wrapper — stereo-medium with sliding window continuation + story mode.
 
 Model: facebook/musicgen-stereo-medium (1.5B params), fallback to musicgen-small
 Device: MPS (Apple Silicon GPU) with automatic CPU fallback
-Strategy: 30s initial segment, then sliding window with 5s context overlap
+Strategy: 30s initial segment, then sliding window with 5s context overlap.
+          Optional story mode: supply prompt_stages to evolve the text prompt
+          across the timeline, matching meditation phase transitions.
 Output: Mono float32 at 24 kHz (stereo generated internally, downmixed at boundary)
 
 Target hardware: Apple Silicon with 36 GB unified memory
@@ -136,13 +138,28 @@ class MusicEngine:
         prompt: str,
         total_duration_sec: float,
         progress_cb=None,
+        prompt_stages: list[tuple[str, float]] | None = None,
     ) -> np.ndarray:
         """Generate background music using sliding window continuation.
 
         Args:
-            prompt: Text description of desired music style.
+            prompt: Text description of desired music style (used when
+                    prompt_stages is None).
             total_duration_sec: Target duration in seconds.
             progress_cb: Called with (current_segment, total_segments).
+            prompt_stages: Optional list of (prompt, duration_sec) tuples
+                defining story mode. Each segment's text prompt is chosen
+                from whichever stage contains that segment's elapsed time.
+                Audio continuity is preserved via the sliding window
+                regardless of prompt changes — the context audio bridges
+                thematic transitions smoothly.
+                Example:
+                    [
+                        ("calm breathing pads, soft sine waves", 90.0),
+                        ("deep sleep ambient drones, very slow", 120.0),
+                        ("peaceful gentle morning light, birds", 90.0),
+                    ]
+                Ignored if None (falls back to single ``prompt``).
 
         Returns:
             Mono float32 numpy array at 24000 Hz.
@@ -151,9 +168,11 @@ class MusicEngine:
             raise RuntimeError("Music model not loaded. Call load_model() first.")
 
         num_segments = self._num_segments(total_duration_sec)
+        story_mode = prompt_stages is not None
         logger.info(
-            "[MusicEngine] Generating %.0fs of music (%d segments) on %s",
+            "[MusicEngine] Generating %.0fs of music (%d segments) on %s%s",
             total_duration_sec, num_segments, self.device,
+            f" — story mode ({len(prompt_stages)} stages)" if story_mode else "",
         )
 
         self.model.set_generation_params(
@@ -171,15 +190,19 @@ class MusicEngine:
         t0 = time.time()
 
         # ── Segment 1: text-only generation with hallucination check ────
+        # In story mode the first segment uses the prompt for t=0.
         MAX_RETRIES = 3
+        seg0_prompt = (
+            self._stage_prompt_for_time(0.0, prompt_stages) if story_mode else prompt
+        )
         for attempt in range(MAX_RETRIES):
             # Explicit memory cleanup against AudioCraft state leak on retry
             if self.device == "mps":
                 torch.mps.empty_cache()
             elif self.device == "cuda":
                 torch.cuda.empty_cache()
-                
-            wav = self.model.generate([prompt], progress=False)
+
+            wav = self.model.generate([seg0_prompt], progress=False)
             current = wav[0].cpu()
             if self._check_spectral_flux(current):
                 break
@@ -192,11 +215,29 @@ class MusicEngine:
         if progress_cb is not None:
             progress_cb(1, num_segments)
 
+        # Net new audio per continuation (context is stripped during stitching)
+        net_new_per_seg = SEGMENT_DURATION - CONTEXT_DURATION
+
         # ── Subsequent segments: continuation with audio context ────────
         for i in range(1, num_segments):
             seg_t0 = time.time()
             context_samples = int(CONTEXT_DURATION * NATIVE_SAMPLE_RATE)
             context = segments[-1][..., -context_samples:]
+
+            # Story mode: pick the prompt for the elapsed time at this segment
+            elapsed_sec = i * net_new_per_seg
+            if story_mode:
+                seg_prompt = self._stage_prompt_for_time(elapsed_sec, prompt_stages)
+                prev_prompt = self._stage_prompt_for_time(
+                    (i - 1) * net_new_per_seg, prompt_stages
+                )
+                if seg_prompt != prev_prompt:
+                    logger.info(
+                        "[MusicEngine] Story mode: stage transition at t=%.0fs → %s",
+                        elapsed_sec, seg_prompt[:60],
+                    )
+            else:
+                seg_prompt = prompt
 
             # Move context to model device for continuation
             if self.device != "cpu":
@@ -208,11 +249,11 @@ class MusicEngine:
                     torch.mps.empty_cache()
                 elif self.device == "cuda":
                     torch.cuda.empty_cache()
-                    
+
                 next_wav = self.model.generate_continuation(
                     prompt=context,
                     prompt_sample_rate=NATIVE_SAMPLE_RATE,
-                    descriptions=[prompt],
+                    descriptions=[seg_prompt],
                     progress=False,
                 )
                 candidate = next_wav[0].cpu()
@@ -261,6 +302,24 @@ class MusicEngine:
         return result
 
     # ── Private helpers ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _stage_prompt_for_time(
+        elapsed_sec: float,
+        stages: list[tuple[str, float]],
+    ) -> str:
+        """Return the stage prompt that is active at *elapsed_sec*.
+
+        Iterates through (prompt, duration) pairs and returns the prompt
+        whose cumulative duration range contains elapsed_sec.  Falls back
+        to the last stage's prompt if elapsed_sec exceeds total stage time.
+        """
+        cumulative = 0.0
+        for stage_prompt, duration in stages:
+            cumulative += duration
+            if elapsed_sec < cumulative:
+                return stage_prompt
+        return stages[-1][0]
 
     @staticmethod
     def _check_spectral_flux(

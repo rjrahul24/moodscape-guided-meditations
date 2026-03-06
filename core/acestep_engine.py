@@ -3,6 +3,9 @@
 Model: ACE-Step 1.5 (DiT decoder + LM planner)
 Device: MPS (PyTorch) with MLX-accelerated DiT and LLM
 Output: Mono float32 at 24 kHz (native 48 kHz stereo downmixed and resampled)
+Story mode: generate each meditation stage as a separate inference call and
+            crossfade the results — allows deliberate tonal evolution across
+            the meditation arc (e.g. centering → depth → integration).
 
 Target hardware: Apple Silicon M1 Max (24-Core GPU, 36 GB Unified RAM)
 """
@@ -39,6 +42,11 @@ _LM_TEMPERATURE = 0.7
 # ADG applies two complementary CFG branches that reinforce each other:
 # this significantly reduces spectral noise without increasing inference time.
 _USE_ADG = True
+
+# Story mode: crossfade duration between adjacent stages (seconds).
+# 6 seconds gives a natural, unhurried transition between tonal worlds
+# without cutting into the usable content of either stage.
+_STORY_CROSSFADE_SEC = 6.0
 
 
 class AceStepEngine:
@@ -142,25 +150,39 @@ class AceStepEngine:
         prompt: str,
         total_duration_sec: float,
         progress_cb=None,
+        prompt_stages: list[tuple[str, float]] | None = None,
     ) -> np.ndarray:
         """Generate instrumental meditation music via ACE-Step 1.5.
 
         Args:
             prompt: Text description of desired music style (will be
                     enhanced internally with meditation keywords).
+                    Used when prompt_stages is None.
             total_duration_sec: Target duration in seconds.
+                    Ignored when prompt_stages is provided (duration is
+                    derived from the sum of stage durations).
             progress_cb: Called with (current_step, total_steps).
+            prompt_stages: Optional list of (prompt, duration_sec) tuples
+                for story mode. Each stage is generated as a separate
+                ACE-Step inference call and adjacent stages are blended
+                with a 6-second equal-power cosine crossfade.
+                Example:
+                    [
+                        ("calm breathing pads, soft sine waves", 90.0),
+                        ("deep sleep ambient drones, very slow", 120.0),
+                    ]
 
         Returns:
             Mono float32 numpy array at 24 000 Hz — same contract as
             ``MusicEngine.generate()``.
         """
-        from acestep.inference import GenerationConfig, GenerationParams, generate_music
-
         if not self.initialized:
             self.load_model()
 
-        # ── Enhance prompt for meditation ────────────────────────────────
+        if prompt_stages is not None:
+            return self._generate_story(prompt_stages, progress_cb)
+
+        # ── Single-stage generation ───────────────────────────────────────
         enhanced_prompt = self._enhance_prompt(prompt)
         logger.info(
             "[AceStepEngine] Generating %.0fs of music — prompt: %s",
@@ -169,6 +191,67 @@ class AceStepEngine:
 
         if progress_cb is not None:
             progress_cb(0, 1)
+
+        audio = self._generate_single(enhanced_prompt, total_duration_sec)
+
+        if progress_cb is not None:
+            progress_cb(1, 1)
+
+        return audio
+
+    def _generate_story(
+        self,
+        prompt_stages: list[tuple[str, float]],
+        progress_cb=None,
+    ) -> np.ndarray:
+        """Generate story mode audio: one ACE-Step call per stage, then crossfade.
+
+        Each stage's prompt is enhanced independently so the model receives
+        full meditation-optimised guidance for each tonal world. Adjacent
+        stages are blended with a 6-second equal-power cosine crossfade in
+        the numpy domain (after postprocessing) to create a smooth, natural
+        transition without abrupt tonal jumps.
+
+        Args:
+            prompt_stages: List of (raw_prompt, duration_sec) pairs.
+            progress_cb: Called with (completed_stages, total_stages).
+
+        Returns:
+            Mono float32 numpy array at TARGET_SAMPLE_RATE (24 000 Hz).
+        """
+        n = len(prompt_stages)
+        logger.info(
+            "[AceStepEngine] Story mode: %d stage(s), total ~%.0fs",
+            n, sum(d for _, d in prompt_stages),
+        )
+
+        if progress_cb is not None:
+            progress_cb(0, n)
+
+        stage_audios: list[np.ndarray] = []
+        for i, (stage_prompt, stage_duration) in enumerate(prompt_stages):
+            enhanced = self._enhance_prompt(stage_prompt)
+            logger.info(
+                "[AceStepEngine] Story stage %d/%d (%.0fs) — %s",
+                i + 1, n, stage_duration, enhanced[:80],
+            )
+            audio = self._generate_single(enhanced, stage_duration)
+            stage_audios.append(audio)
+
+            if progress_cb is not None:
+                progress_cb(i + 1, n)
+
+        return self._crossfade_stages(stage_audios, _STORY_CROSSFADE_SEC)
+
+    def _generate_single(self, enhanced_prompt: str, duration_sec: float) -> np.ndarray:
+        """One ACE-Step inference call → 24 kHz mono float32 numpy array.
+
+        Builds GenerationParams with the tuned quality knobs, calls
+        generate_music(), extracts the audio tensor, and returns the
+        postprocessed result.  The caller is responsible for prompt
+        enhancement before passing here.
+        """
+        from acestep.inference import GenerationConfig, GenerationParams, generate_music
 
         t0 = time.time()
 
@@ -185,7 +268,7 @@ class AceStepEngine:
             caption=enhanced_prompt,
             lyrics="[Instrumental]",
             instrumental=True,
-            duration=total_duration_sec,
+            duration=duration_sec,
             inference_steps=_INFERENCE_STEPS,
             guidance_scale=_GUIDANCE_SCALE,
             use_adg=_USE_ADG,
@@ -225,11 +308,7 @@ class AceStepEngine:
         tensor = audio_dict["tensor"]           # 48 kHz stereo torch.Tensor
         sample_rate = audio_dict.get("sample_rate", NATIVE_SAMPLE_RATE)
 
-        elapsed = time.time() - t0
-        logger.info("[AceStepEngine] Generation done in %.1fs", elapsed)
-
-        if progress_cb is not None:
-            progress_cb(1, 1)
+        logger.info("[AceStepEngine] Generation done in %.1fs", time.time() - t0)
 
         # ── Post-processing: denoise → stereo→mono → resample ────────────
         return self._postprocess(tensor, sample_rate)
@@ -237,6 +316,40 @@ class AceStepEngine:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _crossfade_stages(
+        segments: list[np.ndarray],
+        crossfade_sec: float,
+    ) -> np.ndarray:
+        """Join story mode segments with equal-power cosine crossfades.
+
+        Args:
+            segments:      List of mono float32 arrays at TARGET_SAMPLE_RATE.
+            crossfade_sec: Blend duration in seconds.  Clamped to the
+                           length of the shorter adjacent segment.
+
+        Returns:
+            Single mono float32 array — the stitched meditation track.
+        """
+        if len(segments) == 1:
+            return segments[0]
+
+        import math
+        fade_samples = int(crossfade_sec * TARGET_SAMPLE_RATE)
+        result = segments[0]
+
+        for seg in segments[1:]:
+            overlap = min(fade_samples, len(result), len(seg))
+            # Equal-power (cosine²) fade prevents energy dips at the seam
+            t = np.linspace(0.0, math.pi / 2.0, overlap, dtype=np.float32)
+            fade_out = np.cos(t) ** 2
+            fade_in  = np.cos(math.pi / 2.0 - t) ** 2
+
+            blended = result[-overlap:] * fade_out + seg[:overlap] * fade_in
+            result = np.concatenate([result[:-overlap], blended, seg[overlap:]])
+
+        return result
 
     @staticmethod
     def _enhance_prompt(user_prompt: str) -> str:

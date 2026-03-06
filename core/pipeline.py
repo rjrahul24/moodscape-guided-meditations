@@ -94,12 +94,14 @@ class MeditationPipeline:
         generation_mode: str = "Instrumental + Vocal",
         instrumental_duration_m: float = 3.0,
         music_model: str = "musicgen",
+        music_prompt_stages: list[tuple[str, float]] | None = None,
     ) -> tuple[str, str]:
         """Run the full pipeline and return the path to the output audio file.
 
         Args:
             script: Meditation script with [pause:Xs] markers.
             music_prompt: Text description of desired background music.
+                Used when music_prompt_stages is None.
             voice: Kokoro voice name, preset, or comma-separated blend.
             speed: Speaking speed (0.5–1.0).
             tts_engine: "kokoro" or "parler".
@@ -114,6 +116,16 @@ class MeditationPipeline:
             seed: Optional deterministic seed for reproducible generation.
             do_export_stems: If True, save voice/music stems alongside the mix.
             upsample_48k: If True, export at 48 kHz instead of 44.1 kHz.
+            music_prompt_stages: Optional list of (prompt, duration_sec) pairs
+                for story mode music generation. When provided, overrides
+                music_prompt and instrumental_duration_m (total music duration
+                is the sum of stage durations). Each stage prompt is enhanced
+                with model-specific meditation guardrails. Example:
+                    [
+                        ("calm breathing pads, soft sine waves", 90.0),
+                        ("deep sleep ambient drones, very slow", 180.0),
+                        ("gentle awakening, morning light, birds", 90.0),
+                    ]
 
         Returns:
             Tuple of (path_to_output_file, status_message).
@@ -260,7 +272,12 @@ class MeditationPipeline:
                 music_engine.load_model()
 
                 # ── Step 5: Generate background music ───────────────────────────
-                if is_instrumental:
+                story_mode = music_prompt_stages is not None
+                if story_mode:
+                    # Story mode: total duration is derived from the stages.
+                    # Add a small buffer so the final fade-out has audio to work with.
+                    music_duration = sum(d for _, d in music_prompt_stages) + 5.0
+                elif is_instrumental:
                     music_duration = instrumental_duration_m * 60.0
                 else:
                     voice_duration = len(voice_audio) / TARGET_SR
@@ -270,17 +287,45 @@ class MeditationPipeline:
 
                 def music_progress(current, total):
                     frac = 0.45 + 0.25 * (current / max(total, 1))
-                    _progress(progress_cb, frac, f"Generating music segment {current}/{total}...")
+                    label = f"story stage {current}/{total}" if story_mode else f"segment {current}/{total}"
+                    _progress(progress_cb, frac, f"Generating music {label}...")
 
-                # Enhance the user's prompt with model-specific meditation guardrails
-                if use_acestep:
-                    enhanced_prompt = _enhance_acestep_prompt(music_prompt)
+                if story_mode:
+                    # Build engine-specific stages: enhance each stage prompt
+                    # with its model's meditation guardrails.
+                    if use_acestep:
+                        # AceStepEngine enhances prompts internally per stage;
+                        # pass raw stage prompts so they are not double-enhanced.
+                        engine_stages = music_prompt_stages
+                    else:
+                        # MusicEngine expects pre-enhanced prompts (pipeline enhances).
+                        engine_stages = [
+                            (_enhance_music_prompt(p), d)
+                            for p, d in music_prompt_stages
+                        ]
+                    # The single enhanced_prompt is still needed as a fallback
+                    # for MusicEngine's `prompt` arg (unused when stages provided).
+                    enhanced_prompt = (
+                        _enhance_acestep_prompt(music_prompt)
+                        if use_acestep
+                        else _enhance_music_prompt(music_prompt)
+                    )
+                    music_audio = music_engine.generate(
+                        enhanced_prompt,
+                        music_duration,
+                        progress_cb=music_progress,
+                        prompt_stages=engine_stages,
+                    )
                 else:
-                    enhanced_prompt = _enhance_music_prompt(music_prompt)
+                    # Single-prompt generation (existing behaviour)
+                    if use_acestep:
+                        enhanced_prompt = _enhance_acestep_prompt(music_prompt)
+                    else:
+                        enhanced_prompt = _enhance_music_prompt(music_prompt)
 
-                music_audio = music_engine.generate(
-                    enhanced_prompt, music_duration, progress_cb=music_progress
-                )
+                    music_audio = music_engine.generate(
+                        enhanced_prompt, music_duration, progress_cb=music_progress
+                    )
 
                 # Upsample music audio immediately to Target Sample Rate
                 _progress(progress_cb, 0.70, f"Upsampling {music_model_label} audio to 44.1kHz standard...")
