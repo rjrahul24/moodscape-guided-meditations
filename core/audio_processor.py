@@ -49,16 +49,40 @@ def make_voice_chain(reverb_amount: float = 0.09) -> Pedalboard:
 
 
 def make_music_chain() -> Pedalboard:
-    """FX chain for MusicGen output: low-end warmth → vocal pocket notch → gentle HF shelf → limit.
+    """FX chain for MusicGen output — spectral shaping for 24 kHz source material.
 
-    The HighShelfFilter replaces the previous aggressive 3kHz LowpassFilter.
-    It preserves natural ambient timbre while softening the 'digital shimmer'
-    above 10kHz that MusicGen produces.
+    Super-resolution strategy:
+    MusicGen outputs at 32 kHz native, downsampled to 24 kHz in the engine
+    (Nyquist: 12 kHz), then resampled to 44.1 kHz. The 12–22 kHz band in the
+    final file is mathematically empty; the resampler's anti-alias filter
+    (rolloff=0.9475) creates a natural taper from ~11.4 kHz to 12 kHz.
+
+    The previous HighShelfFilter at 10 kHz was acting almost entirely in the
+    dead zone above 12 kHz and barely touching the actual artifact zone. The
+    real MusicGen artefact region — grainy autoregressive-decoding shimmer —
+    sits at 8–10 kHz (just below the processing ceiling).
+
+    Chain:
+      1. 300 Hz low-end warmth: pads sound fuller without low-mid muddiness.
+      2. 1800 Hz vocal-pocket notch: creates spectral space for narration to
+         sit above the music during mixed sessions.
+      3. 5500 Hz clarity/air presence (+0.8 dB, broad Q=0.6): psychoacoustic
+         "super-resolution" — a gentle boost in the upper-presence range adds
+         perceived openness and compensates for the absent 12–22 kHz octave
+         that the listener's ear expects from high-fidelity content. Applied
+         below the artifact zone so it adds clarity without amplifying shimmer.
+      4. 8000 Hz HF shelf (-3 dB): targets the actual MusicGen artifact zone.
+         Previously at 10 kHz this filter was largely inactive (above Nyquist
+         of the 24 kHz intermediate); moved to 8 kHz it now attenuates the
+         8–12 kHz region where autoregressive decoding leaves grainy noise.
+         ACE-Step's chain already uses this same 8 kHz placement.
+      5. Limiter at -1 dBFS.
     """
     return Pedalboard([
         PeakFilter(cutoff_frequency_hz=300, gain_db=2.0, q=0.7),      # Low-end warmth
-        PeakFilter(cutoff_frequency_hz=1800, gain_db=-3.0, q=0.6),   # Vocal pocket notch
-        HighShelfFilter(cutoff_frequency_hz=10000.0, gain_db=-4.0),   # Gentle HF rolloff
+        PeakFilter(cutoff_frequency_hz=1800, gain_db=-3.0, q=0.6),    # Vocal pocket notch
+        PeakFilter(cutoff_frequency_hz=5500, gain_db=0.8, q=0.6),     # Clarity/air presence
+        HighShelfFilter(cutoff_frequency_hz=8000.0, gain_db=-3.0),    # HF artefact suppression
         Limiter(threshold_db=-1.0),
     ])
 

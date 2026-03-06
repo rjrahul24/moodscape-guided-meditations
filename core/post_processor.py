@@ -101,7 +101,16 @@ class MasteringEngine:
           2. Warmth    +2 dB @ 200 Hz low-shelf – "proximity effect" warmth
           3. Surgical  -1.5 dB @ 400 Hz, +1.5 dB @ 3.5 kHz – mud cut & presence
           4. De-Esser  boost → compress → cut at 7 kHz – tame sibilance only
-          5. Lowpass   15 kHz  – remove digital hiss / aliasing artifacts
+          5. Lowpass   10.5 kHz – psychoacoustic "super-resolution" smoothing:
+             Kokoro TTS runs at 24 kHz native (Nyquist: 12 kHz), upsampled to
+             44.1 kHz. The previous LPF at 15 kHz was entirely inactive (no TTS
+             signal exists above 12 kHz). Moving to 10.5 kHz creates a smooth,
+             analog-sounding rolloff in the 10.5–12 kHz region, masking the
+             abrupt digital brick-wall at the 12 kHz Nyquist boundary. The
+             result is a warmer, more natural high-end that avoids the harsh
+             "FM radio" quality of an unmasked Nyquist edge. Sibilance (7 kHz)
+             is already handled by the de-esser above, so this filter does not
+             dull consonants noticeably.
           6. Limiter   -0.5 dB – prevent overs on final output
         """
         return Pedalboard([
@@ -120,10 +129,10 @@ class MasteringEngine:
             Compressor(threshold_db=-20, ratio=4.0, attack_ms=1, release_ms=30),
             PeakFilter(cutoff_frequency_hz=7000, gain_db=-6.0, q=2.0),
 
-            # 4. Lowpass – remove HF hiss while preserving vocal "air"
-            LowpassFilter(cutoff_frequency_hz=15000),
+            # 5. Lowpass – mask the Nyquist brick-wall of 24 kHz TTS material
+            LowpassFilter(cutoff_frequency_hz=10500),
 
-            # 5. Final limiter
+            # 6. Final limiter
             Limiter(threshold_db=-0.5),
         ])
 
