@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import MagicMock, patch
 import numpy as np
 
 from core.kokoro_engine import (
@@ -10,7 +11,9 @@ from core.kokoro_engine import (
 
 from core.parler_engine import (
     _split_into_sentences as p_split,
-    _adjust_description_for_speed as p_adjust
+    _adjust_description_for_speed as p_adjust,
+    ParlerTTSEngine,
+    VOICE_PRESETS,
 )
 
 class TestTTSEngines(unittest.TestCase):
@@ -65,6 +68,95 @@ class TestTTSEngines(unittest.TestCase):
         # Normal
         adj2 = p_adjust(desc, 1.0)
         self.assertIn("natural", adj2.lower())
+
+    # --- Parler Engine Execution Tests (mocked model) ---
+
+    def _make_engine_with_mock_model(self, native_sr=44100):
+        """Return a ParlerTTSEngine with a fully mocked model and tokenizer."""
+        from core.speech_engine import SAMPLE_RATE
+
+        engine = ParlerTTSEngine()
+        engine.device = "cpu"
+        engine._native_sr = native_sr
+
+        # Tokenizer returns simple tensors
+        import torch
+        tok = MagicMock()
+        tok.return_value = MagicMock(
+            input_ids=torch.zeros(1, 5, dtype=torch.long),
+            attention_mask=torch.ones(1, 5, dtype=torch.long),
+        )
+        engine.tokenizer = tok
+
+        # Model.generate returns a 1-D int tensor of audio samples (float values
+        # are expected after .float() conversion, so use float-compatible values).
+        num_samples = native_sr  # 1 second of fake audio
+        fake_audio = torch.sin(torch.linspace(0, 6.28, num_samples)).unsqueeze(0)
+        model = MagicMock()
+        model.generate.return_value = fake_audio
+        engine.model = model
+
+        return engine
+
+    def test_parler_generate_speech_chunk_calls_model(self):
+        """_generate_speech_chunk should call model.generate and return float32 audio."""
+        from core.speech_engine import SAMPLE_RATE
+        engine = self._make_engine_with_mock_model()
+        audio = engine._generate_speech_chunk("Breathe slowly.", "A calm voice.")
+
+        engine.model.generate.assert_called_once()
+        self.assertIsInstance(audio, np.ndarray)
+        self.assertEqual(audio.dtype, np.float32)
+        self.assertGreater(len(audio), 0)
+
+    def test_parler_generate_speech_chunk_passes_correct_kwargs(self):
+        """model.generate must be called with the required keyword arguments."""
+        engine = self._make_engine_with_mock_model()
+        engine._generate_speech_chunk("Relax.", "Soft voice.")
+
+        _, kwargs = engine.model.generate.call_args
+        self.assertIn("input_ids", kwargs)
+        self.assertIn("attention_mask", kwargs)
+        self.assertIn("prompt_input_ids", kwargs)
+        self.assertIn("prompt_attention_mask", kwargs)
+        self.assertTrue(kwargs.get("do_sample"))
+
+    def test_parler_synthesize_produces_audio_and_activity(self):
+        """synthesize() should return matching-length voice_audio and voice_activity."""
+        engine = self._make_engine_with_mock_model()
+        segments = [
+            {"type": "speech", "text": "Close your eyes and breathe deeply."},
+            {"type": "pause", "duration_sec": 1.0},
+            {"type": "speech", "text": "Feel the calm wash over you."},
+        ]
+        voice_audio, voice_activity = engine.synthesize(segments, voice="")
+
+        self.assertIsInstance(voice_audio, np.ndarray)
+        self.assertIsInstance(voice_activity, np.ndarray)
+        self.assertEqual(len(voice_audio), len(voice_activity))
+        self.assertGreater(len(voice_audio), 0)
+        # model.generate should have been called at least once per speech segment
+        self.assertGreaterEqual(engine.model.generate.call_count, 2)
+
+    def test_parler_resolve_voice_description_preset(self):
+        """_resolve_voice_description should map preset names to their descriptions."""
+        engine = ParlerTTSEngine()
+        label, desc = VOICE_PRESETS[0]
+        resolved = engine._resolve_voice_description(label)
+        self.assertEqual(resolved, desc)
+
+    def test_parler_resolve_voice_description_raw_string(self):
+        """_resolve_voice_description should pass through raw description strings."""
+        engine = ParlerTTSEngine()
+        raw = "A deep, resonant voice with slow pacing."
+        self.assertEqual(engine._resolve_voice_description(raw), raw)
+
+    def test_parler_unloaded_model_raises(self):
+        """Calling synthesize before load_model should raise RuntimeError."""
+        engine = ParlerTTSEngine()
+        with self.assertRaises(RuntimeError):
+            engine.synthesize([{"type": "speech", "text": "Hello."}])
+
 
 if __name__ == '__main__':
     unittest.main()

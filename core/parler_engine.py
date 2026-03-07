@@ -5,10 +5,29 @@ Parler TTS native sample rate: 44100 Hz -> resampled to 24000 Hz for pipeline
 """
 
 import gc
+import logging
 import os
 import re
+import warnings
 
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
+# Suppress known FutureWarnings from parler_tts / transformers internals that we
+# cannot fix without modifying third-party source code:
+#  • torch weight_norm: parler_tts's DAC vocoder uses the old API and also calls
+#    remove_weight_norm(), which is incompatible with the new parametrizations API.
+#    Replacing weight_norm directly breaks remove_weight_norm, so suppress instead.
+#  • transformers AttentionMaskConverter: deprecated in v5.x, removed in v5.10.
+#  • prompt_attention_mask logger: cosmetic, parler always receives the mask.
+warnings.filterwarnings(
+    "ignore", category=FutureWarning,
+    message=".*weight_norm.*",
+)
+warnings.filterwarnings(
+    "ignore", category=FutureWarning,
+    message=".*AttentionMaskConverter.*",
+)
+logging.getLogger("parler_tts").setLevel(logging.ERROR)
 
 # Compatibility: transformers >=4.47 removed SlidingWindowCache from cache_utils.
 # parler_tts (designed for transformers==4.46.1) imports it at module load time.
@@ -19,6 +38,156 @@ except ImportError:
     import transformers.cache_utils as _tcu
     from transformers.cache_utils import StaticCache as _sc
     _tcu.SlidingWindowCache = _sc
+
+# Compatibility: transformers >= 4.49 removed isin_mps_friendly from pytorch_utils.
+# Backfill it for parler_tts to prevent import errors.
+import transformers.pytorch_utils as _tpu
+if not hasattr(_tpu, 'isin_mps_friendly'):
+    import torch as _torch
+    def _isin_mps_friendly(elements, test_elements, assume_unique=False, invert=False):
+        return _torch.isin(elements, test_elements, assume_unique=assume_unique, invert=invert)
+    _tpu.isin_mps_friendly = _isin_mps_friendly
+
+# Compatibility: transformers >= 4.47 attempts to instantiate ParlerTTSConfig
+# without arguments to get defaults, which fails because it requires 3 configs.
+try:
+    from parler_tts.configuration_parler_tts import ParlerTTSConfig as _ParlerTTSConfig
+    _ParlerTTSConfig.has_no_defaults_at_init = True
+    # transformers >= 4.49 also removes tie_encoder_decoder from base config
+    if not hasattr(_ParlerTTSConfig, "tie_encoder_decoder"):
+        _ParlerTTSConfig.tie_encoder_decoder = False
+
+    # Register ParlerTTSConfig with transformers' AutoConfig so that from_pretrained
+    # does not warn "model of type parler_tts to instantiate model of type ''".
+    from transformers import AutoConfig as _AutoConfig
+    try:
+        _AutoConfig.register("parler_tts", _ParlerTTSConfig)
+    except ValueError:
+        pass  # already registered
+
+    from parler_tts.modeling_parler_tts import ParlerTTSForConditionalGeneration as _ParlerTTSGen
+    _orig_tie_weights = _ParlerTTSGen.tie_weights
+    def _patched_tie_weights(self, *args, **kwargs):
+        _orig_tie_weights(self)
+        super(_ParlerTTSGen, self).tie_weights(*args, **kwargs)
+    _ParlerTTSGen.tie_weights = _patched_tie_weights
+
+    from transformers import GenerationMixin
+    if GenerationMixin not in _ParlerTTSGen.__bases__:
+        _ParlerTTSGen.__bases__ = (GenerationMixin,) + _ParlerTTSGen.__bases__
+
+    # ParlerTTSForCausalLM (the inner audio decoder) also defines
+    # prepare_inputs_for_generation but doesn't inherit GenerationMixin,
+    # triggering the same transformers warning.  Fix it the same way.
+    from parler_tts.modeling_parler_tts import ParlerTTSForCausalLM as _ParlerTTSCausalLM
+    if GenerationMixin not in _ParlerTTSCausalLM.__bases__:
+        _ParlerTTSCausalLM.__bases__ = (GenerationMixin,) + _ParlerTTSCausalLM.__bases__
+
+    # Compatibility: transformers >= 5.x changed _get_initial_cache_position signature from
+    # parler's (self, input_ids_tensor, model_kwargs) to (self, seq_length_int, device, model_kwargs).
+    # Replace with an implementation that accepts the new signature but runs parler's logic,
+    # which computes cache positions based on input length and slices off past_length.
+    import torch as _torch
+    try:
+        from transformers.cache_utils import Cache as _Cache
+    except ImportError:
+        _Cache = object
+
+    try:
+        from torch._dynamo import is_compiling as _is_torchdynamo_compiling
+    except ImportError:
+        def _is_torchdynamo_compiling():
+            return False
+
+    def _patched_cache_pos(self, seq_length, device, model_kwargs):
+        """Cache position adapter for transformers 5.x + parler_tts compatibility.
+
+        Transformers 5.x calls with (seq_length: int, device, model_kwargs).
+        Parler's original code expected (input_ids_tensor, model_kwargs) and did
+        torch.ones_like(input_ids[0, :]). We replicate the same logic using the
+        integer seq_length directly so positions are correct for parler's audio decoder.
+        """
+        cache_position = _torch.ones(seq_length, dtype=_torch.int64, device=device).cumsum(0) - 1
+
+        past_length = 0
+        if model_kwargs.get("past_key_values") is not None:
+            cache = model_kwargs["past_key_values"]
+            if not isinstance(cache, _Cache):
+                past_length = cache[0][0].shape[2]
+            elif hasattr(cache, "get_seq_length") and cache.get_seq_length() is not None:
+                past_length = cache.get_seq_length()
+            if not _is_torchdynamo_compiling():
+                cache_position = cache_position[past_length:]
+
+        model_kwargs["cache_position"] = cache_position
+        return model_kwargs
+
+    _ParlerTTSGen._get_initial_cache_position = _patched_cache_pos
+
+    # Compatibility: transformers 5.x _update_model_kwargs_for_generation ACCUMULATES
+    # cache_position as [0, 1, 2, ...], so cache_position[0] is always 0. But parler's
+    # prepare_inputs_for_generation uses cache_position[0] as past_key_values_length to
+    # compute decoder attention mask sizes. Fix: patch prepare_inputs_for_generation to
+    # rebuild cache_position from past_key_values.get_seq_length() when cache has content,
+    # so cache_position[0] correctly reflects how many tokens have been decoded so far.
+    from parler_tts.modeling_parler_tts import EncoderDecoderCache as _EncoderDecoderCache
+
+    # Compatibility: transformers 5.x DynamicCache changed internal storage from
+    # .key_cache[layer_idx] / .value_cache[layer_idx] lists to .layers[layer_idx].keys/.values.
+    # parler_tts cross-attention reads: past_key_value.key_cache[self.layer_idx].
+    # Add .key_cache and .value_cache as list-like views backed by .layers[i].keys/values.
+    from transformers.cache_utils import DynamicCache as _DynamicCache
+
+    if not hasattr(_DynamicCache, 'key_cache'):
+        class _KVView:
+            __slots__ = ("_cache", "_attr")
+            def __init__(self, cache, attr): self._cache, self._attr = cache, attr
+            def __getitem__(self, idx): return getattr(self._cache.layers[idx], self._attr)
+            def __setitem__(self, idx, val): setattr(self._cache.layers[idx], self._attr, val)
+
+        def _key_cache_prop(self): return _KVView(self, "keys")
+        def _val_cache_prop(self): return _KVView(self, "values")
+        _DynamicCache.key_cache = property(_key_cache_prop)
+        _DynamicCache.value_cache = property(_val_cache_prop)
+
+    _orig_prep_inputs = _ParlerTTSGen.prepare_inputs_for_generation
+
+    def _patched_prep_inputs(self, decoder_input_ids, past_key_values=None, cache_position=None, **kwargs):
+        if (
+            cache_position is not None
+            and past_key_values is not None
+            and isinstance(past_key_values, _EncoderDecoderCache)
+            and past_key_values.get_seq_length() > 0
+        ):
+            # Rebuild cache_position so that cache_position[0] == get_seq_length().
+            # This is what parler's attention-mask formula requires:
+            #   generated_length = past_key_values_length - prompt_length + 1
+            # and past_key_values_length = cache_position[0].
+            seq_len = past_key_values.get_seq_length()
+            cache_position = _torch.tensor(
+                [seq_len], dtype=cache_position.dtype, device=cache_position.device
+            )
+        return _orig_prep_inputs(self, decoder_input_ids, past_key_values=past_key_values,
+                                 cache_position=cache_position, **kwargs)
+
+    _ParlerTTSGen.prepare_inputs_for_generation = _patched_prep_inputs
+
+    _orig_generate = _ParlerTTSGen.generate
+    def _patched_generate(self, *args, **kwargs):
+        generation_config = kwargs.get("generation_config", None)
+        if generation_config is None:
+            generation_config = self.generation_config
+            import copy
+            generation_config = copy.deepcopy(generation_config)
+            
+        if getattr(generation_config, "num_return_sequences", None) is None:
+            generation_config.num_return_sequences = 1
+            
+        kwargs["generation_config"] = generation_config
+        return _orig_generate(self, *args, **kwargs)
+    _ParlerTTSGen.generate = _patched_generate
+except ImportError:
+    pass
 
 import numpy as np
 import torch
@@ -35,6 +204,36 @@ VOICE_IDENTITY_SEED = 42
 INTER_SENTENCE_PAUSE_SEC = 0.8
 ELLIPSIS_PAUSE_SEC = 1.2
 MIN_SENTENCE_WORDS = 6  # Parler needs more context than Kokoro for good prosody
+
+# ── Token budget estimation ──────────────────────────────────────────────
+# Parler TTS Large v1 uses a DAC codec at 44100 Hz with ~86 tokens/second.
+# Without max_new_tokens, generate() runs to max_length (2580 tokens ≈ 30s)
+# for EVERY sentence — the #1 cause of infinite-feeling stalls.
+# Heuristic: meditation speech at 0.85x speed ≈ 120 words/min ≈ 2 words/sec
+# → 1 word ≈ 0.5s ≈ 43 tokens.  We use 50 tokens/word for safety margin
+# and clamp to [256, 2048] to avoid too-short or model-max blowout.
+_TOKENS_PER_WORD = 50
+_MIN_NEW_TOKENS = 256   # ~3 seconds minimum
+_MAX_NEW_TOKENS = 2048  # ~24 seconds ceiling per chunk
+
+# Voice-drift prevention: sentences longer than this are split at clause
+# boundaries to limit autoregressive drift within a single generation.
+_MAX_WORDS_PER_CHUNK = 25
+
+# Audio prefix conditioning: length of the reference snippet (in seconds)
+# extracted from the first generated sentence and fed as input_values to
+# all subsequent chunks, anchoring voice identity via the audio encoder.
+_VOICE_REF_SECONDS = 5.0
+
+# Lower temperature = more deterministic = less voice drift between chunks.
+_TEMPERATURE = 0.65
+
+
+def _estimate_max_tokens(text: str) -> int:
+    """Estimate max_new_tokens for a text chunk based on word count."""
+    n_words = len(text.split())
+    estimate = n_words * _TOKENS_PER_WORD
+    return max(_MIN_NEW_TOKENS, min(estimate, _MAX_NEW_TOKENS))
 
 # ── Named-Speaker Voice Presets (Identity Lock Pattern) ───────────────────
 # Each preset anchors to a specific speaker name the model was trained on.
@@ -98,12 +297,14 @@ def _split_into_sentences(text: str) -> list[str]:
 
     Handles standard endings (.!?) and ellipsis (...).
     Short sentences are merged for better Parler prosody.
+    Long sentences are further split at clause boundaries
+    (commas, semicolons, em-dashes) to limit autoregressive drift.
     """
     parts = re.split(r"(?<=[.!?])\s+", text.strip())
     raw = [p for p in parts if p.strip()]
 
     if len(raw) <= 1:
-        return raw
+        return _cap_sentence_length(raw)
 
     merged: list[str] = []
     carry = ""
@@ -121,7 +322,43 @@ def _split_into_sentences(text: str) -> list[str]:
         else:
             merged.append(carry)
 
-    return merged
+    return _cap_sentence_length(merged)
+
+
+def _cap_sentence_length(sentences: list[str]) -> list[str]:
+    """Split sentences exceeding _MAX_WORDS_PER_CHUNK at clause boundaries.
+
+    Tries commas, semicolons, and em-dashes first. Falls back to splitting
+    at the word limit if no clause boundary is found.
+    """
+    result: list[str] = []
+    for sent in sentences:
+        words = sent.split()
+        if len(words) <= _MAX_WORDS_PER_CHUNK:
+            result.append(sent)
+            continue
+
+        # Try splitting at clause boundaries (comma, semicolon, em-dash)
+        clause_parts = re.split(r"(?<=[,;—–])\s+", sent)
+        if len(clause_parts) > 1:
+            # Greedily merge clause parts up to the word limit
+            chunk = ""
+            for part in clause_parts:
+                candidate = (chunk + " " + part).strip() if chunk else part
+                if len(candidate.split()) > _MAX_WORDS_PER_CHUNK and chunk:
+                    result.append(chunk)
+                    chunk = part
+                else:
+                    chunk = candidate
+            if chunk:
+                result.append(chunk)
+        else:
+            # No clause boundaries — hard split at word limit
+            for i in range(0, len(words), _MAX_WORDS_PER_CHUNK):
+                chunk = " ".join(words[i:i + _MAX_WORDS_PER_CHUNK])
+                result.append(chunk)
+
+    return result
 
 
 def _adjust_description_for_speed(description: str, speed: float) -> str:
@@ -256,23 +493,30 @@ class ParlerTTSEngine(SpeechEngine):
         except (ImportError, AttributeError):
             pass
 
-    def _generate_speech_chunk(self, text: str, description: str) -> np.ndarray:
+    def _generate_speech_chunk(
+        self,
+        text: str,
+        description: str,
+        voice_ref: "torch.Tensor | None" = None,
+    ) -> np.ndarray:
         """Generate speech for a single text chunk.
 
-        Returns float32 numpy array at 24000 Hz (resampled from native SR).
-        The random seed is reset before every call to lock the speaker
-        identity and prevent voice drift between sentences.
+        Returns float32 numpy array at *native* sample rate (NOT resampled).
+        Resampling to 24 kHz is done by the caller so that the raw native-SR
+        tensor can be reused as a voice reference for subsequent chunks.
+
+        Args:
+            voice_ref: Optional tensor of shape (1, samples) at native SR.
+                       When provided, fed as ``input_values`` to condition
+                       the audio decoder on a reference speaker identity,
+                       preventing voice drift across chunks.
         """
         if self.model is None or self.tokenizer is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
         # ── Identity lock: reset seed before every chunk ──────────────
-        # This ensures the model starts from the same point in the latent
-        # speaker space for every sentence, preventing timbre shifts.
         set_seed(VOICE_IDENTITY_SEED)
 
-        # Tokenize description and prompt — must include attention_mask
-        # to avoid garbage output (pad token == eos token in this model).
         desc_inputs = self.tokenizer(
             description, return_tensors="pt", padding=True
         )
@@ -285,39 +529,38 @@ class ParlerTTSEngine(SpeechEngine):
         prompt_input_ids = prompt_inputs.input_ids.to(self.device)
         prompt_attention_mask = prompt_inputs.attention_mask.to(self.device)
 
+        max_tokens = _estimate_max_tokens(text)
+
+        # Build generate kwargs — optionally include audio conditioning
+        gen_kwargs = dict(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            prompt_input_ids=prompt_input_ids,
+            prompt_attention_mask=prompt_attention_mask,
+            do_sample=True,
+            temperature=_TEMPERATURE,
+            max_new_tokens=max_tokens,
+        )
+        if voice_ref is not None:
+            gen_kwargs["input_values"] = voice_ref.to(self.device)
+
         try:
             with torch.no_grad():
-                generation = self.model.generate(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    prompt_input_ids=prompt_input_ids,
-                    prompt_attention_mask=prompt_attention_mask,
-                    do_sample=True,
-                    temperature=0.8,
-                )
+                generation = self.model.generate(**gen_kwargs)
         except RuntimeError as e:
             if "MPS" in str(e) or "placeholder" in str(e).lower():
                 print(f"[ParlerTTS] MPS error, falling back to CPU: {e}")
                 self.model.cpu()
-                input_ids = input_ids.cpu()
-                attention_mask = attention_mask.cpu()
-                prompt_input_ids = prompt_input_ids.cpu()
-                prompt_attention_mask = prompt_attention_mask.cpu()
+                gen_kwargs = {
+                    k: v.cpu() if isinstance(v, torch.Tensor) else v
+                    for k, v in gen_kwargs.items()
+                }
                 with torch.no_grad():
-                    generation = self.model.generate(
-                        input_ids=input_ids,
-                        attention_mask=attention_mask,
-                        prompt_input_ids=prompt_input_ids,
-                        prompt_attention_mask=prompt_attention_mask,
-                        do_sample=True,
-                        temperature=0.8,
-                    )
-                # Move back to MPS for next chunk
+                    generation = self.model.generate(**gen_kwargs)
                 self.model.to(self.device)
             else:
                 raise
 
-        # Move to CPU immediately for safety
         generation = generation.cpu()
 
         # ── Vocal sanity check: NaN / Inf → automatic CPU fallback ────
@@ -326,24 +569,13 @@ class ParlerTTSEngine(SpeechEngine):
                 "[ParlerTTS] WARNING: Model produced NaN/Inf on "
                 f"{self.device}. Re-generating on CPU..."
             )
-            # Move everything to CPU for a guaranteed clean signal
             self.model.cpu()
-            input_ids = input_ids.cpu()
-            attention_mask = attention_mask.cpu()
-            prompt_input_ids = prompt_input_ids.cpu()
-            prompt_attention_mask = prompt_attention_mask.cpu()
-
+            gen_kwargs = {
+                k: v.cpu() if isinstance(v, torch.Tensor) else v
+                for k, v in gen_kwargs.items()
+            }
             with torch.no_grad():
-                generation = self.model.generate(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    prompt_input_ids=prompt_input_ids,
-                    prompt_attention_mask=prompt_attention_mask,
-                    do_sample=True,
-                    temperature=0.8,
-                )
-
-            # Restore model to original device for subsequent chunks
+                generation = self.model.generate(**gen_kwargs)
             self.model.to(self.device)
 
             if torch.isnan(generation).any() or torch.isinf(generation).any():
@@ -368,18 +600,7 @@ class ParlerTTSEngine(SpeechEngine):
         if audio_native.size == 0:
             return np.zeros(int(0.1 * SAMPLE_RATE), dtype=np.float32)
 
-        # Resample native SR -> 24000 Hz
-        if self._native_sr != SAMPLE_RATE:
-            audio_tensor = torch.tensor(audio_native).unsqueeze(0)
-            audio_24k = torchaudio.functional.resample(
-                audio_tensor,
-                orig_freq=self._native_sr,
-                new_freq=SAMPLE_RATE,
-            ).squeeze(0).numpy()
-        else:
-            audio_24k = audio_native
-
-        return audio_24k.astype(np.float32)
+        return audio_native.astype(np.float32)
 
     def _generate_speech_batch(
         self,
@@ -412,7 +633,14 @@ class ParlerTTSEngine(SpeechEngine):
             except Exception as e:
                 print(f"[ParlerTTS] Batch generation failed, falling back to sequential: {e}")
                 for text in batch_texts:
-                    all_audio.append(self._generate_speech_chunk(text, description))
+                    audio_native = self._generate_speech_chunk(text, description)
+                    if self._native_sr != SAMPLE_RATE:
+                        audio_native = torchaudio.functional.resample(
+                            torch.tensor(audio_native).unsqueeze(0),
+                            orig_freq=self._native_sr,
+                            new_freq=SAMPLE_RATE,
+                        ).squeeze(0).numpy()
+                    all_audio.append(audio_native.astype(np.float32))
 
         return all_audio
 
@@ -450,6 +678,9 @@ class ParlerTTSEngine(SpeechEngine):
         prompt_input_ids = prompt_inputs.input_ids.to(self.device)
         prompt_attention_mask = prompt_inputs.attention_mask.to(self.device)
 
+        # Use the longest text in the batch for the token budget
+        max_tokens = max(_estimate_max_tokens(t) for t in texts)
+
         with torch.no_grad():
             generation = self.model.generate(
                 input_ids=input_ids,
@@ -457,7 +688,8 @@ class ParlerTTSEngine(SpeechEngine):
                 prompt_input_ids=prompt_input_ids,
                 prompt_attention_mask=prompt_attention_mask,
                 do_sample=True,
-                temperature=0.8,
+                temperature=_TEMPERATURE,
+                max_new_tokens=max_tokens,
             )
 
         # generation is (batch_size, sequence_length) — extract each item
@@ -471,7 +703,14 @@ class ParlerTTSEngine(SpeechEngine):
             if np.isnan(audio_native).any() or not np.isfinite(audio_native).all():
                 print(f"[ParlerTTS] WARNING: Batch item {i} has NaN/Inf, falling back to sequential.")
                 audio_native = self._generate_speech_chunk(texts[i], description)
-                results.append(audio_native)
+                # _generate_speech_chunk returns native SR — resample here
+                if self._native_sr != SAMPLE_RATE:
+                    audio_native = torchaudio.functional.resample(
+                        torch.tensor(audio_native).unsqueeze(0),
+                        orig_freq=self._native_sr,
+                        new_freq=SAMPLE_RATE,
+                    ).squeeze(0).numpy()
+                results.append(audio_native.astype(np.float32))
                 continue
 
             # Hard normalization
@@ -536,25 +775,58 @@ class ParlerTTSEngine(SpeechEngine):
         activity_chunks: list[np.ndarray] = []
         total = len(segments)
 
+        # ── Voice reference for audio-prefix conditioning ─────────────
+        # After generating the first speech chunk, we extract a short
+        # snippet and feed it as input_values to all subsequent chunks.
+        # This anchors voice identity through the audio encoder, not just
+        # the random seed, and is the most effective anti-drift technique.
+        voice_ref: torch.Tensor | None = None
+        ref_samples = int(_VOICE_REF_SECONDS * (self._native_sr or 44100))
+
         for idx, segment in enumerate(segments):
             if segment["type"] == "speech":
                 sentences = _split_into_sentences(segment["text"])
                 if not sentences:
                     sentences = [segment["text"]]
 
-                # Batch-generate all sentences in this segment for unified
-                # latent state (prevents inter-chunk voice drift).
-                speech_arrays = self._generate_speech_batch(sentences, description)
+                for si, sent in enumerate(sentences):
+                    est_tokens = _estimate_max_tokens(sent)
+                    print(f"[ParlerTTS] Segment {idx+1}/{total}, "
+                          f"sentence {si+1}/{len(sentences)} "
+                          f"({len(sent.split())} words, ≤{est_tokens} tokens)")
 
-                for j, speech_audio in enumerate(speech_arrays):
-                    audio_chunks.append(speech_audio)
-                    activity_chunks.append(np.ones(len(speech_audio), dtype=bool))
+                    # Generate at native SR
+                    audio_native = self._generate_speech_chunk(
+                        sent, description, voice_ref=voice_ref,
+                    )
+
+                    # Build voice reference from the first chunk
+                    if voice_ref is None and audio_native.size >= ref_samples // 2:
+                        snippet = audio_native[:ref_samples]
+                        voice_ref = torch.tensor(
+                            snippet, dtype=torch.float32
+                        ).unsqueeze(0)
+                        print(f"[ParlerTTS] Voice reference captured "
+                              f"({len(snippet)/self._native_sr:.1f}s)")
+
+                    # Resample native SR → 24 kHz for pipeline output
+                    if self._native_sr != SAMPLE_RATE:
+                        audio_24k = torchaudio.functional.resample(
+                            torch.tensor(audio_native).unsqueeze(0),
+                            orig_freq=self._native_sr,
+                            new_freq=SAMPLE_RATE,
+                        ).squeeze(0).numpy()
+                    else:
+                        audio_24k = audio_native
+
+                    audio_chunks.append(audio_24k.astype(np.float32))
+                    activity_chunks.append(np.ones(len(audio_24k), dtype=bool))
 
                     # Add inter-sentence pause (not after last sentence)
-                    if j < len(sentences) - 1:
+                    if si < len(sentences) - 1:
                         pause_sec = (
                             ELLIPSIS_PAUSE_SEC
-                            if sentences[j].rstrip().endswith(("...", "\u2026"))
+                            if sent.rstrip().endswith(("...", "\u2026"))
                             else INTER_SENTENCE_PAUSE_SEC
                         )
                         pause_samples = int(pause_sec * SAMPLE_RATE)

@@ -21,13 +21,16 @@ ELLIPSIS_PAUSE_SEC = 1.2         # Longer pause after trailing "..."
 MIN_SENTENCE_WORDS = 4
 
 # Token-aware chunking parameters
-# Kokoro's sweet spot is 100-200 tokens; above ~510 it starts rushing.
-MAX_CHUNK_TOKENS = 200
+# Kokoro's sweet spot is 100-150 tokens; above ~200 it starts subtly rushing
+# and clarity degrades. Keeping chunks below 150 maximises articulation quality.
+MAX_CHUNK_TOKENS = 150
 MIN_CHUNK_TOKENS = 15
 HARD_CEILING_TOKENS = 400
 
-# Crossfade between consecutive speech chunks to eliminate clicks/pops
-CROSSFADE_SAMPLES = int(0.075 * SAMPLE_RATE)  # 75ms at 24kHz = 1800 samples
+# Crossfade between consecutive speech chunks to eliminate clicks/pops.
+# Kept short (35ms) to preserve consonant onsets at chunk boundaries —
+# a longer crossfade blends word-initial stops/fricatives and causes slurring.
+CROSSFADE_SAMPLES = int(0.035 * SAMPLE_RATE)  # 35ms at 24kHz = 840 samples
 
 VOICES = [
     "af_heart",    # Grade A — warm, calm (default for meditation)
@@ -440,33 +443,33 @@ class KokoroEngine(SpeechEngine):
                     if chunk_audio_parts:
                         raw_chunk = np.concatenate(chunk_audio_parts)
                         cleaned_chunk = trim_tts_artifacts(raw_chunk, sr=SAMPLE_RATE)
-                        
-                        # Apply a 10ms fade-in to the first chunk of the segment
-                        # to eliminate digital clicks/transients from Kokoro's inference start.
-                        if not speech_parts_for_crossfade:
-                            fade_samples = int(0.010 * SAMPLE_RATE)
-                            if len(cleaned_chunk) > fade_samples:
-                                fade_curve = np.linspace(0.0, 1.0, fade_samples, dtype=np.float32)
-                                cleaned_chunk[:fade_samples] *= fade_curve
-
                         speech_parts_for_crossfade.append(cleaned_chunk)
 
                 # Crossfade all speech chunks within this segment
                 if speech_parts_for_crossfade:
                     speech_audio = _crossfade_chunks(speech_parts_for_crossfade)
-                    
-                    # Phase 2 Fix: Apply a strict 30ms fade-in and 50ms fade-out to the 
-                    # VERY EDGES of the final assembled segment. This guarantees a mathematically
-                    # perfect zero-crossing right before and after any [pause] block, eliminating clicks.
-                    fade_in_samples = int(0.030 * SAMPLE_RATE)
+
+                    # Apply an 80ms cosine fade-in and 50ms cosine fade-out to the
+                    # segment edges. The longer fade-in masks Kokoro's "cold start"
+                    # prosody drift — the first ~80ms of each fresh inference call can
+                    # have a slightly different pitch/energy baseline that sounds like a
+                    # stutter or break when resuming after a pause. A cosine curve keeps
+                    # the transition perceptually smooth. Prepend 25ms silence so the
+                    # ramp always starts from true zero regardless of the preceding block.
+                    pre_roll = np.zeros(int(0.025 * SAMPLE_RATE), dtype=np.float32)
+                    speech_audio = np.concatenate([pre_roll, speech_audio])
+
+                    fade_in_samples = int(0.080 * SAMPLE_RATE)
                     fade_out_samples = int(0.050 * SAMPLE_RATE)
-                    
+
                     if len(speech_audio) > fade_in_samples + fade_out_samples:
-                        f_in = np.linspace(0.0, 1.0, fade_in_samples, dtype=np.float32)
-                        f_out = np.linspace(1.0, 0.0, fade_out_samples, dtype=np.float32)
+                        t_in = np.linspace(np.pi, 2 * np.pi, fade_in_samples)
+                        f_in = ((1 - np.cos(t_in)) / 2).astype(np.float32)  # 0→1 cosine
+                        t_out = np.linspace(0, np.pi, fade_out_samples)
+                        f_out = ((1 + np.cos(t_out)) / 2).astype(np.float32)  # 1→0 cosine
                         speech_audio[:fade_in_samples] *= f_in
                         speech_audio[-fade_out_samples:] *= f_out
-                        
+
                 else:
                     speech_audio = np.zeros(int(0.1 * SAMPLE_RATE), dtype=np.float32)
 
