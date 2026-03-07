@@ -64,6 +64,35 @@ class MusicEngine:
             return "mps"
         return "cpu"
 
+    @staticmethod
+    def _patch_multinomial():
+        """Monkeypatch torch.multinomial to sanitize NaN/inf probability tensors.
+
+        MusicGen's CFG sampling can produce NaN/inf logits that survive softmax
+        and cause 'probability tensor contains inf/nan or element < 0' errors.
+        This patch clamps/replaces bad values before multinomial sampling so
+        generation degrades gracefully rather than crashing.
+        """
+        if hasattr(torch, "_orig_multinomial"):
+            return  # Already patched
+
+        torch._orig_multinomial = torch.multinomial
+
+        def _safe_multinomial(input, num_samples, replacement=False, **kwargs):
+            if not input.is_floating_point():
+                return torch._orig_multinomial(input, num_samples, replacement=replacement, **kwargs)
+            # Replace NaN/inf, then clamp negatives to 0
+            input = torch.nan_to_num(input, nan=0.0, posinf=1.0, neginf=0.0)
+            input = input.clamp(min=0.0)
+            # If all weights are zero, use uniform distribution
+            row_sums = input.sum(dim=-1, keepdim=True)
+            zero_mask = (row_sums == 0.0)
+            if zero_mask.any():
+                input = input + zero_mask.float()
+            return torch._orig_multinomial(input, num_samples, replacement=replacement, **kwargs)
+
+        torch.multinomial = _safe_multinomial
+
     def _patch_mps_elu(self):
         """Monkeypatch PyTorch ELU to ensure contiguous inputs on MPS.
         
@@ -94,6 +123,7 @@ class MusicEngine:
         from audiocraft.models import MusicGen
 
         self.device = self._pick_device()
+        self._patch_multinomial()
         if self.device == "mps":
             self._patch_mps_elu()
 
@@ -190,7 +220,7 @@ class MusicEngine:
             top_k=250,           # Keeps sampling within top-250 tokens
             top_p=0.0,           # Disabled — top_k handles truncation
             temperature=0.87,    # Stabilises token sampling for consonant pads (0.85-0.90 sweet spot)
-            cfg_coef=4.0,        # Strong CFG — penalises tokens that diverge from text prompt
+            cfg_coef=3.0,        # CFG strength — 3.0 is stable; 4.0+ risks NaN logits on MPS
         )
 
         if progress_cb is not None:

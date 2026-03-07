@@ -292,11 +292,27 @@ class KokoroEngine(SpeechEngine):
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=UserWarning, message=".*dropout.*")
             warnings.filterwarnings("ignore", category=FutureWarning, message=".*weight_norm.*")
+            
+            # Force CPU on Apple Silicon to prevent a known bus error during MPS deallocation
+            device = "cpu"
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    device = "cuda"
+            except ImportError:
+                pass
+                
             self.pipeline = KPipeline(
                 lang_code="a",
                 repo_id="hexgrad/Kokoro-82M",
                 trf=True,   # transformer G2P — better phonemization quality
+                device=device,
             )
+            # HARD OVERRIDE: KPipeline initialization sometimes ignores device=cpu
+            # and auto-selects cuda/mps based on availability inside KModel.
+            if hasattr(self.pipeline, "model") and self.pipeline.model is not None:
+                self.pipeline.model.to(device)
+
 
     def _get_pipeline(self, voice):
         """Return the correct pipeline based on voice language prefix.
@@ -313,23 +329,36 @@ class KokoroEngine(SpeechEngine):
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UserWarning, message=".*dropout.*")
                     warnings.filterwarnings("ignore", category=FutureWarning, message=".*weight_norm.*")
-                    self.pipeline_en_gb = KPipeline(lang_code="b")
+                    # Force CPU on Apple Silicon to prevent MPS driver deallocation fault
+                    device = "cpu"
+                    try:
+                        import torch
+                        if torch.cuda.is_available():
+                            device = "cuda"
+                    except ImportError:
+                        pass
+                    self.pipeline_en_gb = KPipeline(lang_code="b", device=device)
             return self.pipeline_en_gb
         return self.pipeline
 
     def unload_model(self):
         """Release model and free GPU memory."""
-        del self.pipeline
-        self.pipeline = None
+        # Carefully delete the pipeline objects to trigger GC
+        if self.pipeline is not None:
+            del self.pipeline
+            self.pipeline = None
         if self.pipeline_en_gb is not None:
             del self.pipeline_en_gb
             self.pipeline_en_gb = None
+            
         gc.collect()
+        
         try:
             import torch
-
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                torch.mps.empty_cache()
         except ImportError:
             pass
 

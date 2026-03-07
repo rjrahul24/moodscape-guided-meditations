@@ -78,6 +78,28 @@ class AceStepEngine:
 
     def load_model(self):
         """Load ACE-Step DiT and LLM handlers."""
+        import os
+
+        # ── Patch ACE-Step package constants before first import ──────────────
+        # The package hard-codes DURATION_MAX=600 and ACESTEP_GENERATION_TIMEOUT=600
+        # at module-import time.  We need to override both before any acestep
+        # module is loaded so the patched values are seen by all importers.
+        #
+        # DURATION_MAX: caps audio length in the LM constrained decoder and the
+        # GPU-tier config.  Set to 1200 s (20 min) to match our target ceiling.
+        #
+        # ACESTEP_GENERATION_TIMEOUT: wall-clock deadline for the diffusion loop
+        # thread.  7200 s (2 h) is generous enough for any realistic generation
+        # length on M1 Max while still guarding against genuine hangs.
+        os.environ["ACESTEP_GENERATION_TIMEOUT"] = "7200"
+
+        import acestep.constants as _ac
+        _ac.DURATION_MAX = 1200
+
+        import acestep.gpu_config as _agc
+        _agc.GPU_TIER_CONFIGS["unlimited"]["max_duration_with_lm"] = 1200
+        _agc.GPU_TIER_CONFIGS["unlimited"]["max_duration_without_lm"] = 1200
+
         from acestep.handler import AceStepHandler
         from acestep.llm_inference import LLMHandler
 
@@ -93,6 +115,10 @@ class AceStepEngine:
             config_path="acestep-v15-sft",
             device="auto",
             use_mlx_dit=True,
+            # compile_model=True redirects to mx.compile on MPS, which fuses MLX
+            # graph operations and reduces per-step time ~4x vs uncompiled dispatch.
+            # First generation pays a one-time JIT cost; all subsequent runs are fast.
+            compile_model=True,
         )
         if not success:
             raise RuntimeError(f"[AceStepEngine] DiT initialization failed: {status_msg}")

@@ -10,6 +10,13 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 # related to audiocraft/encodec. We force disable it here for stability.
 os.environ.setdefault("AUDIOCRAFT_DISABLE_MPS_AUTOCAST", "1")
 
+# Fix: MacOS Bus Error (SIGBUS) when Python garbage collects MPS tensors on process exit.
+# We disable fallback to prevent unsupported ops from quietly failing, and register
+# a hard exit hook to bypass the problematic PyTorch C++ destructor sequence.
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+import atexit
+atexit.register(lambda: os._exit(0))
+
 # Silence noisy third-party warnings that are not actionable from user code.
 warnings.filterwarnings(
     "ignore",
@@ -28,6 +35,18 @@ import numpy as np
 import soundfile as sf
 import gradio as gr
 from dotenv import load_dotenv
+
+# Compatibility shim: transformers >=4.47 renamed/removed SlidingWindowCache.
+# parler_tts (pinned to transformers==4.46.1 API) imports it at module level.
+# We backfill the name with StaticCache so the import succeeds.  parler_tts
+# only uses SlidingWindowCache when cache_implementation=="sliding_window",
+# a path never taken in our inference calls, so StaticCache is a safe alias.
+try:
+    from transformers.cache_utils import SlidingWindowCache as _swc  # noqa: F401
+except ImportError:
+    import transformers.cache_utils as _tcu
+    from transformers.cache_utils import StaticCache
+    _tcu.SlidingWindowCache = StaticCache
 
 from core.parler_engine import VOICE_PRESETS as PARLER_VOICE_PRESETS
 from core.pipeline import MeditationPipeline
@@ -230,11 +249,6 @@ with gr.Blocks(
                 label="Reference Audio (Melody Conditioning)",
                 type="filepath",
                 sources=["upload"],
-                info=(
-                    "Optional: upload a reference audio file (hummed melody, singing bowl, "
-                    "MIDI chord progression) to guide the AI's melodic structure. "
-                    "MusicGen only — ignored when using ACE-Step 1.5."
-                ),
             )
 
         # ── Right column: settings ─────────────────────────────────────

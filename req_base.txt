@@ -1,0 +1,13 @@
+kokoro>=0.9.4
+huggingface-hub>=0.23.2,<1.0
+tokenizers>=0.20,<0.21
+audiocraft
+demucs>=4.0.0
+gradio>=4.0
+pedalboard>=0.9.0
+numpy
+scipy
+soundfile
+pyloudnorm
+python-dotenv
+mlx

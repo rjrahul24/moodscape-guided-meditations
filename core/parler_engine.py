@@ -10,6 +10,16 @@ import re
 
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
+# Compatibility: transformers >=4.47 removed SlidingWindowCache from cache_utils.
+# parler_tts (designed for transformers==4.46.1) imports it at module load time.
+# Backfill with StaticCache before parler_tts is imported anywhere.
+try:
+    from transformers.cache_utils import SlidingWindowCache as _swc  # noqa: F401
+except ImportError:
+    import transformers.cache_utils as _tcu
+    from transformers.cache_utils import StaticCache as _sc
+    _tcu.SlidingWindowCache = _sc
+
 import numpy as np
 import torch
 import torchaudio

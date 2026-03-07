@@ -2,9 +2,11 @@ torch>=2.1.0
 torchaudio>=2.1.0
 kokoro>=0.9.4
 git+https://github.com/huggingface/parler-tts.git
-transformers==4.46.1
+# ace-step requires >=4.51.0,<4.58.0; parler-tts was pinned to 4.46.1 but
+# a SlidingWindowCache shim in app.py makes it work with 4.51+.
+transformers>=4.51.0,<4.58.0
 huggingface-hub>=0.23.2,<1.0
-tokenizers>=0.20,<0.21
+tokenizers>=0.20
 audiocraft
 demucs>=4.0.0
 gradio>=4.0
@@ -15,4 +17,6 @@ soundfile
 pyloudnorm
 python-dotenv
 mlx
+mlx-lm
+accelerate>=0.26.0
 git+https://github.com/ace-step/ACE-Step-1.5.git
