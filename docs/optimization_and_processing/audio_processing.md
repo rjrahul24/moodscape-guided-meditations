@@ -15,7 +15,7 @@ All generative outputs are intercepted instantly to upsample to **44.1kHz (44100
 ## 2. Dynamic Audio Mixing Processing
 
 ### Mask-Based Ducking (Primary Method)
-MoodScape uses **voice-activity mask–driven ducking** (`apply_mask_ducking` in `mixer.py`) as the primary ducking method. Instead of re-deriving vocal presence via RMS energy, this method uses the pre-computed `voice_activity` boolean mask — a sample-accurate ground-truth map of when the voice is speaking, constructed in `kokoro_engine.synthesize()`.
+MoodScape uses **voice-activity mask–driven ducking** (`apply_mask_ducking` in `mixer.py`) as the primary ducking method. Instead of re-deriving vocal presence via RMS energy, this method uses the pre-computed `voice_activity` boolean mask — a sample-accurate ground-truth map of when the voice is speaking, constructed natively in `core/kokoro_tts/engine.py` or `core/parler_tts/engine.py`.
 
 - **Lookahead**: The ducking envelope is shifted **100ms** earlier via `np.roll`, so the music starts fading *before* the first syllable — matching broadcast/DAW behaviour.
 - **Attack**: **150ms** — a slower, more natural fade-in for music suppression.

@@ -111,11 +111,11 @@ Final brick-wall limiter prevents any overs in the exported file.
 
 | File | Role |
 |---|---|
-| `core/post_processor.py` | `MasteringEngine` — Phase A (`restore_vocals`) and Phase B (`master_vocals`) |
+| `core/parler_tts/postprocessor.py` | `MasteringEngine` — Phase A (`restore_vocals`) and Phase B (`master_vocals`) for Parler TTS |
 | `core/audio_processor.py` | Voice FX chain (compression + reverb + limiter), Music FX chain (HighShelfFilter), Master chain (HPF 35Hz → Gain → Compressor → Limiter) |
 | `core/mixer.py` | Mask-based ducking, overlay, equal-power crossfade looping, fades, LUFS normalization, resampling, export |
-| `core/text_preprocessor.py` | Text normalization (number/abbreviation expansion for TTS) |
-| `core/kokoro_engine.py` | TTS synthesis with per-chunk artifact trimmer (silence + spectral flatness detection) |
+| `core/parler_tts/preprocessor.py` | Text normalization (number/abbreviation expansion for TTS) |
+| `core/kokoro_tts/engine.py` | TTS synthesis with per-chunk artifact trimmer (silence + spectral flatness detection) |
 | `core/pipeline.py` | Orchestrates the full signal chain end-to-end |
 
 ---

@@ -5,13 +5,11 @@ import time
 
 import numpy as np
 
-from core.audio_processor import apply_fx, make_master_chain, make_music_chain, make_voice_chain
+from core.audio_processor import make_master_chain, make_music_chain
 from core.mixer import export_audio, export_stems, mix, normalize_loudness
 from core.music_engine import MusicEngine
 from core.qa_monitor import run_qa_checks
-from core.script_parser import parse_script
-from core.text_preprocessor import preprocess_for_meditation
-from core.tts_engine import TTSEngine
+from core.kokoro_tts.engine import KokoroEngine as TTSEngine
 
 logger = logging.getLogger("moodscape")
 
@@ -160,14 +158,18 @@ class MeditationPipeline:
             if not is_instrumental:
                 # ── Step 1: Parse script ────────────────────────────────────────
                 _progress(progress_cb, 0.0, "Parsing meditation script...")
-                segments = parse_script(script)
+
+                if tts_engine == "kokoro":
+                    # Use Kokoro-specific preprocessing pipeline
+                    from core.kokoro_tts.preprocessor import prepare_segments
+                    segments = prepare_segments(script)
+                else:
+                    # Parler uses its isolated preprocessor
+                    from core.parler_tts.preprocessor import prepare_segments
+                    segments = prepare_segments(script)
+
                 if not segments:
                     raise ValueError("Script is empty or contains no content.")
-
-                # Preprocess speech segments for optimal Kokoro prosody
-                for seg in segments:
-                    if seg["type"] == "speech":
-                        seg["text"] = preprocess_for_meditation(seg["text"])
 
                 logger.info(
                     "Script: %d segments, %d speech blocks",
@@ -178,7 +180,7 @@ class MeditationPipeline:
                 # ── Step 2: Load TTS ────────────────────────────────────────────
                 if tts_engine == "parler":
                     _progress(progress_cb, 0.05, "Loading Parler TTS engine...")
-                    from core.parler_engine import ParlerTTSEngine
+                    from core.parler_tts.engine import ParlerTTSEngine
                     tts = ParlerTTSEngine()
                     tts.load_model()
                 else:
@@ -240,8 +242,12 @@ class MeditationPipeline:
 
                 # ── Phase A: Neural Denoising (Native SR) ───────────────────────
                 _progress(progress_cb, 0.38, "Applying AI vocal restoration...")
-                from core.post_processor import MasteringEngine
-                mastering_engine = MasteringEngine(sample_rate=SAMPLE_RATE)
+                if tts_engine == "kokoro":
+                    from core.kokoro_tts.postprocessor import KokoroMasteringEngine
+                    mastering_engine = KokoroMasteringEngine(sample_rate=SAMPLE_RATE)
+                else:
+                    from core.parler_tts.postprocessor import MasteringEngine
+                    mastering_engine = MasteringEngine(sample_rate=SAMPLE_RATE)
                 voice_audio = mastering_engine.restore_vocals(voice_audio, sr=SAMPLE_RATE)
 
                 logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
@@ -256,7 +262,7 @@ class MeditationPipeline:
                      voice_activity = np.concatenate([voice_activity, np.zeros(pad_diff, dtype=bool)])
                 else:
                      voice_activity = voice_activity[:len(voice_audio)]
-                
+
                 # ── Phase B: Mastering EQ / De-Ess / Limiting (44.1 kHz) ────────
                 _progress(progress_cb, 0.39, "Mastering vocal stem (EQ/De-Ess)...")
                 voice_audio = mastering_engine.master_vocals(voice_audio, sr=TARGET_SR)
@@ -382,8 +388,14 @@ class MeditationPipeline:
             if not is_instrumental:
                 # ── Step 7: Apply voice FX ──────────────────────────────────────
                 _progress(progress_cb, 0.72, "Applying voice effects...")
-                voice_chain = make_voice_chain(reverb_amount=reverb_amount)
-                voice_audio = apply_fx(voice_audio, voice_chain, TARGET_SR)
+                if tts_engine == "kokoro":
+                    from core.kokoro_tts.postprocessor import build_voice_chain, apply_fx
+                    voice_chain = build_voice_chain(reverb_amount=reverb_amount)
+                    voice_audio = apply_fx(voice_audio, voice_chain, TARGET_SR)
+                else:
+                    from core.audio_processor import make_voice_chain, apply_fx
+                    voice_chain = make_voice_chain(reverb_amount=reverb_amount)
+                    voice_audio = apply_fx(voice_audio, voice_chain, TARGET_SR)
 
                 # Align voice_activity to post-FX voice length (reverb tail trim
                 # may change length slightly)
@@ -397,13 +409,14 @@ class MeditationPipeline:
             if not is_vocals:
                 # ── Step 8: Apply music FX ──────────────────────────────────────
                 _progress(progress_cb, 0.77, "Applying music effects...")
+                from core.audio_processor import apply_fx as apply_audio_fx
                 music_audio = normalize_loudness(music_audio, TARGET_SR, target_lufs=-20.0)
                 if use_acestep:
                     from core.audio_processor import make_acestep_music_chain
                     music_chain = make_acestep_music_chain()
                 else:
                     music_chain = make_music_chain()
-                music_audio = apply_fx(music_audio, music_chain, TARGET_SR)
+                music_audio = apply_audio_fx(music_audio, music_chain, TARGET_SR)
 
             # ── Optional: Export stems ──────────────────────────────────────
             stem_paths = None

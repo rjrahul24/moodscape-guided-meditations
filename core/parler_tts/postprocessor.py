@@ -1,13 +1,8 @@
-"""Advanced Mastering Post-Processing Pipeline for MoodScape.
-
-Split into two phases for optimal signal-chain placement:
-  Phase A – restore_vocals():  AI neural denoising (runs on dry audio BEFORE reverb)
-  Phase B – master_vocals():   EQ / de-ess / limiting  (runs AFTER mix, at 44.1 kHz)
-"""
+"""Parler TTS postprocessing pipeline — segment assembly, and advanced mastering FX."""
 
 import logging
-
 import numpy as np
+
 from pedalboard import (
     Compressor,
     HighpassFilter,
@@ -20,6 +15,61 @@ from pedalboard import (
 
 logger = logging.getLogger(__name__)
 
+
+# ── Segment assembly ─────────────────────────────────────────────────────
+
+def crossfade_audio_chunks(chunks: list[np.ndarray], fade_samples: int) -> np.ndarray:
+    """Concatenate audio chunks with a linear crossfade to prevent popping."""
+    if not chunks:
+        return np.zeros(0, dtype=np.float32)
+    if len(chunks) == 1:
+        return chunks[0]
+        
+    result = chunks[0].copy()
+    for c in chunks[1:]:
+        c_len = len(c)
+        if c_len == 0:
+            continue
+            
+        actual_fade = min(fade_samples, len(result), c_len)
+        if actual_fade <= 0:
+            result = np.concatenate([result, c])
+            continue
+            
+        fade_out = np.linspace(1.0, 0.0, actual_fade, dtype=np.float32)
+        fade_in = np.linspace(0.0, 1.0, actual_fade, dtype=np.float32)
+        
+        overlap = (result[-actual_fade:] * fade_out) + (c[:actual_fade] * fade_in)
+        result = np.concatenate([result[:-actual_fade], overlap, c[actual_fade:]])
+        
+    return result
+
+
+def crossfade_activity_chunks(chunks: list[np.ndarray], fade_samples: int) -> np.ndarray:
+    """Concatenate boolean activity chunks matching the audio crossfade overlap."""
+    if not chunks:
+        return np.zeros(0, dtype=bool)
+    if len(chunks) == 1:
+        return chunks[0]
+        
+    result = chunks[0].copy()
+    for c in chunks[1:]:
+        c_len = len(c)
+        if c_len == 0:
+            continue
+            
+        actual_fade = min(fade_samples, len(result), c_len)
+        if actual_fade <= 0:
+            result = np.concatenate([result, c])
+            continue
+            
+        overlap = result[-actual_fade:] | c[:actual_fade]
+        result = np.concatenate([result[:-actual_fade], overlap, c[actual_fade:]])
+        
+    return result
+
+
+# ── Mastering Engine ─────────────────────────────────────────────────────
 
 class MasteringEngine:
     """Two-phase mastering engine for meditation vocals.
@@ -102,15 +152,9 @@ class MasteringEngine:
           3. Surgical  -1.5 dB @ 400 Hz, +1.5 dB @ 3.5 kHz – mud cut & presence
           4. De-Esser  boost → compress → cut at 7 kHz – tame sibilance only
           5. Lowpass   10.5 kHz – psychoacoustic "super-resolution" smoothing:
-             Kokoro TTS runs at 24 kHz native (Nyquist: 12 kHz), upsampled to
-             44.1 kHz. The previous LPF at 15 kHz was entirely inactive (no TTS
-             signal exists above 12 kHz). Moving to 10.5 kHz creates a smooth,
-             analog-sounding rolloff in the 10.5–12 kHz region, masking the
-             abrupt digital brick-wall at the 12 kHz Nyquist boundary. The
-             result is a warmer, more natural high-end that avoids the harsh
-             "FM radio" quality of an unmasked Nyquist edge. Sibilance (7 kHz)
-             is already handled by the de-esser above, so this filter does not
-             dull consonants noticeably.
+             Parler TTS is sampled originally at 44.1 kHz, but downsampled to 24 kHz
+             for consistency with the pipeline, giving a Nyquist of 12 kHz.
+             The 10.5 kHz LPF masks the digital edge.
           6. Limiter   -0.5 dB – prevent overs on final output
         """
         return Pedalboard([
@@ -125,9 +169,17 @@ class MasteringEngine:
             PeakFilter(cutoff_frequency_hz=3500, gain_db=1.5, q=0.8),
 
             # 4. De-Esser: boost → compress → cut  (targets 6-8 kHz sibilance)
-            PeakFilter(cutoff_frequency_hz=7000, gain_db=6.0, q=2.0),
-            Compressor(threshold_db=-20, ratio=4.0, attack_ms=1, release_ms=30),
-            PeakFilter(cutoff_frequency_hz=7000, gain_db=-6.0, q=2.0),
+            # Boost/cut reduced ±6→±4 dB. The old ±6 dB boost pushed every
+            # sibilant well above the -20 dB threshold, causing the broadband
+            # Compressor to fire on every "s" / "sh" and gain-modulate the full
+            # spectrum — a classic source of "robotic" or "pumping" timbre on
+            # voiced sections between sibilants.  ±4 dB still tames harsh
+            # sibilance while triggering the compressor less aggressively.
+            # Ratio also reduced 4:1→3:1 and release slowed 30→50ms for the
+            # same reason.
+            PeakFilter(cutoff_frequency_hz=7000, gain_db=4.0, q=2.0),
+            Compressor(threshold_db=-20, ratio=3.0, attack_ms=1, release_ms=50),
+            PeakFilter(cutoff_frequency_hz=7000, gain_db=-4.0, q=2.0),
 
             # 5. Lowpass – mask the Nyquist brick-wall of 24 kHz TTS material
             LowpassFilter(cutoff_frequency_hz=10500),

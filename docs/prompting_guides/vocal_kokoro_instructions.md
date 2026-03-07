@@ -11,7 +11,7 @@ The pipeline from raw script text to audio follows this exact sequence:
 ```
 Raw script text
       │
-      ▼ core/script_parser.py — parse_script()
+      ▼ core/kokoro_tts/preprocessor.py — parse_script()
 List of segments: {"type": "speech", "text": "..."} and {"type": "pause", "duration_sec": N.N}
       │
       ▼ core/tts_engine.py — TTSEngine.synthesize()
@@ -82,7 +82,7 @@ This means you should not rely on stacking small pauses; be explicit with a sing
 
 ### Automatic Number & Abbreviation Expansion
 
-The `text_preprocessor.py` module now automatically expands numbers (0–999) and common abbreviations before TTS inference:
+The `core/kokoro_tts/preprocessor.py` module now automatically expands numbers (0–999) and common abbreviations before TTS inference:
 
 - `4` → `four`, `120` → `one hundred and twenty`
 - `sec` → `seconds`, `min` → `minutes`, `Hz` → `hertz`

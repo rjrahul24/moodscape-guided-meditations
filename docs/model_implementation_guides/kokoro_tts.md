@@ -355,7 +355,7 @@ Force specific pronunciations:
 
 ### The Correct Approach: Silence Array Injection
 
-Kokoro does **not** natively support `[pause:Xs]` markers in raw text — it will either ignore them or attempt to pronounce the word "pause." The correct implementation (already in `core/tts_engine.py` and `core/script_parser.py`) is:
+Kokoro does **not** natively support `[pause:Xs]` markers in raw text — it will either ignore them or attempt to pronounce the word "pause." The correct implementation (already in `core/tts_engine.py` and `core/kokoro_tts/preprocessor.py`) is:
 
 1. Parse the script to extract typed chunks: `{"type": "speech", "text": "..."}` and `{"type": "pause", "duration_sec": X.X}`
 2. For `speech` chunks → call `KPipeline` → get audio array
@@ -425,7 +425,7 @@ Research documents 1, 2, and 3 converge on these principles:
 
 ### Paragraph Break Behavior
 
-The existing `script_parser.py` converts `\n\n` to `[pause:1.5s]`. This is correct. Do not rely on Kokoro's natural paragraph pausing — it is inconsistent (~0.15s variability, per research doc 2).
+The existing `core/kokoro_tts/preprocessor.py` converts `\n\n` to `[pause:1.5s]`. This is correct. Do not rely on Kokoro's natural paragraph pausing — it is inconsistent (~0.15s variability, per research doc 2).
 
 ### Target Duration Matching
 
@@ -488,7 +488,7 @@ Research doc 3 mentions several post-processing options. Here is how they map to
 | Gentle reverb on voice | ✅ Already done via Pedalboard `Reverb` in `audio_processor.py` |
 | Fade in/out | ✅ Already done in `mixer.py` |
 | EQ warmth (low shelf) | ✅ Already done via Pedalboard `LowShelfFilter` in `audio_processor.py` |
-| TTS artifact trimming | ✅ Per-chunk silence trimmer + spectral flatness detector in `kokoro_engine.py` |
+| TTS artifact trimming | ✅ Per-chunk silence trimmer + spectral flatness detector in `core/kokoro_tts/engine.py` |
 | Bus compressor (glue) | ✅ Compressor(2:1, 30ms/300ms) in master chain in `audio_processor.py` |
 | Lookahead sidechain ducking | ✅ 75ms lookahead offline ducking in `mixer.py` |
 | Pitch shifting | ❌ Not needed — voice selection handles this; librosa would add a dependency |
@@ -684,7 +684,7 @@ VOICE_CHOICES = [
 
 | Anti-Pattern | Reason | Alternative |
 |-------------|--------|-------------|
-| Pass `[pause:Xs]` raw to Kokoro | Model ignores or mispronounces it | Silence array injection via `script_parser.py` |
+| Pass `[pause:Xs]` raw to Kokoro | Model ignores or mispronounces it | Silence array injection via `core/kokoro_tts/preprocessor.py` |
 | Use `pydub` for mixing | Slow, low quality | Pedalboard + numpy (already in MoodScape) |
 | Use `ffmpeg` subprocess | Unnecessary dependency | Pedalboard handles all I/O |
 | Use `librosa` time-stretch for pacing | Degrades voice quality | Use Kokoro's `speed` parameter |

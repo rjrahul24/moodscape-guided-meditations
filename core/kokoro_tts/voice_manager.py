@@ -1,4 +1,8 @@
-"""Voice management for Kokoro TTS — loading, blending, and session consistency."""
+"""Voice management for Kokoro TTS — loading, blending, and session consistency.
+
+Handles voice tensor loading from HuggingFace, weighted blending of multiple
+voice embeddings, curated meditation presets, and British voice detection.
+"""
 
 import torch
 from huggingface_hub import hf_hub_download

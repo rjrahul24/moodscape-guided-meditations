@@ -16,7 +16,7 @@ from pedalboard import (
 )
 
 
-def make_voice_chain(reverb_amount: float = 0.09) -> Pedalboard:
+def make_voice_chain(reverb_amount: float = 0.08) -> Pedalboard:
     """FX chain for narration: noise gate → highpass → compression → reverb → limit.
 
     The HighpassFilter at 80 Hz removes sub-bass rumble from TTS output.
@@ -30,17 +30,35 @@ def make_voice_chain(reverb_amount: float = 0.09) -> Pedalboard:
     """
     reverb_amount = float(np.clip(reverb_amount, 0.0, 0.5))
     return Pedalboard([
-        # Strict noise gate: mutes TTS static in silences *before* compression
-        # and LUFS normalization can amplify it.
-        NoiseGate(threshold_db=-35, ratio=20.0, attack_ms=1.0, release_ms=50),
-        # Remove sub-bass rumble and plosives from TTS output
-        HighpassFilter(cutoff_frequency_hz=80.0),
-        # Gentle compression to keep the guiding voice perfectly steady
-        Compressor(threshold_db=-19.0, ratio=3.5, attack_ms=10.0, release_ms=200.0),
-        # Subtle reverb so the voice sounds like it is in a physical room
+        # Noise gate: mutes inter-chunk silence & residual TTS static before
+        # compression amplifies it.  Threshold raised to -42 dB (was -35) so
+        # soft phonemes like breathy /h/, /f/, and unvoiced trailing stops
+        # are NOT gated — gating these produces the "clipped / robotic" quality
+        # on consonants.  Ratio kept high (20:1) to still close firmly on true
+        # silence and near-silence.
+        NoiseGate(threshold_db=-42, ratio=20.0, attack_ms=2.0, release_ms=80),
+        # Remove sub-bass rumble and plosives from TTS output (80-100Hz range)
+        HighpassFilter(cutoff_frequency_hz=90.0),
+        # Gentle compression to "glue" the track together and catch abrupt loudness spikes.
+        # Threshold: -18dB to catch most audio, Ratio: 3:1 for natural smoothing,
+        # Attack: 2.0ms to catch spikes immediately, Release: 80.0ms to prevent pumping.
+        Compressor(threshold_db=-18.0, ratio=3.0, attack_ms=2.0, release_ms=80.0),
+        # High-shelf de-harshener at 7.5 kHz, -3.5 dB (pre-reverb).
+        # Kokoro's ISTFTNet vocoder concentrates "radio static / broken speaker"
+        # artifacts in the 7–9 kHz band.  Applying the shelf HERE (before reverb)
+        # treats the artifact at its source — if done post-reverb, the harshness
+        # is already smeared through the full spatial image and EQ cannot undo it.
+        # -3.5 dB is enough to take the edge off without dulling consonants;
+        # the Phase-B mastering chain (post_processor.py) adds a complementary
+        # 10.5 kHz lowpass that handles the remaining Nyquist brick-wall artifact.
+        HighShelfFilter(cutoff_frequency_hz=7500, gain_db=-3.5),
+        # Low-pass filter (de-essing) above 9 kHz to tame metallic TTS hallucinations
+        LowpassFilter(cutoff_frequency_hz=9000.0),
+        # Subtle chamber/studio reverb so the voice sounds like it is perfectly recorded in a physical room
+        # Room size 0.15 (15%), Damping 0.6 to retain some vocal air
         Reverb(
-            room_size=0.17,
-            damping=0.7,
+            room_size=0.15,
+            damping=0.6,
             wet_level=reverb_amount,
             dry_level=1.0 - reverb_amount,
         ),
@@ -143,7 +161,7 @@ def make_master_chain() -> Pedalboard:
         Gain(gain_db=-3.0),
         # Bus compressor: gentle 2:1 glue before the brickwall limiter
         Compressor(threshold_db=-18.0, ratio=2.0, attack_ms=30.0, release_ms=300.0),
-        Limiter(threshold_db=-0.1),
+        Limiter(threshold_db=-1.0),
     ])
 
 

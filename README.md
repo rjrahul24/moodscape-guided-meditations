@@ -65,9 +65,8 @@ Both engines output at 24,000 Hz mono and integrate seamlessly with MusicGen and
 app.py                    ← Gradio UI entry point
 core/
   speech_engine.py        ← Abstract TTS engine interface (24 kHz mono contract)
-  kokoro_engine.py        ← Kokoro TTS wrapper (82M params, preset voices)
-  parler_engine.py        ← Parler TTS wrapper (2.2B params, description-controlled)
-  tts_engine.py           ← Backward-compatibility shim for Kokoro
+  kokoro_tts/             ← Kokoro TTS wrapper (82M params, preset voices)
+  parler_tts/             ← Parler TTS wrapper (2.2B params, description-controlled)
   script_parser.py        ← Parses [pause:Xs] markers into segment list
   music_engine.py         ← MusicGen wrapper (32 kHz → resampled to 24 kHz)
   audio_processor.py      ← Pedalboard FX chains (voice / music / master)

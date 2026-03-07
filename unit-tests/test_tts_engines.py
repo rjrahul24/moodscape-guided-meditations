@@ -2,18 +2,22 @@ import unittest
 from unittest.mock import MagicMock, patch
 import numpy as np
 
-from core.kokoro_engine import (
-    _split_into_sentences as k_split,
-    _merge_sentences_to_chunks as k_merge,
-    _crossfade_chunks,
-    trim_tts_artifacts
+from core.kokoro_tts.preprocessor import (
+    split_into_sentences as k_split,
+    merge_sentences_to_chunks as k_merge,
+)
+from core.kokoro_tts.postprocessor import (
+    crossfade_chunks as _crossfade_chunks,
+    trim_tts_artifacts,
 )
 
-from core.parler_engine import (
-    _split_into_sentences as p_split,
-    _adjust_description_for_speed as p_adjust,
-    ParlerTTSEngine,
+from core.parler_tts.preprocessor import (
+    split_into_sentences as p_split,
+)
+from core.parler_tts.engine import (
     VOICE_PRESETS,
+    ParlerTTSEngine,
+    adjust_description_for_speed as p_adjust,
 )
 
 class TestTTSEngines(unittest.TestCase):
@@ -61,13 +65,12 @@ class TestTTSEngines(unittest.TestCase):
 
     def test_parler_adjust_speed(self):
         desc = "Warm voice. Speaks normally."
-        # Very slow
         adj1 = p_adjust(desc, 0.6)
-        self.assertIn("very slow", adj1.lower())
-        
-        # Normal
-        adj2 = p_adjust(desc, 1.0)
-        self.assertIn("natural", adj2.lower())
+        self.assertIn("extremely slowly", adj1.lower())
+        adj2 = p_adjust(desc, 0.8)
+        self.assertIn("slowly", adj2.lower())
+        adj3 = p_adjust(desc, 1.0)
+        self.assertIn("natural", adj3.lower())
 
     # --- Parler Engine Execution Tests (mocked model) ---
 

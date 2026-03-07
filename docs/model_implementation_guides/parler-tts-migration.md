@@ -14,7 +14,7 @@ After this work is complete, the app should offer exactly two TTS engine choices
 
 ## CRITICAL RULES
 
-1. **Do NOT modify any existing Kokoro TTS code.** The `kokoro_engine.py` (or `tts_engine.py`) file, its voice list, its speed parameter behavior, its sentence splitting logic, its MPS fallback — all must remain exactly as they are.
+1. **Do NOT modify any existing Kokoro TTS code.** The `core/kokoro_tts/engine.py` file, its voice list, its speed parameter behavior, its sentence splitting logic, its MPS fallback — all must remain exactly as they are.
 2. **Do NOT modify `script_parser.py`, `music_engine.py`, `audio_processor.py`, `mixer.py`, or any other downstream module** unless strictly necessary to support the new engine selection.
 3. **Do NOT change the pipeline's sequential model loading pattern** (load TTS → generate → unload TTS → load MusicGen → generate → unload MusicGen). Parler TTS must follow this same lifecycle.
 4. **Do NOT change the output contract.** The TTS engine must return `(voice_audio: np.ndarray float32 mono 24000Hz, voice_activity: np.ndarray bool)` — the exact same signature Kokoro uses.
@@ -130,7 +130,7 @@ audio_24k = torchaudio.functional.resample(
 
 ---
 
-## Part 3: Implement Parler TTS Engine — `core/parler_engine.py`
+## Part 3: Implement Parler TTS Engine — `core/parler_tts/engine.py`
 
 ### 3.1 Installation & Dependencies
 
@@ -153,7 +153,7 @@ class ParlerTTSEngine:
     def unload_model(self): ...
     def synthesize(
         self,
-        segments: list[dict],        # From script_parser.py
+        segments: list[dict],        # From core/parler_tts/preprocessor.py
         voice: str,                   # Voice description string OR named preset
         speed: float = 0.85,          # 0.5–1.0 (used to adjust description)
         progress_cb=None,             # Called with (current_index, total_segments)
@@ -448,7 +448,7 @@ class ParlerTTSEngine:
         """Synthesize all script segments into a single audio track.
 
         Args:
-            segments: Parsed script segments from script_parser.py.
+            segments: Parsed script segments from parler_tts.preprocessor.py.
                       Each is {"type": "speech", "text": "..."} or
                       {"type": "pause", "duration_sec": float}.
             voice: Either a preset name (matched against VOICE_PRESETS)
@@ -600,10 +600,10 @@ class TTSEngineType(Enum):
 def create_tts_engine(engine_type: TTSEngineType):
     """Factory function returning the appropriate TTS engine instance."""
     if engine_type == TTSEngineType.KOKORO:
-        from core.kokoro_engine import TTSEngine
+        from core.kokoro_tts.engine import KokoroEngine as TTSEngine
         return TTSEngine()
     elif engine_type == TTSEngineType.PARLER:
-        from core.parler_engine import ParlerTTSEngine
+        from core.parler_tts.engine import ParlerTTSEngine
         return ParlerTTSEngine()
     else:
         raise ValueError(f"Unknown TTS engine type: {engine_type}")
@@ -807,9 +807,10 @@ The pipeline MUST follow the existing sequential pattern. Parler TTS (2.2B param
 
 ```python
 # Step 1: Load Parler TTS → Synthesize → Unload
-parler_engine.load_model()                    # ~5-6 GB with bfloat16
-voice_audio, voice_activity = parler_engine.synthesize(...)
-parler_engine.unload_model()                  # Free memory
+# core/parler_tts/engine.py (Implementation details...)
+tts_engine.load_model()                    # ~5-6 GB with bfloat16
+voice_audio, voice_activity = tts_engine.synthesize(...)
+tts_engine.unload_model()                  # Free memory
 gc.collect()
 
 # Step 2: Load MusicGen → Generate → Unload (unchanged)
@@ -1016,15 +1017,15 @@ After implementation, verify each of these:
 |------|--------|
 | `core/fish_engine.py` | **DELETE entirely** |
 | Fish Speech config/presets | **DELETE entirely** |
-| `core/parler_engine.py` | **CREATE new file** (implementation above) |
+| `core/parler_tts/engine.py` | **CREATE new file** (implementation above) |
 | `core/speech_engine.py` | **EDIT** — replace Fish Speech with Parler in factory |
 | `core/pipeline.py` | **EDIT** — remove Fish Speech params, add Parler params |
 | `app.py` | **EDIT** — remove Fish Speech UI, add Parler UI |
 | `requirements.txt` | **EDIT** — remove Fish Speech deps, add Parler deps |
 | `README.md` | **EDIT** — remove Fish Speech docs, add Parler docs |
 | `.env` / config | **EDIT** — remove FISH_API_KEY |
-| `core/kokoro_engine.py` | **NO CHANGES** |
-| `core/tts_engine.py` | **NO CHANGES** (if this is the Kokoro file) |
+| `core/kokoro_tts/engine.py` | **NO CHANGES** |
+| `core/speech_engine.py` | **EDIT** — replace Fish Speech with Parler in factory |
 | `core/script_parser.py` | **NO CHANGES** |
 | `core/music_engine.py` | **NO CHANGES** |
 | `core/audio_processor.py` | **NO CHANGES** |

@@ -48,7 +48,8 @@ except ImportError:
     from transformers.cache_utils import StaticCache
     _tcu.SlidingWindowCache = StaticCache
 
-from core.parler_engine import VOICE_PRESETS as PARLER_VOICE_PRESETS
+from core.kokoro_tts.engine import KokoroEngine
+from core.parler_tts.engine import VOICE_PRESETS as PARLER_VOICE_PRESETS
 from core.pipeline import MeditationPipeline
 
 # Load environment variables (like HF_TOKEN) from .env file
@@ -57,7 +58,7 @@ load_dotenv()
 # ── Voice choices for Kokoro engine ──────────────────────────────────────────
 
 # (label, voice_id) pairs shown in the Kokoro dropdown.
-# Presets resolve to blended voice tensors via core.voice_manager.
+# Presets resolve to blended voice tensors via core.kokoro_tts.voice_manager.
 KOKORO_VOICE_CHOICES = [
     # Premium Blends (Recommended)
     ("Balanced Calm — natural & human (default)",  "balanced_calm"),
@@ -208,8 +209,8 @@ with gr.Blocks(
     gr.Markdown("# MoodScape — Guided Meditation Audio Generator")
     gr.Markdown(
         "Create personalized guided meditation audio with AI-generated "
-        "narration and ambient music. Write your script using `[pause:Xs]` "
-        "markers for timed silences."
+        "narration and ambient music. Write your script using `[pause:Xs]` or "
+        "`[N second pause]` markers for timed silences, and `[breath]` for breath pauses."
     )
 
     with gr.Row():
@@ -224,8 +225,9 @@ with gr.Blocks(
                 label="Meditation Script",
                 placeholder=(
                     "Enter your meditation script here.\n"
-                    "Use [pause:Xs] for timed pauses, e.g. [pause:5s]\n"
-                    "Double newlines create 1.5-second pauses automatically."
+                    "Use [pause:Xs] or [N second pause] for timed pauses, e.g. [pause:5s] or [5 second pause]\n"
+                    "Use [breath] / [inhale] / [exhale] for a 1.2s breath pause.\n"
+                    "Double newlines create 6.5-second pauses automatically."
                 ),
                 value=DEFAULT_SCRIPT,
                 lines=15,
