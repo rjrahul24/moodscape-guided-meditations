@@ -98,6 +98,10 @@ class MeditationPipeline:
         melody_sample_rate: int | None = None,
         bpm: int = 70,
         keyscale: str = "Auto",
+        acestep_model_type: str = "sft",
+        lyria_bpm: int = 70,
+        lyria_density: float = 0.2,
+        lyria_brightness: float = 0.3,
     ) -> tuple[str, str | None]:
         """Run the full pipeline and return the path to the output audio file.
 
@@ -152,6 +156,11 @@ class MeditationPipeline:
         is_instrumental = generation_mode == "Instrumental Only"
         is_vocals = generation_mode == "Vocals Only"
         use_acestep = music_model == "acestep"
+        use_lyria = music_model == "lyria"
+
+        # Lyria mixes at its native 48 kHz; all other engines mix at 44.1 kHz.
+        # TTS voice (24 kHz) is upsampled to match whichever rate is selected.
+        mix_sr = 48000 if use_lyria else TARGET_SR
 
         logger.info("Starting generation — mode=%s, music_model=%s, voice=%s, speed=%s, seed=%s, lufs=%s",
                     generation_mode, music_model, voice, speed, seed, target_lufs)
@@ -254,35 +263,48 @@ class MeditationPipeline:
 
                 logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
 
-                # Upsample Voice immediately to Target Sample Rate
-                from core.audio_processor import resample_to_44100
-                _progress(progress_cb, 0.39, "Upsampling TTS audio to 44.1kHz standard...")
-                voice_audio = resample_to_44100(voice_audio, SAMPLE_RATE)
-                voice_activity = np.repeat(voice_activity, TARGET_SR // SAMPLE_RATE)
+                # Upsample Voice to the mix sample rate:
+                #   Lyria path → 48 kHz (TTS upsampled to match native Lyria quality)
+                #   All other engines → 44.1 kHz (studio standard)
+                if use_lyria:
+                    from core.audio_processor import upsample_audio
+                    _progress(progress_cb, 0.39, "Upsampling TTS audio to 48kHz (Lyria path)...")
+                    voice_audio = upsample_audio(voice_audio, from_sr=SAMPLE_RATE, to_sr=48000)
+                    # 48000 / 24000 = 2 exactly — clean integer repeat
+                    voice_activity = np.repeat(voice_activity, 2)
+                else:
+                    from core.audio_processor import resample_to_44100
+                    _progress(progress_cb, 0.39, "Upsampling TTS audio to 44.1kHz standard...")
+                    voice_audio = resample_to_44100(voice_audio, SAMPLE_RATE)
+                    voice_activity = np.repeat(voice_activity, TARGET_SR // SAMPLE_RATE)
                 pad_diff = len(voice_audio) - len(voice_activity)
                 if pad_diff > 0:
                      voice_activity = np.concatenate([voice_activity, np.zeros(pad_diff, dtype=bool)])
                 else:
                      voice_activity = voice_activity[:len(voice_audio)]
 
-                # ── Phase B: Mastering EQ / De-Ess / Limiting (44.1 kHz) ────────
+                # ── Phase B: Mastering EQ / De-Ess / Limiting ────────────────────
                 _progress(progress_cb, 0.39, "Mastering vocal stem (EQ/De-Ess)...")
-                voice_audio = mastering_engine.master_vocals(voice_audio, sr=TARGET_SR)
+                voice_audio = mastering_engine.master_vocals(voice_audio, sr=mix_sr)
             else:
                 voice_audio = np.zeros(0, dtype=np.float32)
                 voice_activity = np.zeros(0, dtype=bool)
 
             if not is_vocals:
                 # ── Step 4: Unload TTS, load music model ────────────────────────
-                music_model_label = "ACE-Step 1.5" if use_acestep else "MusicGen"
-                _progress(progress_cb, 0.40, f"Switching to {music_model_label}...")
                 if not is_instrumental:
                     tts.unload_model()
                     if tts_engine == "parler":
                         del tts
 
+                music_model_label = "Lyria RealTime" if use_lyria else ("ACE-Step 1.5" if use_acestep else "MusicGen")
+                _progress(progress_cb, 0.40, f"Switching to {music_model_label}...")
+
                 # Instantiate the selected music engine
-                if use_acestep:
+                if use_lyria:
+                    from core.lyria.engine import LyriaEngine
+                    music_engine = LyriaEngine()
+                elif use_acestep:
                     from core.acestep_engine import AceStepEngine
                     music_engine = AceStepEngine()
                 else:
@@ -298,7 +320,7 @@ class MeditationPipeline:
                 elif is_instrumental:
                     music_duration = instrumental_duration_m * 60.0
                 else:
-                    voice_duration = len(voice_audio) / TARGET_SR
+                    voice_duration = len(voice_audio) / mix_sr
                     music_duration = voice_duration + 10  # extra for pre-roll + fade-out
 
                 _progress(progress_cb, 0.45, f"Generating background music ({music_model_label})...")
@@ -310,7 +332,7 @@ class MeditationPipeline:
 
                 # Melody conditioning is only supported by MusicGen
                 melody_kwargs = {}
-                if not use_acestep and melody_audio is not None and melody_sample_rate is not None:
+                if not use_acestep and not use_lyria and melody_audio is not None and melody_sample_rate is not None:
                     melody_kwargs = {
                         "melody_audio": melody_audio,
                         "melody_sample_rate": melody_sample_rate,
@@ -321,11 +343,35 @@ class MeditationPipeline:
                 if story_mode:
                     # Build engine-specific stages: enhance each stage prompt
                     # with its model's meditation guardrails.
-                    if use_acestep:
+                    if use_lyria:
+                        # LyriaEngine handles prompt enhancement internally;
+                        # pass raw stage prompts so they are not double-enhanced.
+                        engine_stages = music_prompt_stages
+                        enhanced_prompt = music_prompt
+                        music_audio = music_engine.generate(
+                            enhanced_prompt,
+                            music_duration,
+                            progress_cb=music_progress,
+                            prompt_stages=engine_stages,
+                            bpm=lyria_bpm,
+                            density=lyria_density,
+                            brightness=lyria_brightness,
+                        )
+                    elif use_acestep:
                         # AceStepEngine enhances prompts internally per stage;
                         # pass raw stage prompts so they are not double-enhanced.
                         engine_stages = music_prompt_stages
                         enhanced_prompt, enhanced_lyrics = _enhance_acestep_prompt(music_prompt)
+                        music_audio = music_engine.generate(
+                            enhanced_prompt,
+                            music_duration,
+                            progress_cb=music_progress,
+                            prompt_stages=engine_stages,
+                            lyrics=enhanced_lyrics,
+                            bpm=bpm,
+                            keyscale=keyscale,
+                            **melody_kwargs,
+                        )
                     else:
                         # MusicEngine expects pre-enhanced prompts (pipeline enhances).
                         engine_stages = [
@@ -333,25 +379,27 @@ class MeditationPipeline:
                             for p, d in music_prompt_stages
                         ]
                         enhanced_prompt = _enhance_music_prompt(music_prompt)
-                        enhanced_lyrics = None
-
-                    music_audio = music_engine.generate(
-                        enhanced_prompt,
-                        music_duration,
-                        progress_cb=music_progress,
-                        prompt_stages=engine_stages,
-                        lyrics=enhanced_lyrics,
-                        bpm=bpm,
-                        keyscale=keyscale,
-                        **melody_kwargs,
-                    )
+                        music_audio = music_engine.generate(
+                            enhanced_prompt,
+                            music_duration,
+                            progress_cb=music_progress,
+                            prompt_stages=engine_stages,
+                            **melody_kwargs,
+                        )
                 else:
-                    # Single-prompt generation (existing behaviour)
-                    if use_acestep:
+                    # Single-prompt generation
+                    if use_lyria:
+                        # LyriaEngine handles prompt enhancement internally
+                        music_audio = music_engine.generate(
+                            music_prompt, music_duration, progress_cb=music_progress,
+                            bpm=lyria_bpm, density=lyria_density, brightness=lyria_brightness,
+                        )
+                    elif use_acestep:
                         enhanced_prompt, lyrics = _enhance_acestep_prompt(music_prompt)
                         music_audio = music_engine.generate(
                             enhanced_prompt, music_duration, progress_cb=music_progress,
-                            lyrics=lyrics, bpm=bpm, keyscale=keyscale, **melody_kwargs,
+                            lyrics=lyrics, bpm=bpm, keyscale=keyscale, 
+                            acestep_model_type=acestep_model_type, **melody_kwargs,
                         )
                     else:
                         enhanced_prompt = _enhance_music_prompt(music_prompt)
@@ -362,13 +410,15 @@ class MeditationPipeline:
 
                 # ── Step 5b: Unload music model ─────────────────────────────────
                 music_engine.unload_model()
-                if use_acestep:
+                if use_acestep or use_lyria:
                     del music_engine
 
                 # ── Step 5c: AI Source Separation (remove drums/vocals) ─────────
                 if stem_separation:
                     _progress(progress_cb, 0.68, "Removing drums/vocals via AI source separation...")
-                    if use_acestep:
+                    if use_lyria:
+                        from core.lyria.engine import TARGET_SAMPLE_RATE as MUSIC_SR
+                    elif use_acestep:
                         from core.acestep_engine import TARGET_SAMPLE_RATE as MUSIC_SR
                     else:
                         from core.music_engine import TARGET_SAMPLE_RATE as MUSIC_SR
@@ -379,14 +429,20 @@ class MeditationPipeline:
                     separator.unload_model()
                     del separator
 
-                # Upsample music audio immediately to Target Sample Rate
-                _progress(progress_cb, 0.70, f"Upsampling {music_model_label} audio to 44.1kHz standard...")
-                from core.audio_processor import resample_to_44100
-                if use_acestep:
-                    from core.acestep_engine import TARGET_SAMPLE_RATE as MUSIC_SR
+                # Resample music audio to the mix sample rate.
+                # Lyria is already at 48 kHz (mix_sr) — no resampling needed.
+                # ACE-Step and MusicGen output at 24 kHz and must be upsampled.
+                if use_lyria:
+                    _progress(progress_cb, 0.70, "Lyria audio at native 48kHz — no resampling needed.")
+                    # music_audio is already at 48 kHz mono float32
                 else:
-                    from core.music_engine import TARGET_SAMPLE_RATE as MUSIC_SR
-                music_audio = resample_to_44100(music_audio, MUSIC_SR)
+                    _progress(progress_cb, 0.70, f"Upsampling {music_model_label} audio to 44.1kHz standard...")
+                    from core.audio_processor import resample_to_44100
+                    if use_acestep:
+                        from core.acestep_engine import TARGET_SAMPLE_RATE as MUSIC_SR
+                    else:
+                        from core.music_engine import TARGET_SAMPLE_RATE as MUSIC_SR
+                    music_audio = resample_to_44100(music_audio, MUSIC_SR)
             else:
                 music_audio = np.zeros(0, dtype=np.float32)
 
@@ -396,11 +452,11 @@ class MeditationPipeline:
                 if tts_engine == "kokoro":
                     from core.kokoro_tts.postprocessor import build_voice_chain, apply_fx
                     voice_chain = build_voice_chain(reverb_amount=reverb_amount)
-                    voice_audio = apply_fx(voice_audio, voice_chain, TARGET_SR)
+                    voice_audio = apply_fx(voice_audio, voice_chain, mix_sr)
                 else:
                     from core.audio_processor import make_voice_chain, apply_fx
                     voice_chain = make_voice_chain(reverb_amount=reverb_amount)
-                    voice_audio = apply_fx(voice_audio, voice_chain, TARGET_SR)
+                    voice_audio = apply_fx(voice_audio, voice_chain, mix_sr)
 
                 # Align voice_activity to post-FX voice length (reverb tail trim
                 # may change length slightly)
@@ -415,42 +471,50 @@ class MeditationPipeline:
                 # ── Step 8: Apply music FX ──────────────────────────────────────
                 _progress(progress_cb, 0.77, "Applying music effects...")
                 from core.audio_processor import apply_fx as apply_audio_fx
-                # ACE-Step tends to output louder and more variable levels than MusicGen.
-                # Normalize ACE-Step music to a quieter pre-mix target (-24 LUFS) so it
-                # sits as a true background element before the FX chain and duck are applied.
-                # MusicGen is normalized to -20 LUFS as before.
-                premix_lufs = -24.0 if use_acestep else -20.0
-                music_audio = normalize_loudness(music_audio, TARGET_SR, target_lufs=premix_lufs)
-                if use_acestep:
+                # Pre-mix loudness targets per engine:
+                #   Lyria:    -22 LUFS — slightly quieter than MusicGen, avoids dominating the mix
+                #   ACE-Step: -22 LUFS — matched to Lyria for consistent mix levels
+                #   MusicGen: -20 LUFS — established reference
+                if use_lyria:
+                    premix_lufs = -22.0
+                elif use_acestep:
+                    premix_lufs = -22.0
+                else:
+                    premix_lufs = -20.0
+                music_audio = normalize_loudness(music_audio, mix_sr, target_lufs=premix_lufs)
+                if use_lyria:
+                    from core.audio_processor import make_lyria_music_chain
+                    music_chain = make_lyria_music_chain()
+                elif use_acestep:
                     from core.audio_processor import make_acestep_music_chain
                     music_chain = make_acestep_music_chain()
                 else:
                     music_chain = make_music_chain()
-                music_audio = apply_audio_fx(music_audio, music_chain, TARGET_SR)
+                music_audio = apply_audio_fx(music_audio, music_chain, mix_sr)
 
             # ── Optional: Export stems ──────────────────────────────────────
             stem_paths = None
             if do_export_stems and not is_instrumental and not is_vocals:
                 _progress(progress_cb, 0.80, "Exporting stems...")
-                stem_paths = export_stems(voice_audio, music_audio, TARGET_SR)
+                stem_paths = export_stems(voice_audio, music_audio, mix_sr)
                 logger.info("Stems exported: %s", stem_paths)
 
             # ── Step 9: Mix with ducking ────────────────────────────────────
             if is_instrumental:
                 _progress(progress_cb, 0.82, "Applying final fades...")
                 from core.mixer import apply_fades
-                mixed = apply_fades(music_audio, TARGET_SR, fade_in_sec, fade_out_sec)
+                mixed = apply_fades(music_audio, mix_sr, fade_in_sec, fade_out_sec)
             elif is_vocals:
                 _progress(progress_cb, 0.82, "Applying final fades...")
                 from core.mixer import apply_fades
-                mixed = apply_fades(voice_audio, TARGET_SR, fade_in_sec, fade_out_sec)
+                mixed = apply_fades(voice_audio, mix_sr, fade_in_sec, fade_out_sec)
             else:
                 _progress(progress_cb, 0.82, "Mixing voice and music...")
                 mixed = mix(
                     voice_audio,
                     voice_activity,
                     music_audio,
-                    sample_rate=TARGET_SR,
+                    sample_rate=mix_sr,
                     duck_amount_db=duck_amount_db,
                     fade_in_sec=fade_in_sec,
                     fade_out_sec=fade_out_sec,
@@ -464,7 +528,7 @@ class MeditationPipeline:
             # chunked streaming in `export_audio()`.
 
             # ── Step 10b: QA checks ─────────────────────────────────────────
-            qa_results = run_qa_checks(mixed, TARGET_SR)
+            qa_results = run_qa_checks(mixed, mix_sr)
             if qa_results["silence"]:
                 status_message += f"QA: {len(qa_results['silence'])} long silence(s) detected. "
             if not qa_results["clipping"]["passed"]:
@@ -473,12 +537,13 @@ class MeditationPipeline:
             # ── Step 11: Export ─────────────────────────────────────────────
             _progress(progress_cb, 0.95, f"Exporting {output_format.upper()}...")
 
-            # Optional 48 kHz upsampling target
-            export_sr = 48000 if upsample_48k else TARGET_SR
+            # Lyria always exports at 48 kHz (native quality).
+            # Other engines respect the user's upsample_48k preference.
+            export_sr = 48000 if (use_lyria or upsample_48k) else TARGET_SR
 
             output_path = export_audio(
                 mixed,
-                sample_rate=TARGET_SR,
+                sample_rate=mix_sr,
                 output_format=output_format,
                 target_sample_rate=export_sr,
                 master_chain=master_chain,

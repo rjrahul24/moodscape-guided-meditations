@@ -73,13 +73,19 @@ class AceStepEngine:
         self._dit = None
         self._llm = None
         self.initialized = False
+        self.model_type = None  # "sft" or "turbo"
 
     # ------------------------------------------------------------------
     # Model lifecycle
     # ------------------------------------------------------------------
 
-    def load_model(self):
-        """Load ACE-Step DiT and LLM handlers."""
+    def load_model(self, model_type="sft"):
+        """Load ACE-Step DiT and LLM handlers.
+        
+        Args:
+            model_type: "sft" (high fidelity, 60 steps) or 
+                        "turbo" (distilled, 8 steps).
+        """
         import os
 
         # ── Patch ACE-Step package constants before first import ──────────────
@@ -109,12 +115,17 @@ class AceStepEngine:
         t0 = time.time()
 
         # ── DiT handler ──────────────────────────────────────────────────
-        self._dit = AceStepHandler()
+        if self._dit is None:
+            self._dit = AceStepHandler()
+            
+        config_path = f"acestep-v15-{model_type}"
+        logger.info(f"[AceStepEngine] Initializing DiT with config: {config_path}")
+
         # device="auto" resolves to "mps" on Apple Silicon.
         # use_mlx_dit=True (default) activates MLX-accelerated DiT inference.
         status_msg, success = self._dit.initialize_service(
             project_root="./ACE-Step-1.5",
-            config_path="acestep-v15-sft",
+            config_path=config_path,
             device="auto",
             use_mlx_dit=True,
             # compile_model=True redirects to mx.compile on MPS, which fuses MLX
@@ -143,8 +154,9 @@ class AceStepEngine:
             logger.info("[AceStepEngine] LLM initialized: %s", llm_status[:200])
 
         self.initialized = True
+        self.model_type = model_type
         logger.info(
-            "[AceStepEngine] ACE-Step 1.5 loaded in %.1fs", time.time() - t0
+            "[AceStepEngine] ACE-Step 1.5 (%s) loaded in %.1fs", model_type, time.time() - t0
         )
 
     def unload_model(self):
@@ -208,8 +220,12 @@ class AceStepEngine:
             Mono float32 numpy array at 24 000 Hz — same contract as
             ``MusicEngine.generate()``.
         """
-        if not self.initialized:
-            self.load_model()
+        # Quality selection (Task 5)
+        requested_model = kwargs.get("acestep_model_type", "sft")
+        
+        if not self.initialized or self.model_type != requested_model:
+            logger.info(f"[AceStepEngine] Loading/Switching model to: {requested_model}")
+            self.load_model(model_type=requested_model)
 
         # Handle reference audio if provided in kwargs (melody_audio from pipeline)
         melody_audio = kwargs.get("melody_audio")
@@ -443,6 +459,12 @@ class AceStepEngine:
 
         return full_audio
 
+    def _get_inference_steps(self, is_repaint: bool = False) -> int:
+        """Resolve inference steps based on current model type."""
+        if self.model_type == "turbo":
+            return 8
+        return _INFERENCE_STEPS_REPAINT if is_repaint else _INFERENCE_STEPS
+
     def _generate_single(
         self, 
         enhanced_prompt: str, 
@@ -480,7 +502,7 @@ class AceStepEngine:
             reference_audio=reference_audio_path,
             bpm=bpm if bpm and bpm > 0 else None,
             keyscale=keyscale if keyscale and keyscale != "Auto" else "",
-            inference_steps=_INFERENCE_STEPS,
+            inference_steps=self._get_inference_steps(is_repaint=False),
             guidance_scale=_GUIDANCE_SCALE,
             use_adg=_USE_ADG,
             thinking=True,
@@ -553,7 +575,7 @@ class AceStepEngine:
             repainting_start=repaint_start,
             repainting_end=repaint_end,
             duration=repaint_end, # Total duration of the resulting file
-            inference_steps=_INFERENCE_STEPS_REPAINT,
+            inference_steps=self._get_inference_steps(is_repaint=True),
             guidance_scale=_GUIDANCE_SCALE,
             use_adg=False, # ADG not supported for repaint
             thinking=False, # Skip LM for Repaint tasks

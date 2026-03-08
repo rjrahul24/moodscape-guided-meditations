@@ -8,9 +8,10 @@ class TestAceStepInfinite(unittest.TestCase):
     def setUp(self):
         self.engine = AceStepEngine()
         self.engine.initialized = True
+        self.engine.model_type = "sft"
         self.engine._dit = MagicMock()
         self.engine._llm = MagicMock()
-
+        self.engine._dit.initialize_service.return_value = ("Success", True)
     @patch("core.acestep_engine.AceStepEngine._generate_single")
     @patch("core.acestep_engine.AceStepEngine._generate_single_repaint")
     @patch("soundfile.write")

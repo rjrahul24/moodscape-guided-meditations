@@ -145,6 +145,46 @@ def make_acestep_music_chain() -> Pedalboard:
     ])
 
 
+def make_lyria_music_chain() -> Pedalboard:
+    """FX chain tailored for Lyria RealTime output at 48 kHz.
+
+    Lyria's diffusion model produces stereo audio that has been averaged to
+    mono by the engine.  Its spectral profile differs from both MusicGen and
+    ACE-Step:
+    - The 48 kHz native rate means content extends above 12 kHz (unlike
+      MusicGen's 32→24 kHz pipeline, whose Nyquist sits at 12 kHz).
+    - Lyria tends to be brighter and more harmonically dense than ACE-Step's
+      ambient output, so upper-mid softening is more aggressive.
+    - Sub-bass rumble is present but not as severe as ACE-Step diffusion noise.
+
+    Chain:
+      1. Sub-bass HPF at 60 Hz — removes inaudible energy from the API stream
+         that wastes mix headroom.
+      2. Mud notch at 250 Hz (-1.5 dB) — controls warmth buildup common in
+         Lyria's harmonic-rich textures.
+      3. Upper-mid edge at 4500 Hz (-2.0 dB, Q=0.7) — tones down any 'presence'
+         that makes the ambient bed sound too forward against the narration.
+      4. High shelf at 9000 Hz (-2.5 dB) — gentle rolloff of Lyria's extended
+         high-frequency content to maintain a meditative warmth.
+      5. Slow glue compressor (2:1, 500ms release) — same gentle compression as
+         the ACE-Step chain; prevents dynamic spikes without audible pumping.
+      6. Limiter at -0.5 dBFS — leaves extra headroom before the master chain.
+    """
+    return Pedalboard([
+        HighpassFilter(cutoff_frequency_hz=60.0),                         # Sub-bass removal
+        PeakFilter(cutoff_frequency_hz=250, gain_db=-1.5, q=0.8),         # Mud notch
+        PeakFilter(cutoff_frequency_hz=4500, gain_db=-2.0, q=0.7),        # Upper-mid softening
+        HighShelfFilter(cutoff_frequency_hz=9000.0, gain_db=-2.5),        # HF warmth rolloff
+        Compressor(
+            threshold_db=-18.0,
+            ratio=2.0,
+            attack_ms=80.0,    # Slow attack: preserve transients
+            release_ms=500.0,  # Slow release: no pumping on sustained pads
+        ),
+        Limiter(threshold_db=-0.5),
+    ])
+
+
 def make_master_chain() -> Pedalboard:
     """Final mastering chain: subsonic HPF → gain → glue compressor → brickwall limiter.
 

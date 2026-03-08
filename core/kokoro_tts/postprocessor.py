@@ -9,8 +9,8 @@ Three processing stages tailored to Kokoro-82M's specific output characteristics
     - RMS normalization to -23 dBFS (EBU R128 speech reference)
 
   Stage 2 — Segment assembly:
-    - 35ms cosine-squared crossfade between chunks (preserves consonant onsets)
-    - 25ms pre-roll silence + 80ms fade-in (masks cold-start prosody drift)
+    - 22ms cosine-squared crossfade between chunks (preserves consonant onsets)
+    - 25ms pre-roll silence + 100ms fade-in (masks cold-start prosody drift)
     - 50ms fade-out at segment boundary
 
   Stage 3 — Pedalboard FX chains (Kokoro-specific signal processing):
@@ -41,14 +41,14 @@ logger = logging.getLogger(__name__)
 SAMPLE_RATE = 24000
 
 # ── Crossfade constants ──────────────────────────────────────────────────
-# 35ms at 24 kHz = 840 samples. Kept short to preserve consonant onsets at
-# chunk boundaries — longer crossfade blends word-initial stops/fricatives.
-CROSSFADE_SAMPLES = int(0.035 * SAMPLE_RATE)
+# 22ms at 24 kHz = 528 samples. Shorter than before to reduce inter-chunk
+# phoneme blending at word boundaries — improves consonant intelligibility.
+CROSSFADE_SAMPLES = int(0.022 * SAMPLE_RATE)
 
 # ── Segment-level fade constants ─────────────────────────────────────────
-# Masks Kokoro's "cold start" prosody drift in the first ~80ms of each call
+# Masks Kokoro's "cold start" prosody drift in the first ~100ms of each call
 PRE_ROLL_SEC = 0.025
-FADE_IN_SEC = 0.080
+FADE_IN_SEC = 0.100
 FADE_OUT_SEC = 0.050
 
 # ── Silence detection thresholds ─────────────────────────────────────────
@@ -238,11 +238,11 @@ def build_voice_chain(reverb_amount: float = 0.08) -> Pedalboard:
     - Noise gate at -42 dB: mutes inter-chunk silence without gating soft
       phonemes (breathy /h/, /f/, unvoiced trailing stops)
     - Highpass at 90 Hz: removes sub-bass rumble and plosive energy
-    - Compressor 3:1 at -18 dB: glues the track without pumping
-    - High-shelf -3.5 dB at 7.5 kHz: tames the "radio static" artifact
-      from Kokoro's vocoder (7–9 kHz band), applied pre-reverb so the
-      harshness isn't smeared through the spatial image
-    - Lowpass at 9 kHz: final cleanup of metallic TTS hallucinations
+    - Compressor 2.5:1 at -18 dB: glues the track without pumping; lower ratio
+      preserves consonant transients for clearer pronunciation
+    - High-shelf -5.5 dB at 6.5 kHz: more aggressive de-harshening of Kokoro's
+      "radio static" vocoder artifact (6–9 kHz), applied pre-reverb
+    - Lowpass at 8 kHz: harder digital ceiling removes metallic TTS hallucinations
     - Reverb: subtle chamber/studio for natural room presence
     - Limiter: brickwall at -1 dBFS
     """
@@ -250,9 +250,9 @@ def build_voice_chain(reverb_amount: float = 0.08) -> Pedalboard:
     return Pedalboard([
         NoiseGate(threshold_db=-42, ratio=20.0, attack_ms=2.0, release_ms=80),
         HighpassFilter(cutoff_frequency_hz=90.0),
-        Compressor(threshold_db=-18.0, ratio=3.0, attack_ms=2.0, release_ms=80.0),
-        HighShelfFilter(cutoff_frequency_hz=7500, gain_db=-3.5),
-        LowpassFilter(cutoff_frequency_hz=9000.0),
+        Compressor(threshold_db=-18.0, ratio=2.5, attack_ms=2.0, release_ms=80.0),
+        HighShelfFilter(cutoff_frequency_hz=6500, gain_db=-5.5),
+        LowpassFilter(cutoff_frequency_hz=8000.0),
         Reverb(
             room_size=0.15,
             damping=0.6,
@@ -269,10 +269,11 @@ def build_master_chain(sr: int = 44100) -> Pedalboard:
     Signal chain:
       1. Highpass 80 Hz — remove DC offset & sub-bass rumble
       2. Warmth +2 dB @ 200 Hz low-shelf — "proximity effect" warmth
-      3. Surgical -1.5 dB @ 400 Hz, +1.5 dB @ 3.5 kHz — mud cut & presence
+      3. Surgical -1.5 dB @ 400 Hz, +1.5 dB @ 3.5 kHz, +1.2 dB @ 2.5 kHz —
+         mud cut, presence, and consonant intelligibility boost
       4. De-Esser: boost → compress → cut at 7 kHz — tame sibilance
          ±4 dB (reduced from ±6 to avoid triggering on every sibilant)
-      5. Lowpass 10.5 kHz — psychoacoustic "super-resolution" smoothing:
+      5. Lowpass 9.5 kHz — psychoacoustic "super-resolution" smoothing:
          Kokoro TTS runs at 24 kHz native (Nyquist: 12 kHz), upsampled to
          44.1 kHz. This creates a smooth, analog-sounding rolloff in the
          10.5–12 kHz region, masking the abrupt digital brick-wall at the
@@ -285,10 +286,11 @@ def build_master_chain(sr: int = 44100) -> Pedalboard:
         LowShelfFilter(cutoff_frequency_hz=200, gain_db=2.0),
         PeakFilter(cutoff_frequency_hz=400, gain_db=-1.5, q=1.0),
         PeakFilter(cutoff_frequency_hz=3500, gain_db=1.5, q=0.8),
+        PeakFilter(cutoff_frequency_hz=2500, gain_db=1.2, q=1.2),
         PeakFilter(cutoff_frequency_hz=7000, gain_db=4.0, q=2.0),
         Compressor(threshold_db=-20, ratio=3.0, attack_ms=1, release_ms=50),
         PeakFilter(cutoff_frequency_hz=7000, gain_db=-4.0, q=2.0),
-        LowpassFilter(cutoff_frequency_hz=10500),
+        LowpassFilter(cutoff_frequency_hz=9500),
         Limiter(threshold_db=-0.5),
     ])
 

@@ -132,8 +132,12 @@ def generate_meditation(
     upsample_flag,
     stem_separation_flag,
     reference_audio_file,
+    acestep_quality,
     acestep_bpm,
     acestep_key,
+    lyria_bpm,
+    lyria_density,
+    lyria_brightness,
     progress=gr.Progress(),
 ):
     def progress_cb(fraction, message):
@@ -143,7 +147,19 @@ def generate_meditation(
     tts_engine = "parler" if engine_choice == "Parler TTS" else "kokoro"
 
     # Map music model label to engine key
-    music_model = "acestep" if music_model_choice == "ACE-Step 1.5" else "musicgen"
+    if music_model_choice == "ACE-Step 1.5":
+        music_model = "acestep"
+    elif music_model_choice == "Lyria RealTime":
+        music_model = "lyria"
+        # Validate that the API key is available before launching the pipeline
+        if not os.environ.get("GOOGLE_API_KEY", "").strip():
+            return None, (
+                "Error: GOOGLE_API_KEY is not set. "
+                "Add GOOGLE_API_KEY=<your_key> to the .env file at the project root "
+                "and restart the app."
+            )
+    else:
+        music_model = "musicgen"
 
     # Resolve seed: 0 means auto
     seed = int(seed_value) if seed_value and int(seed_value) != 0 else None
@@ -162,6 +178,11 @@ def generate_meditation(
             melody_sample_rate = sr
         except Exception as e:
             print(f"[App] Failed to load reference audio: {e}")
+
+    # Map quality label to engine key (Task 5)
+    # "Draft (Turbo / 8-step)" -> "turbo"
+    # "Studio (SFT / 60-step)" -> "sft"
+    acestep_model_type = "turbo" if "Turbo" in acestep_quality else "sft"
 
     try:
         output_path, status_msg = pipeline.generate(
@@ -189,6 +210,10 @@ def generate_meditation(
             melody_sample_rate=melody_sample_rate,
             bpm=acestep_bpm,
             keyscale=acestep_key,
+            acestep_model_type=acestep_model_type,
+            lyria_bpm=int(lyria_bpm),
+            lyria_density=float(lyria_density),
+            lyria_brightness=float(lyria_brightness),
         )
         duration = _get_duration(output_path)
         minutes = int(duration // 60)
@@ -199,7 +224,8 @@ def generate_meditation(
         else:
             engine_label = "Parler TTS" if tts_engine == "parler" else "Kokoro"
             music_label = music_model_choice
-            status = f"Generated with {engine_label} + {music_label}. {base_status}"
+            lyria_suffix = f" (BPM {lyria_bpm}, density {lyria_density:.2f})" if music_model == "lyria" else ""
+            status = f"Generated with {engine_label} + {music_label}{lyria_suffix}. {base_status}"
         return output_path, status
     except Exception as e:
         return None, f"Error: {e}"
@@ -272,13 +298,23 @@ with gr.Blocks(
 
             # Background Music Model selector
             music_model_dropdown = gr.Dropdown(
-                choices=["MusicGen", "ACE-Step 1.5"],
+                choices=["MusicGen", "ACE-Step 1.5", "Lyria RealTime"],
                 value="MusicGen",
                 label="Background Music Model",
                 info=(
                     "MusicGen: Meta's established model, reliable ambient generation. "
-                    "ACE-Step 1.5: newer DiT model, 48kHz native, coherent long-form via MLX."
+                    "ACE-Step 1.5: newer DiT model, 48kHz native, coherent long-form via MLX. "
+                    "Lyria RealTime: Google's cloud API, native 48kHz stereo, no local VRAM (requires GOOGLE_API_KEY in .env)."
                 ),
+            )
+
+            # ACE-Step Quality Selector (Visible only when ACE-Step is chosen)
+            acestep_quality = gr.Radio(
+                choices=["Draft (Turbo / 8-step)", "Studio (SFT / 60-step)"],
+                value="Studio (SFT / 60-step)",
+                label="Generation Quality",
+                info="Studio (default): highest fidelity. Draft: fast preview, lower detail.",
+                visible=False,
             )
 
             # Kokoro settings (visible by default)
@@ -327,6 +363,33 @@ with gr.Blocks(
                     value="Auto",
                     label="Musical Key",
                     info="ACE-Step only. Set to 'Auto' to let the model choose.",
+                )
+
+            # Lyria RealTime Settings (Collapsed, hidden by default)
+            with gr.Accordion("Lyria RealTime Settings", open=False, visible=False) as lyria_settings:
+                lyria_bpm = gr.Slider(
+                    minimum=60,
+                    maximum=200,
+                    value=70,
+                    step=1,
+                    label="BPM (Beats Per Minute)",
+                    info="60–80 is ideal for meditation. Higher values create more energetic textures.",
+                )
+                lyria_density = gr.Slider(
+                    minimum=0.0,
+                    maximum=1.0,
+                    value=0.2,
+                    step=0.05,
+                    label="Density",
+                    info="Musical density (0.0 = sparse and minimal, 1.0 = rich and layered). Low values suit meditation.",
+                )
+                lyria_brightness = gr.Slider(
+                    minimum=0.0,
+                    maximum=1.0,
+                    value=0.3,
+                    step=0.05,
+                    label="Brightness",
+                    info="Spectral brightness (0.0 = warm/dark, 1.0 = bright/airy). Keep low for a calming, warm feel.",
                 )
 
             # Common settings
@@ -399,12 +462,14 @@ with gr.Blocks(
             )
 
     # Toggle visibility of generation mode specific settings
-    def toggle_mode_settings(mode, current_engine):
+    def toggle_mode_settings(mode, current_engine, current_music_model):
         is_inst = mode == "Instrumental Only"
         is_voc = mode == "Vocals Only"
 
         show_kokoro = (not is_inst) and (current_engine == "Kokoro TTS")
         show_parler = (not is_inst) and (current_engine == "Parler TTS")
+        show_acestep = (current_music_model == "ACE-Step 1.5") and not is_voc
+        show_lyria = (current_music_model == "Lyria RealTime") and not is_voc
 
         return (
             gr.update(visible=not is_inst), # script_input
@@ -418,13 +483,15 @@ with gr.Blocks(
             gr.update(visible=not is_voc),  # duck_slider
             gr.update(visible=not is_inst), # reverb_slider
             gr.update(visible=not is_voc),  # reference_audio
-            gr.update(visible=(music_model_dropdown.value == "ACE-Step 1.5") and not is_voc), # acestep_metadata
+            gr.update(visible=show_acestep), # acestep_quality
+            gr.update(visible=show_acestep), # acestep_metadata
+            gr.update(visible=show_lyria),   # lyria_settings
         )
 
     generation_mode.change(
         fn=toggle_mode_settings,
-        inputs=[generation_mode, engine_radio],
-        outputs=[script_input, music_prompt, music_duration, engine_radio, music_model_dropdown, kokoro_settings, parler_settings, speed_slider, duck_slider, reverb_slider, reference_audio, acestep_metadata],
+        inputs=[generation_mode, engine_radio, music_model_dropdown],
+        outputs=[script_input, music_prompt, music_duration, engine_radio, music_model_dropdown, kokoro_settings, parler_settings, speed_slider, duck_slider, reverb_slider, reference_audio, acestep_quality, acestep_metadata, lyria_settings],
     )
 
     # Toggle visibility of engine-specific settings
@@ -436,16 +503,21 @@ with gr.Blocks(
             gr.update(visible=not is_kokoro and not is_inst),    # parler_settings
         )
 
-    # Toggle ACE-Step specific metadata accordion
-    def toggle_acestep_ui(model, mode):
+    # Toggle engine-specific settings accordions for ACE-Step and Lyria
+    def toggle_music_engine_ui(model, mode):
         is_acestep = model == "ACE-Step 1.5"
+        is_lyria = model == "Lyria RealTime"
         is_voc = mode == "Vocals Only"
-        return gr.update(visible=is_acestep and not is_voc)
+        return (
+            gr.update(visible=is_acestep and not is_voc),  # acestep_quality
+            gr.update(visible=is_acestep and not is_voc),  # acestep_metadata
+            gr.update(visible=is_lyria and not is_voc),    # lyria_settings
+        )
 
     music_model_dropdown.change(
-        fn=toggle_acestep_ui,
+        fn=toggle_music_engine_ui,
         inputs=[music_model_dropdown, generation_mode],
-        outputs=[acestep_metadata],
+        outputs=[acestep_quality, acestep_metadata, lyria_settings],
     )
 
     engine_radio.change(
@@ -494,8 +566,12 @@ with gr.Blocks(
             upsample_checkbox,
             stem_separation_checkbox,
             reference_audio,
+            acestep_quality,
             acestep_bpm,
             acestep_key,
+            lyria_bpm,
+            lyria_density,
+            lyria_brightness,
         ],
         outputs=[audio_output, status_text],
         show_progress="full",

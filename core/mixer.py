@@ -307,7 +307,7 @@ def mix(
     music_audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
     duck_amount_db: float = -20.0,
-    music_volume_db: float = -12.0,
+    music_volume_db: float = -11.7,
     music_pre_roll_sec: float = 2.0,
     fade_in_sec: float = 3.0,
     fade_out_sec: float = 5.0,
@@ -320,8 +320,8 @@ def mix(
             music_volume_db. -20 dB makes music nearly inaudible during
             narration — the primary meditation requirement.
         music_volume_db: Baseline music level in dB (applied before ducking).
-            -12 dB keeps the music subtle even during pauses.
-            During speech it drops by an additional duck_amount_db → ~-32 dB total,
+            -11.7 dB keeps the music subtle even during pauses (+0.3 dB vs -12 dB).
+            During speech it drops by an additional duck_amount_db → ~-31.7 dB total,
             which is essentially silence behind the voice.
 
     Called after voice FX and music FX have already been applied.
@@ -357,18 +357,19 @@ def mix(
     aligned_music = aligned_music[..., :target_len]
 
     # 4. Apply mask-based ducking (Method A — uses pre-computed voice activity)
-    # attack_ms=200: music begins fading smoothly ~200ms after voice detected
+    # attack_ms=500: music fades gradually over 500ms — feels like a natural breath before speech
     # release_ms=5000: music rises very slowly after speech ends (5 seconds to recover)
     #   — this is the key parameter that gives the "very slowly raises" meditation feel
-    # lookahead_ms=150: music starts fading 150ms before voice onset (pre-duck)
+    # lookahead_ms=350: music starts fading 350ms before voice onset so the transition
+    #   is already underway when the first syllable arrives — no abrupt floor drop
     ducked_music = apply_mask_ducking(
         aligned_activity,
         aligned_music,
         sample_rate=sample_rate,
         duck_amount_db=duck_amount_db,
-        attack_ms=200.0,
+        attack_ms=500.0,
         release_ms=5000.0,
-        lookahead_ms=150.0,
+        lookahead_ms=350.0,
     )
 
     # 5. Sum voice + ducked music

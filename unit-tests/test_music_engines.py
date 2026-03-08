@@ -9,6 +9,7 @@ class TestMusicEngines(unittest.TestCase):
     def setUp(self):
         self.engine = AceStepEngine()
         self.engine.initialized = True
+        self.engine.model_type = "sft"
         self.engine._dit = MagicMock()
         self.engine._llm = MagicMock()
 
@@ -60,6 +61,24 @@ class TestMusicEngines(unittest.TestCase):
         
         # Verify cleanup
         mock_remove.assert_called_once_with("/tmp/fake_ref.wav")
+
+    def test_acestep_model_selection_and_steps(self):
+        # Initial state (from setUp) is SFT
+        self.assertEqual(self.engine.model_type, "sft")
+        self.assertEqual(self.engine._get_inference_steps(is_repaint=False), 60)
+        self.assertEqual(self.engine._get_inference_steps(is_repaint=True), 60)
+        
+        # Test switching to Turbo
+        self.engine.load_model = MagicMock()
+        self.engine._generate_single = MagicMock(return_value=np.zeros(10))
+        self.engine.generate("Calm", 10.0, acestep_model_type="turbo")
+        
+        self.engine.load_model.assert_called_with(model_type="turbo")
+        # Note: In real operation, load_model sets self.model_type. 
+        # For the test after mock, we set it manually to check steps logic.
+        self.engine.model_type = "turbo"
+        self.assertEqual(self.engine._get_inference_steps(is_repaint=False), 8)
+        self.assertEqual(self.engine._get_inference_steps(is_repaint=True), 8)
 
     def test_acestep_enhance_prompt(self):
         base_prompt = "Warm sleep music"
