@@ -3,7 +3,7 @@
 Consolidates all preprocessing steps tailored to Kokoro-82M:
   1. Script parsing: [pause:Xs] markers and paragraph breaks → structured segments
   2. Text expansion: digits, abbreviations → spoken equivalents
-  3. Meditation prosody: punctuation normalization for calm delivery
+  3. Meditation prosody: punctuation enhancement at natural phrasing boundaries
   4. Token-aware chunking: sentences merged into 100–150 token chunks
 """
 
@@ -136,19 +136,134 @@ def expand_for_tts(text: str) -> str:
     return text
 
 
+# ── Prosody punctuation constants ────────────────────────────────────────
+# Meditation-specific verbs for "as you/we [verb]" comma insertion.
+# Restricted to avoid false positives on generic "as you would expect" phrases.
+_MEDITATION_VERBS = (
+    r'breathe|exhale|inhale|relax|drift|settle|rest|soften|deepen|'
+    r'release|let|allow|notice|feel|sink|melt|open|expand|quiet|'
+    r'slow|ground|center|arrive|land|return|scan|observe|witness|'
+    r'float|dissolve|unwind|surrender|drop|fall|flow|be|stay|sit'
+)
+
+# Nouns that form natural breath-group markers for "with each [noun]".
+_BREATH_NOUNS = r'breath|exhale|inhale|heartbeat|moment|step|wave|rise|fall'
+
+# Sentence boundary lookbehind — matches positions after ^, ". ", "! ", "? "
+_SENT_START = r'(?:(?:^)|(?<=\. )|(?<=\! )|(?<=\? ))'
+
+
+def enhance_prosody_punctuation(text: str) -> str:
+    """Insert punctuation at natural phrasing boundaries to guide Kokoro's prosody.
+
+    Kokoro is highly sensitive to commas and periods — they directly control
+    micro-pause duration, intonation shape, and breath-group boundaries.
+    This function targets high-frequency meditation text patterns where
+    missing punctuation causes flat or rushed delivery.
+
+    Applied rules (in order):
+    1. Add trailing period if segment lacks terminal punctuation.
+    2. ``Now [verb]`` at sentence start → ``Now, [verb]``.
+    3. Introductory prepositional opener → append comma if missing.
+    4. Mid-clause ``as you/we [meditation verb]`` → ``, as you [verb]``.
+    5. Mid-clause gerund phrase (letting/allowing/releasing…) → ``, letting …``.
+    6. Mid-clause ``with each [breath noun]`` → ``, with each [noun]``.
+    7. Long clause (≥ 8 words) before ``and``/``but`` → ``, and``/``, but``.
+    8. Clean up any double-comma or comma-before-period artifacts.
+    """
+    # 1. Ensure terminal punctuation — Kokoro reads unpunctuated endings flat
+    text = re.sub(r'([A-Za-z])\s*$', r'\1.', text)
+
+    # 2. Sentence-initial "Now [verb]" without comma
+    #    "Now breathe deeply." → "Now, breathe deeply."
+    text = re.sub(
+        rf'({_SENT_START}Now) ([a-z])',
+        r'\1, \2',
+        text,
+    )
+
+    # 3. Introductory prepositional phrases at sentence start, lacking a comma
+    #    "With each breath allow…" → "With each breath, allow…"
+    #    "In this moment feel…"   → "In this moment, feel…"
+    text = re.sub(
+        rf'({_SENT_START}'
+        r'(?:With|In|At|On|Through|For) (?:each|this|every|a|the|your) \w+)'
+        r'(?=[^,\.!\?])',
+        r'\1,',
+        text,
+    )
+
+    # 4. Mid-clause "as you/we [meditation verb]" — breath-group reset point
+    #    "breathe deeply as you exhale" → "breathe deeply, as you exhale"
+    #    Skipped when already preceded by a comma.
+    text = re.sub(
+        rf'(?<![,])\s+(as (?:you|we) (?:{_MEDITATION_VERBS}))',
+        r', \1',
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # 5. Mid-clause gerund phrases — participial continuation markers
+    #    "exhale slowly letting go of tension" → "exhale slowly, letting go of tension"
+    text = re.sub(
+        r'(?<![,])\s+((?:letting|allowing|releasing|melting|softening|sinking) \w)',
+        r', \1',
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # 6. Mid-clause "with each [breath noun]"
+    #    "feel lighter with each breath" → "feel lighter, with each breath"
+    text = re.sub(
+        rf'(?<![,])\s+(with each (?:{_BREATH_NOUNS}))',
+        r', \1',
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # 7. Long clause (≥ 8 words since last punctuation) before "and"/"but"
+    #    "breathe in slowly and with intention release" →
+    #    "breathe in slowly, and with intention release"
+    def _comma_before_conj(m: re.Match) -> str:
+        prefix, conj, rest = m.group(1), m.group(2), m.group(3)
+        last_boundary = max(
+            prefix.rfind(','), prefix.rfind('.'),
+            prefix.rfind('!'), prefix.rfind('?'),
+        )
+        clause = prefix[last_boundary + 1:].strip()
+        if len(clause.split()) >= 8:
+            return f'{prefix}, {conj} {rest}'
+        return m.group(0)
+
+    text = re.sub(
+        r'([A-Za-z][^,\.\n]+?) (and|but) ([a-z])',
+        _comma_before_conj,
+        text,
+    )
+
+    # 8. Cleanup artifacts
+    text = re.sub(r',\s*,', ',', text)
+    text = re.sub(r',(\s*[\.!\?])', r'\1', text)
+    text = re.sub(r'  +', ' ', text)
+
+    return text.strip()
+
+
 def preprocess_for_meditation(text: str) -> str:
     """Optimise text for calm, meditation-style Kokoro TTS delivery.
 
-    Rules derived from Kokoro TTS optimisation research:
-    - Commas = micro-pauses
-    - Ellipsis (...) = reflective breath (longer internal pause)
-    - Periods = full stop + intonation reset
-    - Em dashes = slight rhythmic break
-    - Semicolons = brief pause with anticipation
+    Pipeline:
+    1. Expand digits/abbreviations to spoken forms.
+    2. Insert commas at natural phrasing boundaries (enhance_prosody_punctuation).
+    3. Add ellipsis transition before any inline [pause:] markers.
+    4. Normalise ellipsis to exactly three dots.
     """
     text = expand_for_tts(text)
-    text = re.sub(r'\.{2,}', '...', text)
+    text = enhance_prosody_punctuation(text)
+    # Soft ellipsis transition into an explicit pause marker (graceful handoff)
     text = re.sub(r'(\w)\s*(\[pause:)', r'\1... \2', text)
+    # Normalise any multi-dot sequences to clean three-dot ellipsis
+    text = re.sub(r'\.{2,}', '...', text)
     text = re.sub(r'  +', ' ', text)
     return text.strip()
 

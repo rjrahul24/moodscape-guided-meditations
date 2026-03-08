@@ -80,7 +80,7 @@ class MeditationPipeline:
         tts_engine: str = "kokoro",
         parler_voice_preset: str = "Serene Female — warm, calm, breathy",
         parler_custom_description: str = "",
-        duck_amount_db: float = -9.0,
+        duck_amount_db: float = -20.0,
         reverb_amount: float = 0.15,
         fade_in_sec: float = 3.0,
         fade_out_sec: float = 5.0,
@@ -410,7 +410,12 @@ class MeditationPipeline:
                 # ── Step 8: Apply music FX ──────────────────────────────────────
                 _progress(progress_cb, 0.77, "Applying music effects...")
                 from core.audio_processor import apply_fx as apply_audio_fx
-                music_audio = normalize_loudness(music_audio, TARGET_SR, target_lufs=-20.0)
+                # ACE-Step tends to output louder and more variable levels than MusicGen.
+                # Normalize ACE-Step music to a quieter pre-mix target (-24 LUFS) so it
+                # sits as a true background element before the FX chain and duck are applied.
+                # MusicGen is normalized to -20 LUFS as before.
+                premix_lufs = -24.0 if use_acestep else -20.0
+                music_audio = normalize_loudness(music_audio, TARGET_SR, target_lufs=premix_lufs)
                 if use_acestep:
                     from core.audio_processor import make_acestep_music_chain
                     music_chain = make_acestep_music_chain()

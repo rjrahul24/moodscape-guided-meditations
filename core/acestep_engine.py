@@ -377,13 +377,56 @@ class AceStepEngine:
 
         return result
 
-    @staticmethod
-    def _enhance_prompt(user_prompt: str) -> str:
+    # Words in a user prompt that could push ACE-Step toward loud or
+    # energetic output.  Each entry is (pattern_substring, replacement).
+    # Replacements keep the semantic intent but redirect toward softness.
+    _LOUD_KEYWORD_REPLACEMENTS: list[tuple[str, str]] = [
+        ("epic", "ethereal"),
+        ("powerful", "subtle"),
+        ("intense", "gentle"),
+        ("dramatic", "serene"),
+        ("bold", "soft"),
+        ("loud", "quiet"),
+        ("energetic", "peaceful"),
+        ("upbeat", "tranquil"),
+        ("dynamic", "still"),
+        ("pulsing", "floating"),
+        ("driving", "drifting"),
+        ("strong", "delicate"),
+        ("full orchestra", "sparse strings"),
+        ("orchestral", "minimal"),
+        ("cinematic", "meditative"),
+        ("triumphant", "peaceful"),
+        ("exciting", "calming"),
+    ]
+
+    @classmethod
+    def _sanitize_prompt(cls, user_prompt: str) -> str:
+        """Replace loud/energetic keywords in the user prompt with soft alternatives.
+
+        This prevents the LM planner from interpreting the user's creative
+        intent as a license to generate loud transients or rhythmic content.
+        Replacements are case-insensitive and preserve surrounding text.
+        """
+        import re
+        result = user_prompt
+        for loud_word, replacement in cls._LOUD_KEYWORD_REPLACEMENTS:
+            result = re.sub(
+                re.escape(loud_word), replacement, result, flags=re.IGNORECASE
+            )
+        return result
+
+    @classmethod
+    def _enhance_prompt(cls, user_prompt: str) -> str:
         """Augment the user's prompt with meditation-oriented keywords.
 
         Prompt strategy for ACE-Step:
+        - Sanitize loud/energetic words before enhancement so even if the
+          user enters aggressive prompts they are redirected toward softness.
         - Open with strong ambient anchors so the LM planner doesn't
           interpret the user's theme as energetic/rhythmic.
+        - Use explicit dynamic level markers ('pianissimo', 'pp', 'whisper-quiet')
+          — ACE-Step's LM planner responds well to classical dynamic notation.
         - Use 'no percussion, no rhythm, no beat' explicitly — the LM
           planner responds to direct negation better than MusicGen.
         - Avoid 'high fidelity' which primes for crisp, present overtones;
@@ -392,24 +435,28 @@ class AceStepEngine:
         Keywords are only appended if the user hasn't already said them,
         to avoid diluting prompt attention with duplicates.
         """
+        sanitized = cls._sanitize_prompt(user_prompt)
+
         check_pairs = [
             ("ambient", "slow ambient pads"),
             ("motif", "minimal motifs"),
             ("percussion", "no percussion, no rhythm, no beat"),
             ("gentle", "gentle"),
-            ("drone", "warm drone"),
+            ("drone", "warm sustained drone"),
             ("calm", "calm"),
             ("spacious", "spacious"),
             ("smooth", "smooth texture"),
+            ("quiet", "very quiet, barely audible"),
+            ("pianissimo", "pianissimo dynamics, pp level"),
         ]
-        user_lower = user_prompt.lower()
+        user_lower = sanitized.lower()
         extras = [desc for key, desc in check_pairs if key not in user_lower]
 
         parts = [
-            "Deep meditation, ambient, minimalist, soft",
-            user_prompt.strip(),
+            "Deep meditation background music, extremely soft, pianissimo, whisper-quiet, subtle ambient texture",
+            sanitized.strip(),
         ] + extras + [
-            "no drums, beatless, slow tempo, warm, smooth, lush reverb, very calm",
+            "no drums, no percussion, beatless, slow tempo, pp dynamics, warm, smooth, lush reverb, very calm, never loud, no sudden volume changes, barely audible background",
         ]
 
         return ", ".join(parts)

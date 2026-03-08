@@ -306,8 +306,8 @@ def mix(
     voice_activity: np.ndarray,
     music_audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
-    duck_amount_db: float = -9.0,
-    music_volume_db: float = -9.0,
+    duck_amount_db: float = -20.0,
+    music_volume_db: float = -12.0,
     music_pre_roll_sec: float = 2.0,
     fade_in_sec: float = 3.0,
     fade_out_sec: float = 5.0,
@@ -317,11 +317,12 @@ def mix(
 
     Args:
         duck_amount_db: Additional dB reduction during speech on top of
-            music_volume_db. -9 dB firmly ducks music during narration.
+            music_volume_db. -20 dB makes music nearly inaudible during
+            narration — the primary meditation requirement.
         music_volume_db: Baseline music level in dB (applied before ducking).
-            Sets the music as a soothing background layer at all times.
-            During pauses music sits at this level; during speech it drops
-            by an additional duck_amount_db.
+            -12 dB keeps the music subtle even during pauses.
+            During speech it drops by an additional duck_amount_db → ~-32 dB total,
+            which is essentially silence behind the voice.
 
     Called after voice FX and music FX have already been applied.
     Returns mixed mono float32 array ready for master chain + export.
@@ -348,7 +349,7 @@ def mix(
             pad_shape = target_len - aligned_music.shape[-1]
         else:
             pad_shape = (aligned_music.shape[0], target_len - aligned_music.shape[-1])
-            
+
         aligned_music = np.concatenate([
             aligned_music,
             np.zeros(pad_shape, dtype=np.float32),
@@ -356,14 +357,18 @@ def mix(
     aligned_music = aligned_music[..., :target_len]
 
     # 4. Apply mask-based ducking (Method A — uses pre-computed voice activity)
+    # attack_ms=200: music begins fading smoothly ~200ms after voice detected
+    # release_ms=5000: music rises very slowly after speech ends (5 seconds to recover)
+    #   — this is the key parameter that gives the "very slowly raises" meditation feel
+    # lookahead_ms=150: music starts fading 150ms before voice onset (pre-duck)
     ducked_music = apply_mask_ducking(
         aligned_activity,
         aligned_music,
         sample_rate=sample_rate,
         duck_amount_db=duck_amount_db,
-        attack_ms=150.0,
-        release_ms=2000.0,
-        lookahead_ms=100.0,
+        attack_ms=200.0,
+        release_ms=5000.0,
+        lookahead_ms=150.0,
     )
 
     # 5. Sum voice + ducked music

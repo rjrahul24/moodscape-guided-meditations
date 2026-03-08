@@ -318,11 +318,11 @@ with gr.Blocks(
                     label="Speaking Speed (0.65-0.75 = meditation ideal)",
                 )
                 duck_slider = gr.Slider(
-                    minimum=-20,
-                    maximum=-2,
-                    value=-9,
+                    minimum=-30,
+                    maximum=-5,
+                    value=-20,
                     step=1,
-                    label="Music Ducking (dB)",
+                    label="Music Ducking During Speech (dB)",
                 )
                 reverb_slider = gr.Slider(
                     minimum=0.0,
