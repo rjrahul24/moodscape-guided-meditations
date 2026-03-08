@@ -34,6 +34,7 @@ _GUIDANCE_SCALE = 3.5
 # inference_steps: More steps = smoother diffusion trajectory. 60 steps
 # gives noticeably cleaner textures vs 32 with only ~85% extra time.
 _INFERENCE_STEPS = 60
+_INFERENCE_STEPS_REPAINT = 60
 
 # lm_temperature: Lower = more conservative LM planning. 0.7 avoids
 # unexpected melodic "ideas" that cause rhythmic intrusions in ambient output.
