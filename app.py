@@ -132,6 +132,8 @@ def generate_meditation(
     upsample_flag,
     stem_separation_flag,
     reference_audio_file,
+    acestep_bpm,
+    acestep_key,
     progress=gr.Progress(),
 ):
     def progress_cb(fraction, message):
@@ -185,6 +187,8 @@ def generate_meditation(
             stem_separation=stem_separation_flag,
             melody_audio=melody_audio,
             melody_sample_rate=melody_sample_rate,
+            bpm=acestep_bpm,
+            keyscale=acestep_key,
         )
         duration = _get_duration(output_path)
         minutes = int(duration // 60)
@@ -248,9 +252,10 @@ with gr.Blocks(
                 visible=False,
             )
             reference_audio = gr.Audio(
-                label="Reference Audio (Melody Conditioning)",
+                label="Reference Audio (Melody / Acoustic Style)",
                 type="filepath",
                 sources=["upload"],
+                info="ACE-Step 1.5: guides timbre & style. MusicGen: guides melody.",
             )
 
         # ── Right column: settings ─────────────────────────────────────
@@ -306,6 +311,23 @@ with gr.Blocks(
                         "slow/fast, low/high pitch, male/female, close-mic/distant, "
                         "reverb/no reverb. Use named speakers (Jon, Lea) for consistency."
                     ),
+                )
+ 
+            # ACE-Step Metadata (Collapsed by default)
+            with gr.Accordion("ACE-Step Metadata (BPM / Key)", open=False, visible=False) as acestep_metadata:
+                acestep_bpm = gr.Slider(
+                    minimum=60,
+                    maximum=100,
+                    value=70,
+                    step=1,
+                    label="BPM (Beats Per Minute)",
+                    info="ACE-Step only. 60-80 is ideal for meditation.",
+                )
+                acestep_key = gr.Dropdown(
+                    choices=["Auto", "C Major", "C Minor", "C# Major", "C# Minor", "D Major", "D Minor", "Eb Major", "Eb Minor", "E Major", "E Minor", "F Major", "F Minor", "F# Major", "F# Minor", "G Major", "G Minor", "Ab Major", "Ab Minor", "A Major", "A Minor", "Bb Major", "Bb Minor", "B Major", "B Minor"],
+                    value="Auto",
+                    label="Musical Key",
+                    info="ACE-Step only. Set to 'Auto' to let the model choose.",
                 )
 
             # Common settings
@@ -397,12 +419,13 @@ with gr.Blocks(
             gr.update(visible=not is_voc),  # duck_slider
             gr.update(visible=not is_inst), # reverb_slider
             gr.update(visible=not is_voc),  # reference_audio
+            gr.update(visible=(music_model_dropdown.value == "ACE-Step 1.5") and not is_voc), # acestep_metadata
         )
 
     generation_mode.change(
         fn=toggle_mode_settings,
         inputs=[generation_mode, engine_radio],
-        outputs=[script_input, music_prompt, music_duration, engine_radio, music_model_dropdown, kokoro_settings, parler_settings, speed_slider, duck_slider, reverb_slider, reference_audio],
+        outputs=[script_input, music_prompt, music_duration, engine_radio, music_model_dropdown, kokoro_settings, parler_settings, speed_slider, duck_slider, reverb_slider, reference_audio, acestep_metadata],
     )
 
     # Toggle visibility of engine-specific settings
@@ -413,6 +436,18 @@ with gr.Blocks(
             gr.update(visible=is_kokoro and not is_inst),       # kokoro_settings
             gr.update(visible=not is_kokoro and not is_inst),    # parler_settings
         )
+
+    # Toggle ACE-Step specific metadata accordion
+    def toggle_acestep_ui(model, mode):
+        is_acestep = model == "ACE-Step 1.5"
+        is_voc = mode == "Vocals Only"
+        return gr.update(visible=is_acestep and not is_voc)
+
+    music_model_dropdown.change(
+        fn=toggle_acestep_ui,
+        inputs=[music_model_dropdown, generation_mode],
+        outputs=[acestep_metadata],
+    )
 
     engine_radio.change(
         fn=toggle_engine_settings,
@@ -460,6 +495,8 @@ with gr.Blocks(
             upsample_checkbox,
             stem_separation_checkbox,
             reference_audio,
+            acestep_bpm,
+            acestep_key,
         ],
         outputs=[audio_output, status_text],
         show_progress="full",

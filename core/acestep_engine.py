@@ -13,6 +13,7 @@ Target hardware: Apple Silicon M1 Max (24-Core GPU, 36 GB Unified RAM)
 import gc
 import logging
 import time
+import os
 
 import numpy as np
 import torch
@@ -177,18 +178,22 @@ class AceStepEngine:
         total_duration_sec: float,
         progress_cb=None,
         prompt_stages: list[tuple[str, float]] | None = None,
+        lyrics: str | None = None,
+        bpm: int | None = 70,
+        keyscale: str | None = "Auto",
+        **kwargs,
     ) -> np.ndarray:
         """Generate instrumental meditation music via ACE-Step 1.5.
 
         Args:
-            prompt: Text description of desired music style (will be
-                    enhanced internally with meditation keywords).
+            prompt: Text description of desired music style.
                     Used when prompt_stages is None.
             total_duration_sec: Target duration in seconds.
-                    Ignored when prompt_stages is provided (duration is
-                    derived from the sum of stage durations).
             progress_cb: Called with (current_step, total_steps).
-            prompt_stages: Optional list of (prompt, duration_sec) tuples
+            prompt_stages: Optional list of (prompt, duration_sec) tuples.
+            lyrics: Optional structural tags or lyrics.
+            bpm: Beats per minute (60-80). None means auto.
+            keyscale: Musical key (e.g. "C Major"). "Auto" for detect.
                 for story mode. Each stage is generated as a separate
                 ACE-Step inference call and adjacent stages are blended
                 with a 6-second equal-power cosine crossfade.
@@ -205,30 +210,66 @@ class AceStepEngine:
         if not self.initialized:
             self.load_model()
 
-        if prompt_stages is not None:
-            return self._generate_story(prompt_stages, progress_cb)
+        # Handle reference audio if provided in kwargs (melody_audio from pipeline)
+        melody_audio = kwargs.get("melody_audio")
+        melody_sr = kwargs.get("melody_sample_rate")
+        ref_path = None
+        if melody_audio is not None and melody_sr is not None:
+            ref_path = self._prepare_reference_audio(melody_audio, melody_sr)
 
-        # ── Single-stage generation ───────────────────────────────────────
-        enhanced_prompt = self._enhance_prompt(prompt)
-        logger.info(
-            "[AceStepEngine] Generating %.0fs of music — prompt: %s",
-            total_duration_sec, enhanced_prompt[:120],
-        )
+        try:
+            if prompt_stages is not None:
+                return self._generate_story(
+                    prompt_stages, progress_cb, bpm=bpm, keyscale=keyscale, 
+                    reference_audio_path=ref_path
+                )
 
-        if progress_cb is not None:
-            progress_cb(0, 1)
+            # ── Infinite Generation ───────────────────────────────────────────
+            # For long tracks (> 90s), use iterative repaint to avoid structural
+            # collapse. 90s is the comfortable single-pass limit for DiT.
+            if total_duration_sec > 90.0:
+                return self._generate_infinite(
+                    prompt, total_duration_sec, progress_cb, lyrics=lyrics,
+                    bpm=bpm, keyscale=keyscale, reference_audio_path=ref_path
+                )
 
-        audio = self._generate_single(enhanced_prompt, total_duration_sec)
+            # ── Single-stage generation ───────────────────────────────────────
+            enhanced_prompt, enhanced_lyrics = self._enhance_prompt(prompt)
+            if lyrics:
+                # If explicit lyrics provided (e.g. from pipeline), append them
+                enhanced_lyrics = f"{enhanced_lyrics}, {lyrics}"
 
-        if progress_cb is not None:
-            progress_cb(1, 1)
+            logger.info(
+                "[AceStepEngine] Generating %.0fs of music — caption: %s | lyrics: %s | bpm: %s | key: %s",
+                total_duration_sec, enhanced_prompt[:60], enhanced_lyrics[:60], bpm, keyscale
+            )
 
-        return audio
+            if progress_cb is not None:
+                progress_cb(0, 1)
+
+            audio = self._generate_single(
+                enhanced_prompt, total_duration_sec, lyrics=enhanced_lyrics,
+                bpm=bpm, keyscale=keyscale, reference_audio_path=ref_path
+            )
+
+            if progress_cb is not None:
+                progress_cb(1, 1)
+
+            return audio
+        finally:
+            if ref_path and os.path.exists(ref_path):
+                try:
+                    os.remove(ref_path)
+                except Exception as e:
+                    logger.warning(f"[AceStepEngine] Failed to remove temp ref audio: {e}")
 
     def _generate_story(
         self,
         prompt_stages: list[tuple[str, float]],
         progress_cb=None,
+        bpm: int | None = 70,
+        keyscale: str | None = "Auto",
+        reference_audio_path: str | None = None,
     ) -> np.ndarray:
         """Generate story mode audio: one ACE-Step call per stage, then crossfade.
 
@@ -256,12 +297,15 @@ class AceStepEngine:
 
         stage_audios: list[np.ndarray] = []
         for i, (stage_prompt, stage_duration) in enumerate(prompt_stages):
-            enhanced = self._enhance_prompt(stage_prompt)
             logger.info(
                 "[AceStepEngine] Story stage %d/%d (%.0fs) — %s",
-                i + 1, n, stage_duration, enhanced[:80],
+                i + 1, n, stage_duration, stage_prompt[:80],
             )
-            audio = self._generate_single(enhanced, stage_duration)
+            enhanced_cap, enhanced_lyr = self._enhance_prompt(stage_prompt)
+            audio = self._generate_single(
+                enhanced_cap, stage_duration, lyrics=enhanced_lyr,
+                bpm=bpm, keyscale=keyscale, reference_audio_path=reference_audio_path
+            )
             stage_audios.append(audio)
 
             if progress_cb is not None:
@@ -269,7 +313,144 @@ class AceStepEngine:
 
         return self._crossfade_stages(stage_audios, _STORY_CROSSFADE_SEC)
 
-    def _generate_single(self, enhanced_prompt: str, duration_sec: float) -> np.ndarray:
+    def _generate_infinite(
+        self, 
+        prompt: str, 
+        total_duration_sec: float, 
+        progress_cb=None,
+        lyrics: str | None = None,
+        bpm: int | None = 70,
+        keyscale: str | None = "Auto",
+        reference_audio_path: str | None = None,
+    ) -> np.ndarray:
+        """Iteratively generate long audio using Repaint mode.
+
+        Algorithm:
+        1. Generate initial 60s (Stage 1).
+        2. Continue in 30s steps:
+           - Use the last 30s of previous audio as context.
+           - Generate next 30s using Repaint mode.
+           - Stitch with a tiny (2s) crossfade for absolute safety.
+
+        Repaint mode preserves the context audio and ensures the new segment
+        starts with matching timbre and harmony.
+        """
+        import tempfile
+        import os
+        import soundfile as sf
+
+        enhanced_prompt = self._enhance_prompt(prompt)
+        
+        # Segment configuration
+        # Segment 1: 60s (provides solid 30s context for Segment 2)
+        # Segments after: 30s extension + 30s context = 60s total Repaint task
+        SEG_LEN = 30.0
+        CONTEXT_LEN = 30.0
+        TOTAL_SEG_LEN = SEG_LEN + CONTEXT_LEN # 60s
+        
+        enhanced_prompt, enhanced_lyrics = self._enhance_prompt(prompt)
+        if lyrics:
+            enhanced_lyrics = f"{enhanced_lyrics}, {lyrics}"
+
+        logger.info(
+            "[AceStepEngine] Infinite Mode: Generating %.0fs in segments...",
+            total_duration_sec
+        )
+
+        # ── Segment 1: The Anchor ───────────────
+        current_len = min(TOTAL_SEG_LEN, total_duration_sec)
+        logger.info("[AceStepEngine] Infinite Seg 1: base generation (%.0fs)", current_len)
+        
+        if progress_cb:
+            progress_cb(0, int(total_duration_sec // SEG_LEN))
+
+        full_audio = self._generate_single(
+            enhanced_prompt, current_len, lyrics=enhanced_lyrics,
+            bpm=bpm, keyscale=keyscale, reference_audio_path=reference_audio_path
+        )
+        
+        # ── Iterative Extension ─────────────────
+        while len(full_audio) / TARGET_SAMPLE_RATE < total_duration_sec - 1.0:
+            remaining = total_duration_sec - (len(full_audio) / TARGET_SAMPLE_RATE)
+            next_step = min(SEG_LEN, remaining)
+            
+            # We use the LAST 30 seconds of full_audio as context for the NEXT 30 seconds.
+            # We create a 60s "skeleton" file: [context | silence]
+            # Then tell ACE-Step to repaint the silence part.
+            context_samples = int(CONTEXT_LEN * TARGET_SAMPLE_RATE)
+            if len(full_audio) < context_samples:
+                # Should not happen given Seg 1 is 60s, but for safety:
+                context_audio = full_audio
+                actual_context_sec = len(context_audio) / TARGET_SAMPLE_RATE
+            else:
+                context_audio = full_audio[-context_samples:]
+                actual_context_sec = CONTEXT_LEN
+
+            # Build the source file for Repaint
+            silence_samples = int(next_step * TARGET_SAMPLE_RATE)
+            src_audio_np = np.concatenate([context_audio, np.zeros(silence_samples, dtype=np.float32)])
+            
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp_wav = os.path.join(tmpdir, "context.wav")
+                # ACE-Step expects 48kHz stereo for src_audio usually, but we are 
+                # passing it back mono 24k. Let's see if its handler handles it.
+                # Actually, handler.process_src_audio does:
+                # audio = self._normalize_audio_to_stereo_48k(audio, sr)
+                # So we can save at TARGET_SAMPLE_RATE mono and it will be upsampled.
+                sf.write(tmp_wav, src_audio_np, TARGET_SAMPLE_RATE)
+                
+                logger.info(
+                    "[AceStepEngine] Infinite Seg Extension: Repaint from %.1fs (adding %.1fs)", 
+                    actual_context_sec, next_step
+                )
+                
+                # We want to repaint starting from actual_context_sec to the end
+                new_chunk = self._generate_single_repaint(
+                    enhanced_prompt, 
+                    src_audio_path=tmp_wav,
+                    repaint_start=actual_context_sec,
+                    repaint_end=actual_context_sec + next_step,
+                    lyrics=enhanced_lyrics,
+                    bpm=bpm,
+                    keyscale=keyscale,
+                    reference_audio_path=reference_audio_path
+                )
+                
+                # new_chunk contains the WHOLE 60s (context + new part)
+                # We only want the new part
+                ext_start_idx = int(actual_context_sec * TARGET_SAMPLE_RATE)
+                ext_audio = new_chunk[ext_start_idx:]
+                
+                # Stitch with a tiny crossfade (0.1s) to avoid any mathematical rounding clicks
+                # even though Repaint is meant to be seamless.
+                FADE_SEC = 0.1
+                fade_samples = int(FADE_SEC * TARGET_SAMPLE_RATE)
+                if len(ext_audio) > fade_samples:
+                    # Apply crossfade at the seam
+                    t = np.linspace(0.0, np.pi/2, fade_samples)
+                    cos_fade = np.cos(t)**2
+                    sin_fade = np.sin(t)**2
+                    
+                    overlap_area = full_audio[-fade_samples:] * cos_fade + ext_audio[:fade_samples] * sin_fade
+                    full_audio = np.concatenate([full_audio[:-fade_samples], overlap_area, ext_audio[fade_samples:]])
+                else:
+                    full_audio = np.concatenate([full_audio, ext_audio])
+
+            if progress_cb:
+                completed = len(full_audio) / TARGET_SAMPLE_RATE
+                progress_cb(int(completed // SEG_LEN), int(total_duration_sec // SEG_LEN))
+
+        return full_audio
+
+    def _generate_single(
+        self, 
+        enhanced_prompt: str, 
+        duration_sec: float, 
+        lyrics: str | None = None,
+        bpm: int | None = 70,
+        keyscale: str | None = "Auto",
+        reference_audio_path: str | None = None
+    ) -> np.ndarray:
         """One ACE-Step inference call → 24 kHz mono float32 numpy array.
 
         Builds GenerationParams with the tuned quality knobs, calls
@@ -295,6 +476,9 @@ class AceStepEngine:
             lyrics="[Instrumental]",
             instrumental=True,
             duration=duration_sec,
+            reference_audio=reference_audio_path,
+            bpm=bpm if bpm and bpm > 0 else None,
+            keyscale=keyscale if keyscale and keyscale != "Auto" else "",
             inference_steps=_INFERENCE_STEPS,
             guidance_scale=_GUIDANCE_SCALE,
             use_adg=_USE_ADG,
@@ -302,7 +486,6 @@ class AceStepEngine:
             lm_temperature=_LM_TEMPERATURE,
             use_cot_metas=True,
             use_cot_caption=True,
-            bpm=50,
             # Disable ACE-Step's own peak normalization. The pipeline performs
             # loudness normalization via pyloudnorm at a later, controlled stage.
             enable_normalization=False,
@@ -337,6 +520,69 @@ class AceStepEngine:
         logger.info("[AceStepEngine] Generation done in %.1fs", time.time() - t0)
 
         # ── Post-processing: denoise → stereo→mono → resample ────────────
+        return self._postprocess(tensor, sample_rate)
+
+    def _generate_single_repaint(
+        self, 
+        enhanced_prompt: str, 
+        src_audio_path: str,
+        repaint_start: float,
+        repaint_end: float,
+        lyrics: str | None = None,
+        bpm: int | None = 70,
+        keyscale: str | None = "Auto",
+        reference_audio_path: str | None = None
+    ) -> np.ndarray:
+        """One ACE-Step Repaint inference call."""
+        from acestep.inference import GenerationConfig, GenerationParams, generate_music
+
+        t0 = time.time()
+        
+        # In Repaint mode, 'duration' is derived from src_audio if not provided,
+        # but we specify it to be sure.
+        params = GenerationParams(
+            task_type="repaint",
+            caption=enhanced_prompt,
+            lyrics=lyrics or "[Instrumental]",
+            instrumental=True,
+            src_audio=src_audio_path,
+            reference_audio=reference_audio_path,
+            bpm=bpm if bpm and bpm > 0 else None,
+            keyscale=keyscale if keyscale and keyscale != "Auto" else "",
+            repainting_start=repaint_start,
+            repainting_end=repaint_end,
+            duration=repaint_end, # Total duration of the resulting file
+            inference_steps=_INFERENCE_STEPS_REPAINT,
+            guidance_scale=_GUIDANCE_SCALE,
+            use_adg=False, # ADG not supported for repaint
+            thinking=False, # Skip LM for Repaint tasks
+            lm_temperature=_LM_TEMPERATURE,
+            # Disable ACE-Step's own peak normalization. The pipeline performs
+            # loudness normalization via pyloudnorm at a later, controlled stage.
+            enable_normalization=False,
+        )
+        config = GenerationConfig(
+            batch_size=1,
+            audio_format="wav",
+        )
+
+        result = generate_music(
+            dit_handler=self._dit,
+            llm_handler=self._llm,
+            params=params,
+            config=config,
+            save_dir=None,
+        )
+
+        if not result.success:
+            raise RuntimeError(f"[AceStepEngine] Repaint failed: {result.error}")
+
+        audio_dict = result.audios[0]
+        tensor = audio_dict["tensor"]
+        sample_rate = audio_dict.get("sample_rate", NATIVE_SAMPLE_RATE)
+
+        logger.info("[AceStepEngine] Repaint done in %.1fs", time.time() - t0)
+
         return self._postprocess(tensor, sample_rate)
 
     # ------------------------------------------------------------------
@@ -417,25 +663,69 @@ class AceStepEngine:
         return result
 
     @classmethod
-    def _enhance_prompt(cls, user_prompt: str) -> str:
-        """Augment the user's prompt with meditation-oriented keywords.
+    def _prepare_reference_audio(cls, audio_data: np.ndarray, sr: int) -> str:
+        """Save a memory-hosted audio array to a temp file for ACE-Step.
+        
+        ACE-Step inference requires a file path for reference audio.
+        """
+        import tempfile
+        import soundfile as sf
+        fd, path = tempfile.mkstemp(suffix=".wav")
+        try:
+            # ACE-Step expects float32 mono or stereo
+            sf.write(path, audio_data, sr)
+        finally:
+            os.close(fd)
+        logger.info("[AceStepEngine] Prepared temp reference audio: %s", path)
+        return path
 
-        Prompt strategy for ACE-Step:
-        - Sanitize loud/energetic words before enhancement so even if the
-          user enters aggressive prompts they are redirected toward softness.
-        - Open with strong ambient anchors so the LM planner doesn't
-          interpret the user's theme as energetic/rhythmic.
-        - Use explicit dynamic level markers ('pianissimo', 'pp', 'whisper-quiet')
-          — ACE-Step's LM planner responds well to classical dynamic notation.
-        - Use 'no percussion, no rhythm, no beat' explicitly — the LM
-          planner responds to direct negation better than MusicGen.
-        - Avoid 'high fidelity' which primes for crisp, present overtones;
-          use 'warm, smooth, soft' instead for a calmer timbre.
+    @classmethod
+    def _extract_lyrics_tags(cls, prompt: str) -> str:
+        """Scan prompt for keywords and wrap them in structural [tags].
+        
+        Returns a comma-separated string of tags starting with [Instrumental].
+        """
+        tags = ["[Instrumental]"]
+        
+        # Keywords that map well to structural tags in ACE-Step
+        structural_keywords = [
+            "dreamy", "ethereal", "low energy", "high energy", "fade out",
+            "ambient", "cinematic", "serene", "soft", "warm", "evolving"
+        ]
+        
+        prompt_lower = prompt.lower()
+        for kw in structural_keywords:
+            if kw in prompt_lower:
+                tags.append(f"[{kw}]")
+                
+        return ", ".join(tags)
 
-        Keywords are only appended if the user hasn't already said them,
-        to avoid diluting prompt attention with duplicates.
+    @classmethod
+    def _sanitize_prompt(cls, prompt: str) -> str:
+        """Strip metadata commands and harsh sound references from user prompt."""
+        import re
+        s = prompt.lower()
+        
+        # Strip explicit BPM/Key commands that should be in metadata fields
+        s = re.sub(r'\d+\s*(?:bpm|beats per minute)', '', s)
+        s = re.sub(r'[a-g][#b♭♯]?\s*(?:major|minor|maj|min)', '', s)
+        
+        # Strip harsh sound requests
+        harsh = ["sawtooth", "square wave", "distorted", "aggressive", "sharp", "bright synth"]
+        for h in harsh:
+            s = s.replace(h, "")
+            
+        return s.strip()
+
+    @classmethod
+    def _enhance_prompt(cls, user_prompt: str) -> tuple[str, str]:
+        """Augment prompt into separate (caption, lyrics) fields.
+
+        Caption: High-level descriptive atmosphere.
+        Lyrics: Structural tags like [Instrumental], [dreamy].
         """
         sanitized = cls._sanitize_prompt(user_prompt)
+        lyrics = cls._extract_lyrics_tags(user_prompt)
 
         check_pairs = [
             ("ambient", "slow ambient pads"),
@@ -456,10 +746,12 @@ class AceStepEngine:
             "Deep meditation background music, extremely soft, pianissimo, whisper-quiet, subtle ambient texture",
             sanitized.strip(),
         ] + extras + [
+            "evolving modulation, rounded harmonic profile, phase-coherent low end, controlled high end, no harsh oscillators, smooth analog textures",
             "no drums, no percussion, beatless, slow tempo, pp dynamics, warm, smooth, lush reverb, very calm, never loud, no sudden volume changes, barely audible background",
         ]
 
-        return ", ".join(parts)
+        caption = ", ".join(parts)
+        return caption, lyrics
 
     @staticmethod
     def _postprocess(tensor: torch.Tensor, source_rate: int = NATIVE_SAMPLE_RATE) -> np.ndarray:

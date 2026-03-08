@@ -53,12 +53,12 @@ def _enhance_music_prompt(user_prompt: str) -> str:
     return enhanced
 
 
-def _enhance_acestep_prompt(user_prompt: str) -> str:
+def _enhance_acestep_prompt(user_prompt: str) -> tuple[str, str]:
     """Build an ACE-Step-optimized prompt from the user's description.
 
     ACE-Step benefits from explicit guidance away from transients and
     towards ambient textures.  This delegates to AceStepEngine's own
-    prompt enhancer which appends meditation-specific keywords.
+    prompt enhancer which returns (caption, lyrics) tuple.
     """
     from core.acestep_engine import AceStepEngine
     return AceStepEngine._enhance_prompt(user_prompt)
@@ -96,7 +96,9 @@ class MeditationPipeline:
         stem_separation: bool = True,
         melody_audio: np.ndarray | None = None,
         melody_sample_rate: int | None = None,
-    ) -> tuple[str, str]:
+        bpm: int = 70,
+        keyscale: str = "Auto",
+    ) -> tuple[str, str | None]:
         """Run the full pipeline and return the path to the output audio file.
 
         Args:
@@ -323,37 +325,40 @@ class MeditationPipeline:
                         # AceStepEngine enhances prompts internally per stage;
                         # pass raw stage prompts so they are not double-enhanced.
                         engine_stages = music_prompt_stages
+                        enhanced_prompt, enhanced_lyrics = _enhance_acestep_prompt(music_prompt)
                     else:
                         # MusicEngine expects pre-enhanced prompts (pipeline enhances).
                         engine_stages = [
                             (_enhance_music_prompt(p), d)
                             for p, d in music_prompt_stages
                         ]
-                    # The single enhanced_prompt is still needed as a fallback
-                    # for MusicEngine's `prompt` arg (unused when stages provided).
-                    enhanced_prompt = (
-                        _enhance_acestep_prompt(music_prompt)
-                        if use_acestep
-                        else _enhance_music_prompt(music_prompt)
-                    )
+                        enhanced_prompt = _enhance_music_prompt(music_prompt)
+                        enhanced_lyrics = None
+
                     music_audio = music_engine.generate(
                         enhanced_prompt,
                         music_duration,
                         progress_cb=music_progress,
                         prompt_stages=engine_stages,
+                        lyrics=enhanced_lyrics,
+                        bpm=bpm,
+                        keyscale=keyscale,
                         **melody_kwargs,
                     )
                 else:
                     # Single-prompt generation (existing behaviour)
                     if use_acestep:
-                        enhanced_prompt = _enhance_acestep_prompt(music_prompt)
+                        enhanced_prompt, lyrics = _enhance_acestep_prompt(music_prompt)
+                        music_audio = music_engine.generate(
+                            enhanced_prompt, music_duration, progress_cb=music_progress,
+                            lyrics=lyrics, bpm=bpm, keyscale=keyscale, **melody_kwargs,
+                        )
                     else:
                         enhanced_prompt = _enhance_music_prompt(music_prompt)
-
-                    music_audio = music_engine.generate(
-                        enhanced_prompt, music_duration, progress_cb=music_progress,
-                        **melody_kwargs,
-                    )
+                        music_audio = music_engine.generate(
+                            enhanced_prompt, music_duration, progress_cb=music_progress,
+                            **melody_kwargs,
+                        )
 
                 # ── Step 5b: Unload music model ─────────────────────────────────
                 music_engine.unload_model()

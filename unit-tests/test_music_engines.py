@@ -1,10 +1,17 @@
 import unittest
+from unittest.mock import MagicMock, patch
 import numpy as np
 
 from core.music_engine import MusicEngine
 from core.acestep_engine import AceStepEngine
 
 class TestMusicEngines(unittest.TestCase):
+    def setUp(self):
+        self.engine = AceStepEngine()
+        self.engine.initialized = True
+        self.engine._dit = MagicMock()
+        self.engine._llm = MagicMock()
+
     # --- MusicGen Tests ---
     def test_musicgen_stage_prompt(self):
         stages = [
@@ -28,20 +35,65 @@ class TestMusicEngines(unittest.TestCase):
         self.assertEqual(engine._num_segments(60.0), 3)
 
     # --- ACE-Step Tests ---
+    @patch("soundfile.write")
+    @patch("tempfile.mkstemp")
+    @patch("os.remove")
+    @patch("os.path.exists")
+    @patch("os.close")
+    def test_acestep_reference_audio_handling(self, mock_close, mock_exists, mock_remove, mock_mkstemp, mock_sf_write):
+        mock_mkstemp.return_value = (999, "/tmp/fake_ref.wav")
+        mock_exists.return_value = True
+        
+        dummy_audio = np.zeros(100)
+        self.engine._generate_single = MagicMock(return_value=np.zeros(200))
+        
+        self.engine.generate("Calm", 10.0, melody_audio=dummy_audio, melody_sample_rate=24000)
+        
+        # Verify temp file was "created"
+        mock_sf_write.assert_called_once()
+        self.assertEqual(mock_sf_write.call_args[0][0], "/tmp/fake_ref.wav")
+        
+        # Verify path was passed to _generate_single
+        self.engine._generate_single.assert_called_once()
+        kwargs = self.engine._generate_single.call_args[1]
+        self.assertEqual(kwargs["reference_audio_path"], "/tmp/fake_ref.wav")
+        
+        # Verify cleanup
+        mock_remove.assert_called_once_with("/tmp/fake_ref.wav")
+
     def test_acestep_enhance_prompt(self):
         base_prompt = "Warm sleep music"
-        enhanced = AceStepEngine._enhance_prompt(base_prompt)
-        # Must contain anti-percussion and ambient guides
-        self.assertIn("Deep meditation", enhanced)
-        self.assertIn(base_prompt, enhanced)
-        self.assertIn("no percussion", enhanced.lower())
-        self.assertIn("no drums", enhanced.lower())
+        caption, lyrics = AceStepEngine._enhance_prompt(base_prompt)
         
-        # Assert not duplicated if user includes it
-        duplicate_prompt = "calm gentle ambient no drums"
-        enhanced_dup = AceStepEngine._enhance_prompt(duplicate_prompt)
-        self.assertEqual(enhanced_dup.count("calm"), 2) # It appears once in extra and once in prompt list, actually wait: 'calm' is excluded if in user prompt! So it should appear ONCE.
-        # Let's just check length is less than completely concatenated
+        # Caption checks
+        self.assertIn("Deep meditation", caption)
+        self.assertIn(base_prompt.lower(), caption)
+        self.assertIn("no percussion", caption.lower())
+        # Anti-sawtooth check
+        self.assertIn("rounded harmonic profile", caption)
+        
+        # Lyrics checks
+        self.assertIn("[Instrumental]", lyrics)
+        self.assertIn("[warm]", lyrics)
+
+    def test_acestep_sanitize_prompt(self):
+        dirty = "60 bpm sawtooth synth in C Major"
+        sanitized = AceStepEngine._sanitize_prompt(dirty)
+        self.assertNotIn("60 bpm", sanitized)
+        self.assertNotIn("sawtooth", sanitized)
+        self.assertNotIn("c major", sanitized)
+        self.assertEqual(sanitized, "synth in") # "synth in" remains
+
+    def test_acestep_extract_lyrics_tags(self):
+        prompt = "dreamy ethereal music for sleep"
+        tags = AceStepEngine._extract_lyrics_tags(prompt)
+        self.assertIn("[Instrumental]", tags)
+        self.assertIn("[dreamy]", tags)
+        self.assertIn("[ethereal]", tags)
+        
+        prompt_simple = "pure silence"
+        tags_simple = AceStepEngine._extract_lyrics_tags(prompt_simple)
+        self.assertEqual(tags_simple, "[Instrumental]")
 
     def test_acestep_crossfade_stages(self):
         sr = 24000
