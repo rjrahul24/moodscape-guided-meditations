@@ -39,19 +39,16 @@ def make_voice_chain(reverb_amount: float = 0.08) -> Pedalboard:
         NoiseGate(threshold_db=-42, ratio=20.0, attack_ms=2.0, release_ms=80),
         # Remove sub-bass rumble and plosives from TTS output (80-100Hz range)
         HighpassFilter(cutoff_frequency_hz=90.0),
-        # Gentle compression to "glue" the track together and catch abrupt loudness spikes.
-        # Threshold: -18dB to catch most audio, Ratio: 3:1 for natural smoothing,
-        # Attack: 2.0ms to catch spikes immediately, Release: 80.0ms to prevent pumping.
-        Compressor(threshold_db=-18.0, ratio=3.0, attack_ms=2.0, release_ms=80.0),
-        # High-shelf de-harshener at 7.5 kHz, -3.5 dB (pre-reverb).
-        # Kokoro's ISTFTNet vocoder concentrates "radio static / broken speaker"
-        # artifacts in the 7–9 kHz band.  Applying the shelf HERE (before reverb)
-        # treats the artifact at its source — if done post-reverb, the harshness
-        # is already smeared through the full spatial image and EQ cannot undo it.
-        # -3.5 dB is enough to take the edge off without dulling consonants;
-        # the Phase-B mastering chain (post_processor.py) adds a complementary
-        # 10.5 kHz lowpass that handles the remaining Nyquist brick-wall artifact.
-        HighShelfFilter(cutoff_frequency_hz=7500, gain_db=-3.5),
+        # Soft compression to gently glue dynamics without pumping or lifting the noise floor.
+        # Threshold: -20dB, Ratio: 2:1 — lighter than before to avoid pulling up inter-word
+        # static. Attack: 5ms lets transients breathe; Release: 100ms prevents pumping.
+        Compressor(threshold_db=-20.0, ratio=2.0, attack_ms=5.0, release_ms=100.0),
+        # High-shelf de-harshener at 5 kHz, -4.5 dB (pre-reverb).
+        # Targeting the broader "presence/sizzle" band (5–9 kHz) where Kokoro's ISTFTNet
+        # vocoder concentrates harshness. Applying HERE (before reverb) treats the artifact
+        # at its source. The existing 9 kHz LowpassFilter above handles the Nyquist
+        # brick-wall artifact; this shelf covers the lower harshness range.
+        HighShelfFilter(cutoff_frequency_hz=5000, gain_db=-4.5),
         # Low-pass filter (de-essing) above 9 kHz to tame metallic TTS hallucinations
         LowpassFilter(cutoff_frequency_hz=9000.0),
         # Subtle chamber/studio reverb so the voice sounds like it is perfectly recorded in a physical room
@@ -98,7 +95,7 @@ def make_music_chain() -> Pedalboard:
     """
     return Pedalboard([
         PeakFilter(cutoff_frequency_hz=300, gain_db=2.0, q=0.7),      # Low-end warmth
-        PeakFilter(cutoff_frequency_hz=1800, gain_db=-3.0, q=0.6),    # Vocal pocket notch
+        PeakFilter(cutoff_frequency_hz=1500, gain_db=-5.0, q=0.3),    # Vocal pocket notch (wider, deeper carve)
         PeakFilter(cutoff_frequency_hz=5500, gain_db=0.8, q=0.6),     # Clarity/air presence
         HighShelfFilter(cutoff_frequency_hz=8000.0, gain_db=-3.0),    # HF artefact suppression
         Limiter(threshold_db=-1.0),

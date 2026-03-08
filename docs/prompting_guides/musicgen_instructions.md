@@ -253,6 +253,19 @@ These inputs consistently produce music that does not suit meditation or breaks 
 | Specific tuning references (`432Hz`, `528Hz`) | MusicGen does not actually tune to specific Hz values; wastes words |
 | `binaural beats` | MusicGen does not generate binaural beats; just wastes words |
 | `nature sounds`, `rain`, `ocean waves` | MusicGen occasionally produces these but very unreliably from text |
+| `piano`, `harp`, `plucked strings`, `pizzicato`, `marimba` | Attack-heavy transients punch through the mix and draw attention away from the voice |
+
+### Preferred Textures for Meditation
+
+Use these descriptors to produce the most subliminal, non-distracting backgrounds:
+
+| Preferred Term | Result |
+|---|---|
+| `sine wave`, `pure tone` | Smooth, harmonic-free drone |
+| `sub-bass hum` | Deep, felt-not-heard foundation |
+| `bowed cello`, `bowed strings` | Warm sustained texture without attack transients |
+| `warm hum`, `vocal pad` | Rounded mid-range fill with no rhythmic pulse |
+| `soft pad`, `analog pad` | Smooth synthesizer texture without modulation artefacts |
 
 ---
 

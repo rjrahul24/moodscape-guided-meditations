@@ -30,7 +30,7 @@ def _enhance_music_prompt(user_prompt: str) -> str:
     descriptors only if the user hasn't already mentioned them to avoid
     diluting the attention budget with duplicates.
     """
-    constraints = "no drums, no percussion, no vocals, beatless"
+    constraints = "subliminal background, barely audible drone, single sustained note, pure ambient texture, no melody, no chord changes, no drums, no percussion, no vocals, beatless"
 
     # Add ambient descriptors only if the user hasn't already included them
     optional = [
@@ -96,7 +96,7 @@ class MeditationPipeline:
         stem_separation: bool = True,
         melody_audio: np.ndarray | None = None,
         melody_sample_rate: int | None = None,
-        bpm: int = 70,
+        bpm: int = 50,
         keyscale: str = "Auto",
         acestep_model_type: str = "sft",
         lyria_bpm: int = 70,
@@ -251,15 +251,19 @@ class MeditationPipeline:
                 if not vocal_ok:
                     print(f"[Pipeline] {status_message}")
 
-                # ── Phase A: Neural Denoising (Native SR) ───────────────────────
-                _progress(progress_cb, 0.38, "Applying AI vocal restoration...")
+                # ── Phase A: Mastering Engine Init (Neural Denoising bypassed) ───
+                # resemble-enhance is designed for degraded recordings; Kokoro output is
+                # already noise-free, so restore_vocals() introduces phasey metallic
+                # artifacts on a clean signal. Bypassed here; mastering_engine is still
+                # needed for Phase B (master_vocals).
+                _progress(progress_cb, 0.38, "Preparing vocal mastering chain...")
                 if tts_engine == "kokoro":
                     from core.kokoro_tts.postprocessor import KokoroMasteringEngine
                     mastering_engine = KokoroMasteringEngine(sample_rate=SAMPLE_RATE)
                 else:
                     from core.parler_tts.postprocessor import MasteringEngine
                     mastering_engine = MasteringEngine(sample_rate=SAMPLE_RATE)
-                voice_audio = mastering_engine.restore_vocals(voice_audio, sr=SAMPLE_RATE)
+                # voice_audio = mastering_engine.restore_vocals(voice_audio, sr=SAMPLE_RATE)  # bypassed: Kokoro is pre-clean
 
                 logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
 

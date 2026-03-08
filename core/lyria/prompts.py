@@ -19,8 +19,10 @@ from __future__ import annotations
 MEDITATION_BASE_TAGS: list[str] = [
     "Ambient",
     "Ethereal Ambience",
-    "Subdued Melody",
-    "Sustained Chords",
+    "Minimalist Drone",
+    "Deep Soundscape",
+    "Static Texture",
+    "Low-Frequency Wash",
 ]
 
 

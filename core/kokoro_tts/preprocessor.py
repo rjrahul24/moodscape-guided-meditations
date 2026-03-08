@@ -45,6 +45,12 @@ MIN_SENTENCE_WORDS = 4
 # Minimum speed floor — Kokoro becomes distorted below 0.65
 MIN_SPEED = 0.65
 
+# Maximum consecutive words without a comma or period before a forced break
+_BREATH_GROUP_MAX = 12
+
+# Conjunctions used as insertion points for breath-group comma breaks
+_BREAK_CONJUNCTIONS = frozenset({'and', 'or', 'but', 'as', 'while'})
+
 
 # ── Script parsing ───────────────────────────────────────────────────────
 
@@ -102,37 +108,118 @@ def parse_script(script: str) -> list[dict]:
 # ── Text expansion ───────────────────────────────────────────────────────
 
 def _int_to_words(n: int) -> str:
-    """Convert an integer 0–999 to English words."""
+    """Convert a non-negative integer to English words (supports up to 999,999)."""
+    if n == 0:
+        return 'zero'
     if n < 20:
         return _ONES[n]
     if n < 100:
         tens, ones = divmod(n, 10)
         return _TENS[tens] + (('-' + _ONES[ones]) if ones else '')
-    hundreds, remainder = divmod(n, 100)
-    rest = (' and ' + _int_to_words(remainder)) if remainder else ''
-    return _ONES[hundreds] + ' hundred' + rest
+    if n < 1000:
+        hundreds, remainder = divmod(n, 100)
+        rest = (' and ' + _int_to_words(remainder)) if remainder else ''
+        return _ONES[hundreds] + ' hundred' + rest
+    if n < 1_000_000:
+        thousands, remainder = divmod(n, 1000)
+        rest = (' ' + _int_to_words(remainder)) if remainder else ''
+        return _int_to_words(thousands) + ' thousand' + rest
+    return str(n)  # fallback for very large numbers — leave as-is
 
 
 def _replace_number(match: re.Match) -> str:
     """Replace a matched digit sequence with English words."""
     try:
-        n = int(match.group(0))
-        if 0 <= n <= 999:
-            return _int_to_words(n) if n != 0 else 'zero'
+        return _int_to_words(int(match.group(0)))
     except ValueError:
-        pass
-    return match.group(0)
+        return match.group(0)
+
+
+def _replace_hyphenated_numbers(match: re.Match) -> str:
+    """Convert hyphenated digit sequences to comma-separated words.
+
+    Handles breathing ratios and similar patterns:
+      '4-7-8'  → 'four, seven, eight'
+      '10-20'  → 'ten, twenty'
+    """
+    parts = match.group(0).split('-')
+    words = []
+    for p in parts:
+        try:
+            words.append(_int_to_words(int(p)))
+        except ValueError:
+            return match.group(0)  # not all parts are digits — leave unchanged
+    return ', '.join(words)
 
 
 def expand_for_tts(text: str) -> str:
     """Expand digits and abbreviations to their spoken equivalents.
 
-    Prevents Kokoro's G2P engine from mispronouncing or rushing through
-    numeric and abbreviated tokens.
+    Processing order:
+    1. Abbreviation substitution.
+    2. Hyphenated number patterns (e.g. '4-7-8') → comma-separated words.
+    3. Standalone integers up to 999,999 → words.
     """
     for pattern, replacement in _ABBREV_MAP.items():
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
-    text = re.sub(r'\b\d{1,3}\b', _replace_number, text)
+    # Step 2: hyphenated patterns first — consumed before standalone digit pass
+    text = re.sub(r'\b\d+(?:-\d+)+\b', _replace_hyphenated_numbers, text)
+    # Step 3: standalone integers up to 999,999
+    text = re.sub(r'\b\d{1,6}\b', _replace_number, text)
+    return text
+
+
+# ── Phoneme injection for Sanskrit/yoga terms ────────────────────────────
+# Maps regex patterns to misaki IPA injection syntax [display](/IPA/).
+# Kokoro's G2P engine mispronounces these loanwords without explicit guidance.
+_PHONEME_MAP: list[tuple[str, str]] = [
+    # ── existing entries ─────────────────────────────────────────────────
+    (r'\bchakra\b',      '[chakra](/tʃɑːkɹə/)'),
+    (r'\bchakras\b',     '[chakras](/tʃɑːkɹəz/)'),
+    (r'\bpranayama\b',   '[pranayama](/pɹɑːnəˈjɑːmə/)'),
+    (r'\bsavasana\b',    '[savasana](/ʃɑːˈvɑːsənə/)'),
+    (r'\bujjayi\b',      '[ujjayi](/uːˈdʒɑːjiː/)'),
+    (r'\bmantra\b',      '[mantra](/ˈmɑːntɹə/)'),
+    (r'\bmantras\b',     '[mantras](/ˈmɑːntɹəz/)'),
+    (r'\bnamaste\b',     '[namaste](/nɑːməˈsteɪ/)'),
+    (r'\bsankalpa\b',    '[sankalpa](/sɑːŋˈkɑːlpə/)'),
+    (r'\bnidra\b',       '[nidra](/ˈniːdɹə/)'),
+    # ── yoga styles & postures ───────────────────────────────────────────
+    (r'\bvipassana\b',   '[vipassana](/vɪˈpɑːsənə/)'),
+    (r'\bashtanga\b',    '[ashtanga](/ɑːʃˈtɑːŋɡə/)'),
+    (r'\bvinyasa\b',     '[vinyasa](/vɪnˈjɑːsə/)'),
+    (r'\bshavasana\b',   '[shavasana](/ʃɑːˈvɑːsənə/)'),
+    (r'\basana\b',       '[asana](/ˈɑːsənə/)'),
+    (r'\basanas\b',      '[asanas](/ˈɑːsənəz/)'),
+    # ── breath & energy ──────────────────────────────────────────────────
+    (r'\bprana\b',       '[prana](/ˈpɹɑːnə/)'),
+    (r'\bmudra\b',       '[mudra](/ˈmuːdɹə/)'),
+    (r'\bmudras\b',      '[mudras](/ˈmuːdɹəz/)'),
+    (r'\bbandha\b',      '[bandha](/ˈbɑːndə/)'),
+    (r'\bkundalini\b',   '[kundalini](/ˌkʊndəˈliːni/)'),
+    # ── philosophy & states ──────────────────────────────────────────────
+    (r'\bsamsara\b',     '[samsara](/sɑːmˈsɑːɹə/)'),
+    (r'\bnirvana\b',     '[nirvana](/nɪɹˈvɑːnə/)'),
+    (r'\bdharma\b',      '[dharma](/ˈdɑːɹmə/)'),
+    (r'\bahimsa\b',      '[ahimsa](/ɑːˈhɪmsə/)'),
+    (r'\bsatya\b',       '[satya](/ˈsɑːtjə/)'),
+    (r'\bsutra\b',       '[sutra](/ˈsuːtɹə/)'),
+    (r'\bsutras\b',      '[sutras](/ˈsuːtɹəz/)'),
+    (r'\bsamadhi\b',     '[samadhi](/səˈmɑːdi/)'),
+    (r'\bprajna\b',      '[prajna](/ˈpɹɑːdʒnə/)'),
+    (r'\btapas\b',       '[tapas](/ˈtɑːpəs/)'),
+    (r'\bishvara\b',     '[ishvara](/ˈɪʃvəɹə/)'),
+    # ── sacred sounds & greetings ────────────────────────────────────────
+    (r'\bom\b',          '[om](/oʊm/)'),
+    (r'\baum\b',         '[aum](/ɑːuːm/)'),
+    (r'\bnamaskara\b',   '[namaskara](/nɑːməˈskɑːɹə/)'),
+]
+
+
+def inject_phonemes(text: str) -> str:
+    """Replace known mispronounced Sanskrit/yoga words with misaki IPA injection."""
+    for pattern, replacement in _PHONEME_MAP:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
     return text
 
 
@@ -153,6 +240,44 @@ _BREATH_NOUNS = r'breath|exhale|inhale|heartbeat|moment|step|wave|rise|fall'
 _SENT_START = r'(?:(?:^)|(?<=\. )|(?<=\! )|(?<=\? ))'
 
 
+def _break_long_breath_groups(text: str) -> str:
+    """Insert commas to prevent runs of > _BREATH_GROUP_MAX consecutive words
+    without a comma or period.
+
+    Tokenises on whitespace. Each token is classified as:
+      - punctuation-bearing (contains , . ! ? \\n) → resets word count
+      - plain English word (matches \\w[\\w'-]*) → increments count; if count
+        has already reached _BREATH_GROUP_MAX and this word is a conjunction,
+        a comma is inserted before it and the count resets
+      - other (spaces, IPA markers like [word](/IPA/)) → appended unchanged,
+        not counted
+
+    The comma insertion happens on the first eligible conjunction *after* the
+    12-word limit is crossed. If no conjunction appears, the run is left as-is.
+    """
+    tokens = re.split(r'(\s+)', text)
+    word_count = 0
+    result = []
+
+    for token in tokens:
+        if re.search(r'[,\.!?\n]', token):
+            # Punctuation resets the breath-group counter
+            word_count = 0
+            result.append(token)
+        elif re.fullmatch(r"\w[\w'-]*", token):
+            # Plain English word — insert comma before conjunction if over limit
+            if word_count >= _BREATH_GROUP_MAX and token.lower() in _BREAK_CONJUNCTIONS:
+                result.append(', ')
+                word_count = 0
+            word_count += 1
+            result.append(token)
+        else:
+            # Whitespace, IPA markers, or other non-word tokens — pass through
+            result.append(token)
+
+    return ''.join(result)
+
+
 def enhance_prosody_punctuation(text: str) -> str:
     """Insert punctuation at natural phrasing boundaries to guide Kokoro's prosody.
 
@@ -169,7 +294,8 @@ def enhance_prosody_punctuation(text: str) -> str:
     5. Mid-clause gerund phrase (letting/allowing/releasing…) → ``, letting …``.
     6. Mid-clause ``with each [breath noun]`` → ``, with each [noun]``.
     7. Long clause (≥ 8 words) before ``and``/``but`` → ``, and``/``, but``.
-    8. Clean up any double-comma or comma-before-period artifacts.
+    8. Breath-group limit: > 12 consecutive words → comma before next conjunction.
+    9. Clean up any double-comma or comma-before-period artifacts.
     """
     # 1. Ensure terminal punctuation — Kokoro reads unpunctuated endings flat
     text = re.sub(r'([A-Za-z])\s*$', r'\1.', text)
@@ -236,12 +362,16 @@ def enhance_prosody_punctuation(text: str) -> str:
         return m.group(0)
 
     text = re.sub(
-        r'([A-Za-z][^,\.\n]+?) (and|but) ([a-z])',
+        r'([A-Za-z][^,\.\n]+?) (and|but|while) ([a-z])',
         _comma_before_conj,
         text,
     )
 
-    # 8. Cleanup artifacts
+    # 8. Breath-group limit — force a comma before the next conjunction once
+    #    a run of _BREATH_GROUP_MAX consecutive words without punctuation is hit.
+    text = _break_long_breath_groups(text)
+
+    # 9. Cleanup artifacts
     text = re.sub(r',\s*,', ',', text)
     text = re.sub(r',(\s*[\.!\?])', r'\1', text)
     text = re.sub(r'  +', ' ', text)
@@ -254,11 +384,13 @@ def preprocess_for_meditation(text: str) -> str:
 
     Pipeline:
     1. Expand digits/abbreviations to spoken forms.
-    2. Insert commas at natural phrasing boundaries (enhance_prosody_punctuation).
-    3. Add ellipsis transition before any inline [pause:] markers.
-    4. Normalise ellipsis to exactly three dots.
+    2. Inject IPA phonemes for Sanskrit/yoga terms.
+    3. Insert commas at natural phrasing boundaries (enhance_prosody_punctuation).
+    4. Add ellipsis transition before any inline [pause:] markers.
+    5. Normalise ellipsis to exactly three dots.
     """
     text = expand_for_tts(text)
+    text = inject_phonemes(text)
     text = enhance_prosody_punctuation(text)
     # Soft ellipsis transition into an explicit pause marker (graceful handoff)
     text = re.sub(r'(\w)\s*(\[pause:)', r'\1... \2', text)

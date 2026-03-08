@@ -306,8 +306,8 @@ def mix(
     voice_activity: np.ndarray,
     music_audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
-    duck_amount_db: float = -20.0,
-    music_volume_db: float = -11.7,
+    duck_amount_db: float = -3.0,
+    music_volume_db: float = -20.0,
     music_pre_roll_sec: float = 2.0,
     fade_in_sec: float = 3.0,
     fade_out_sec: float = 5.0,
@@ -368,7 +368,7 @@ def mix(
         sample_rate=sample_rate,
         duck_amount_db=duck_amount_db,
         attack_ms=500.0,
-        release_ms=5000.0,
+        release_ms=1200.0,
         lookahead_ms=350.0,
     )
 

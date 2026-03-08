@@ -351,9 +351,9 @@ with gr.Blocks(
             # ACE-Step Metadata (Collapsed by default)
             with gr.Accordion("ACE-Step Metadata (BPM / Key)", open=False, visible=False) as acestep_metadata:
                 acestep_bpm = gr.Slider(
-                    minimum=60,
+                    minimum=40,
                     maximum=100,
-                    value=70,
+                    value=50,
                     step=1,
                     label="BPM (Beats Per Minute)",
                     info="ACE-Step only. 60-80 is ideal for meditation.",
@@ -378,7 +378,7 @@ with gr.Blocks(
                 lyria_density = gr.Slider(
                     minimum=0.0,
                     maximum=1.0,
-                    value=0.2,
+                    value=0.1,
                     step=0.05,
                     label="Density",
                     info="Musical density (0.0 = sparse and minimal, 1.0 = rich and layered). Low values suit meditation.",
@@ -386,7 +386,7 @@ with gr.Blocks(
                 lyria_brightness = gr.Slider(
                     minimum=0.0,
                     maximum=1.0,
-                    value=0.3,
+                    value=0.15,
                     step=0.05,
                     label="Brightness",
                     info="Spectral brightness (0.0 = warm/dark, 1.0 = bright/airy). Keep low for a calming, warm feel.",
@@ -395,9 +395,9 @@ with gr.Blocks(
             # Common settings
             with gr.Accordion("Audio Settings", open=False):
                 speed_slider = gr.Slider(
-                    minimum=0.50,
+                    minimum=0.65,
                     maximum=1.0,
-                    value=0.68,
+                    value=0.70,
                     step=0.01,
                     label="Speaking Speed (0.65-0.75 = meditation ideal)",
                 )

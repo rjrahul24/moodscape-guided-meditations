@@ -19,7 +19,7 @@ from core.kokoro_tts.postprocessor import (
     crossfade_chunks,
     apply_segment_fades,
 )
-from core.kokoro_tts.preprocessor import clamp_speed
+from core.kokoro_tts.preprocessor import clamp_speed, split_into_sentences
 
 logger = logging.getLogger(__name__)
 
@@ -128,9 +128,12 @@ class KokoroEngine(SpeechEngine):
     ) -> tuple[np.ndarray, np.ndarray]:
         """Synthesize all script segments into a single audio track.
 
-        Each speech segment is passed to KPipeline with split_pattern=None
-        so en_tokenize handles phoneme-accurate chunking. Each yielded audio
-        slice is artifact-trimmed, RMS-normalized, then crossfaded together.
+        Each speech segment is split into individual sentences via
+        split_into_sentences(), then each sentence is passed to KPipeline
+        with split_pattern='' to prevent any further internal splitting.
+        Each yielded audio slice is artifact-trimmed, RMS-normalized, then
+        crossfaded together. An inter-sentence pause is appended after each
+        sentence for natural meditation pacing.
 
         Args:
             segments: Parsed script segments (from preprocessor.prepare_segments
@@ -173,41 +176,46 @@ class KokoroEngine(SpeechEngine):
                 pipe = self._get_pipeline(
                     voice if isinstance(voice, str) else "af_heart"
                 )
-                gen = pipe(
-                    segment["text"],
-                    voice=resolved_voice,
-                    speed=speed,
-                    split_pattern=None,
-                )
+                sentences = split_into_sentences(segment["text"])
+                if not sentences:
+                    sentences = [segment["text"]]
 
-                # Collect and clean each audio slice
-                speech_parts: list[np.ndarray] = []
-                for _gs, _ps, audio in gen:
-                    if audio is not None:
-                        arr = audio if isinstance(audio, np.ndarray) else audio.numpy()
-                        cleaned = process_chunk(arr.astype(np.float32))
-                        speech_parts.append(cleaned)
-
-                if speech_parts:
-                    speech_audio = crossfade_chunks(speech_parts)
-                    speech_audio = apply_segment_fades(speech_audio)
-                else:
-                    speech_audio = np.zeros(int(0.1 * SAMPLE_RATE), dtype=np.float32)
-
-                audio_chunks.append(speech_audio)
-                activity_chunks.append(np.ones(len(speech_audio), dtype=bool))
-
-                # Inter-sentence trailing pause
-                if idx < total - 1:
-                    text_end = segment["text"].rstrip()
-                    pause_sec = (
-                        ELLIPSIS_PAUSE_SEC
-                        if text_end.endswith(("...", "\u2026"))
-                        else INTER_SENTENCE_PAUSE_SEC
+                for s_idx, sentence in enumerate(sentences):
+                    gen = pipe(
+                        sentence,
+                        voice=resolved_voice,
+                        speed=speed,
+                        split_pattern='',
                     )
-                    pause_samples = int(pause_sec * SAMPLE_RATE)
-                    audio_chunks.append(np.zeros(pause_samples, dtype=np.float32))
-                    activity_chunks.append(np.zeros(pause_samples, dtype=bool))
+
+                    # Collect and clean each audio slice
+                    speech_parts: list[np.ndarray] = []
+                    for _gs, _ps, audio in gen:
+                        if audio is not None:
+                            arr = audio if isinstance(audio, np.ndarray) else audio.numpy()
+                            cleaned = process_chunk(arr.astype(np.float32))
+                            speech_parts.append(cleaned)
+
+                    if speech_parts:
+                        speech_audio = crossfade_chunks(speech_parts)
+                        speech_audio = apply_segment_fades(speech_audio)
+                    else:
+                        speech_audio = np.zeros(int(0.1 * SAMPLE_RATE), dtype=np.float32)
+
+                    audio_chunks.append(speech_audio)
+                    activity_chunks.append(np.ones(len(speech_audio), dtype=bool))
+
+                    # Pause after every sentence except the final sentence of the final segment
+                    is_last_sentence = s_idx == len(sentences) - 1
+                    if not is_last_sentence or idx < total - 1:
+                        pause_sec = (
+                            ELLIPSIS_PAUSE_SEC
+                            if sentence.rstrip().endswith(("...", "\u2026"))
+                            else INTER_SENTENCE_PAUSE_SEC
+                        )
+                        pause_samples = int(pause_sec * SAMPLE_RATE)
+                        audio_chunks.append(np.zeros(pause_samples, dtype=np.float32))
+                        activity_chunks.append(np.zeros(pause_samples, dtype=bool))
 
             elif segment["type"] == "pause":
                 num_samples = int(segment["duration_sec"] * SAMPLE_RATE)

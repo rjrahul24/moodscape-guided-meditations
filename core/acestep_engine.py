@@ -192,7 +192,7 @@ class AceStepEngine:
         progress_cb=None,
         prompt_stages: list[tuple[str, float]] | None = None,
         lyrics: str | None = None,
-        bpm: int | None = 70,
+        bpm: int | None = 50,
         keyscale: str | None = "Auto",
         **kwargs,
     ) -> np.ndarray:
@@ -284,7 +284,7 @@ class AceStepEngine:
         self,
         prompt_stages: list[tuple[str, float]],
         progress_cb=None,
-        bpm: int | None = 70,
+        bpm: int | None = 50,
         keyscale: str | None = "Auto",
         reference_audio_path: str | None = None,
     ) -> np.ndarray:
@@ -336,7 +336,7 @@ class AceStepEngine:
         total_duration_sec: float, 
         progress_cb=None,
         lyrics: str | None = None,
-        bpm: int | None = 70,
+        bpm: int | None = 50,
         keyscale: str | None = "Auto",
         reference_audio_path: str | None = None,
     ) -> np.ndarray:
@@ -470,7 +470,7 @@ class AceStepEngine:
         enhanced_prompt: str, 
         duration_sec: float, 
         lyrics: str | None = None,
-        bpm: int | None = 70,
+        bpm: int | None = 50,
         keyscale: str | None = "Auto",
         reference_audio_path: str | None = None
     ) -> np.ndarray:
@@ -552,7 +552,7 @@ class AceStepEngine:
         repaint_start: float,
         repaint_end: float,
         lyrics: str | None = None,
-        bpm: int | None = 70,
+        bpm: int | None = 50,
         keyscale: str | None = "Auto",
         reference_audio_path: str | None = None
     ) -> np.ndarray:
@@ -708,7 +708,7 @@ class AceStepEngine:
         
         Returns a comma-separated string of tags starting with [Instrumental].
         """
-        tags = ["[Instrumental]"]
+        tags = ["[Instrumental]", "[Drone]", "[Static Pad]", "[No Transients]", "[Beatless]"]
         
         # Keywords that map well to structural tags in ACE-Step
         structural_keywords = [
@@ -744,36 +744,17 @@ class AceStepEngine:
     def _enhance_prompt(cls, user_prompt: str) -> tuple[str, str]:
         """Augment prompt into separate (caption, lyrics) fields.
 
-        Caption: High-level descriptive atmosphere.
-        Lyrics: Structural tags like [Instrumental], [dreamy].
+        Caption: Strict minimalist wrapper forcing static-drone generation.
+        Lyrics: Structural tags like [Instrumental].
         """
         sanitized = cls._sanitize_prompt(user_prompt)
         lyrics = cls._extract_lyrics_tags(user_prompt)
 
-        check_pairs = [
-            ("ambient", "slow ambient pads"),
-            ("motif", "minimal motifs"),
-            ("percussion", "no percussion, no rhythm, no beat"),
-            ("gentle", "gentle"),
-            ("drone", "warm sustained drone"),
-            ("calm", "calm"),
-            ("spacious", "spacious"),
-            ("smooth", "smooth texture"),
-            ("quiet", "very quiet, barely audible"),
-            ("pianissimo", "pianissimo dynamics, pp level"),
-        ]
-        user_lower = sanitized.lower()
-        extras = [desc for key, desc in check_pairs if key not in user_lower]
-
-        parts = [
-            "Deep meditation background music, extremely soft, pianissimo, whisper-quiet, subtle ambient texture",
-            sanitized.strip(),
-        ] + extras + [
-            "evolving modulation, rounded harmonic profile, phase-coherent low end, controlled high end, no harsh oscillators, smooth analog textures",
-            "no drums, no percussion, beatless, slow tempo, pp dynamics, warm, smooth, lush reverb, very calm, never loud, no sudden volume changes, barely audible background",
-        ]
-
-        caption = ", ".join(parts)
+        caption = (
+            f"Pure ambient drone. Single continuous texture, static harmony, "
+            f"no chord changes, no melody, no percussion. "
+            f"Extremely soft pianissimo background. {sanitized.strip()}"
+        )
         return caption, lyrics
 
     @staticmethod
