@@ -252,10 +252,9 @@ with gr.Blocks(
                 visible=False,
             )
             reference_audio = gr.Audio(
-                label="Reference Audio (Melody / Acoustic Style)",
+                label="Reference Audio (Melody / Acoustic Style — ACE-Step: timbre, MusicGen: melody)",
                 type="filepath",
                 sources=["upload"],
-                info="ACE-Step 1.5: guides timbre & style. MusicGen: guides melody.",
             )
 
         # ── Right column: settings ─────────────────────────────────────
