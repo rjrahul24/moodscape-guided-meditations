@@ -131,7 +131,7 @@ def make_acestep_music_chain() -> Pedalboard:
         HighpassFilter(cutoff_frequency_hz=60.0),                        # Remove diffusion sub-bass
         PeakFilter(cutoff_frequency_hz=200, gain_db=-2.0, q=1.0),        # Mud notch
         PeakFilter(cutoff_frequency_hz=4000, gain_db=-1.5, q=0.8),       # Upper-mid edge softening
-        HighShelfFilter(cutoff_frequency_hz=8000.0, gain_db=-3.0),       # Gentle HF smoothing
+        HighShelfFilter(cutoff_frequency_hz=8000.0, gain_db=-2.0),       # Gentle HF smoothing
         Compressor(
             threshold_db=-18.0,
             ratio=2.0,

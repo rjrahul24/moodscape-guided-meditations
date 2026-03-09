@@ -80,7 +80,7 @@ class MeditationPipeline:
         tts_engine: str = "kokoro",
         parler_voice_preset: str = "Serene Female — warm, calm, breathy",
         parler_custom_description: str = "",
-        duck_amount_db: float = -20.0,
+        duck_amount_db: float = -21.0,
         reverb_amount: float = 0.15,
         fade_in_sec: float = 3.0,
         fade_out_sec: float = 5.0,
@@ -115,6 +115,7 @@ class MeditationPipeline:
             parler_voice_preset: Parler voice preset label.
             parler_custom_description: Custom Parler voice description.
             duck_amount_db: How much to reduce music during speech (negative dB).
+                Combined with music_volume_db=-17 → total -38 dB during speech.
             reverb_amount: Voice reverb wet level (0.0–0.5).
             fade_in_sec: Fade-in duration for the final mix.
             fade_out_sec: Fade-out duration for the final mix.
@@ -482,7 +483,7 @@ class MeditationPipeline:
                 if use_lyria:
                     premix_lufs = -22.0
                 elif use_acestep:
-                    premix_lufs = -22.0
+                    premix_lufs = -19.0
                 else:
                     premix_lufs = -20.0
                 music_audio = normalize_loudness(music_audio, mix_sr, target_lufs=premix_lufs)
