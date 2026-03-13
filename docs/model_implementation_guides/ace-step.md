@@ -24,7 +24,7 @@ ACE-Step 1.5 is an open-source **text-to-music foundation model** with a two-bra
 
 | Stage | Component | Role |
 |-------|-----------|------|
-| **Planning** | Language Model (LM) — 1.7B Qwen-family | Reads the text prompt and uses Chain-of-Thought reasoning to plan musical structure — tempo, key, section layout, dynamics, and 5Hz semantic audio codes |
+| **Planning** | Language Model (LM) — 4B Qwen3 (primary) / 1.7B fallback | Reads the text prompt and uses Chain-of-Thought reasoning to plan musical structure — tempo, key, section layout, dynamics, and 5Hz semantic audio codes |
 | **Synthesis** | Diffusion Transformer (DiT) — ~2B params | Takes the LM plan and renders 48 kHz stereo audio through iterative denoising using a 1D VAE with 1920x compression |
 
 **Key insight:** The LM planner's output quality is the single biggest determinant of final audio quality. A bad plan produces bad audio regardless of DiT settings.
@@ -86,7 +86,7 @@ python -c "from acestep.llm_inference import LLMHandler; print('LLM Handler OK')
 | Artifact | Path | Description |
 |----------|------|-------------|
 | **DiT config** | `./ACE-Step-1.5/` | Diffusion Transformer with `acestep-v15-sft` config |
-| **LLM checkpoint** | `./ACE-Step-1.5/checkpoints/` | Language Model `acestep-5Hz-lm-1.7B` |
+| **LLM checkpoint** | `./ACE-Step-1.5/checkpoints/` | Language Model `acestep-5Hz-lm-4B` (preferred) or `acestep-5Hz-lm-1.7B` (fallback) |
 
 ---
 
@@ -330,7 +330,7 @@ pip install git+https://github.com/ace-step/ACE-Step-1.5.git
 ```python
 # Model configuration
 DIT_CONFIG = "acestep-v15-sft"
-LLM_MODEL = "acestep-5Hz-lm-1.7B"
+LLM_MODEL = "acestep-5Hz-lm-4B" # Falls back to acestep-5Hz-lm-1.7B if 4B checkpoint is absent
 BACKEND = "mlx"
 COMPILE_MODEL = True
 

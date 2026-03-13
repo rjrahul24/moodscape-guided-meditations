@@ -18,4 +18,5 @@ google-genai>=1.16.0
 mlx
 mlx-lm
 accelerate>=0.26.0
+f5-tts>=1.0.0
 git+https://github.com/ace-step/ACE-Step-1.5.git

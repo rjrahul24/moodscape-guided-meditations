@@ -139,19 +139,31 @@ class AceStepEngine:
 
         # ── LLM handler ──────────────────────────────────────────────────
         self._llm = LLMHandler()
-        # backend="mlx" uses native Apple MLX for the language model.
-        # device="auto" resolves to "mps" — MLX loads weights separately.
-        llm_status, llm_success = self._llm.initialize(
-            checkpoint_dir="./ACE-Step-1.5/checkpoints",
-            lm_model_path="acestep-5Hz-lm-1.7B",
-            backend="mlx",
-            device="auto",
-        )
-        if not llm_success:
-            logger.warning("[AceStepEngine] LLM initialization issue: %s", llm_status[:200])
-            # LLM failure is non-fatal — generation can proceed without CoT
+        # Try the 4B model first (Qwen3-4B, 12 GB); fall back to 1.7B (8 GB).
+        # backend="mlx" uses native Apple MLX; device="auto" resolves to MPS.
+        for lm_path in ("acestep-5Hz-lm-4B", "acestep-5Hz-lm-1.7B"):
+            try:
+                llm_status, llm_success = self._llm.initialize(
+                    checkpoint_dir="./ACE-Step-1.5/checkpoints",
+                    lm_model_path=lm_path,
+                    backend="mlx",
+                    device="auto",
+                )
+                if llm_success:
+                    logger.info("[AceStepEngine] LLM initialized (%s): %s", lm_path, llm_status[:200])
+                    break
+                logger.warning(
+                    "[AceStepEngine] LLM init failed for %s: %s — trying fallback",
+                    lm_path, llm_status[:200],
+                )
+            except Exception as exc:  # OOM, missing checkpoint, etc.
+                logger.warning(
+                    "[AceStepEngine] LLM load error for %s: %s — trying fallback",
+                    lm_path, exc,
+                )
         else:
-            logger.info("[AceStepEngine] LLM initialized: %s", llm_status[:200])
+            logger.error("[AceStepEngine] All LLM variants failed; generation proceeds without CoT")
+            llm_success = False
 
         self.initialized = True
         self.model_type = model_type

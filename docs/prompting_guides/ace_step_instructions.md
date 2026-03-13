@@ -47,10 +47,10 @@ ACE-Step 1.5 uses a **two-component architecture** on Apple Silicon (MLX):
 
 | Component | Role |
 |-----------|------|
-| **LLM** — `acestep-5Hz-lm-1.7B` (Qwen-family, 1.7B) | Chain-of-Thought planning: reads your caption, plans tempo, key, section structure, and 5Hz semantic audio codes |
+| **LLM** — `acestep-5Hz-lm-4B` (4B variant) | **Primary Planner:** 4B Qwen3 model (falls back to 1.7B if 4B is missing). Chain-of-Thought planning: reads your caption, plans tempo, key, section structure, and 5Hz semantic audio codes |
 | **DiT** — `acestep-v15-sft` (~2B params) | Renders 48 kHz stereo audio from the LM plan via iterative diffusion (50 steps, SFT config) |
 
-**Key insight:** The LM planner's interpretation of your caption determines the final output quality. The LM reads the **full caption** (base tags + your prompt + instrumental constraint) and generates a plan. A clear, coherent caption produces a coherent plan. Contradictory or instrument-dense captions confuse the planner.
+**Key insight:** The LM planner's interpretation of your caption determines the final output quality. The move to the **4B model** significantly improves long-form motif retention (remembers themes across 10+ min) and comprehension of complex, layered prompts. A clear, coherent caption produces a coherent plan.
 
 ### Fixed generation parameters (not user-adjustable)
 
@@ -396,9 +396,9 @@ warm analog synth pads, gentle singing bowls, soft piano chords, slow and evolvi
 
 | Factor | Guidance |
 |--------|----------|
-| **Prompt length** | 10–25 words. No hard cutoff (unlike MusicGen), but over 35 words dilutes the LM planner's attention on key descriptors |
-| **Structure** | `[Primary source] + [Texture] + [Atmosphere]` — 2–4 comma-separated clauses |
-| **Do include** | Instrument names, texture adjectives, slow/evolving/spacious/sustained, atmosphere anchors |
+| **Prompt length** | 10–30 words. The 4B model handles longer, more complex prompts better than previous versions, but keep it focused on a single tonal world. |
+| **Structure** | `[Primary source] + [Texture] + [Atmosphere]` — 2–5 comma-separated clauses |
+| **Do include** | Instrument names, texture adjectives, slow/evolving/spacious/sustained, atmosphere anchors, complex harmonic descriptors |
 | **Do not include** | BPM numbers, key names, genre labels, contradictory directives (no melody), binaural/Hz specifics, vocal-adjacent terms |
 | **Do not repeat** | calm, peaceful, ambient, gentle, warm — already in base tags (filtered only if exact word match) |
 | **BPM** | Set via slider, not prompt. Default 50. Keep ≤ 65 for deep meditation |

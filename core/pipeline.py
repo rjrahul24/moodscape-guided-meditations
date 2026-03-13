@@ -9,7 +9,7 @@ from core.audio_processor import make_master_chain, make_music_chain
 from core.mixer import export_audio, export_stems, mix, normalize_loudness
 from core.music_engine import MusicEngine
 from core.qa_monitor import run_qa_checks
-from core.kokoro_tts.engine import KokoroEngine as TTSEngine
+from core.kokoro_tts.engine import KokoroEngine
 
 logger = logging.getLogger("moodscape")
 
@@ -67,7 +67,7 @@ class MeditationPipeline:
     """End-to-end meditation audio generator."""
 
     def __init__(self):
-        self.tts = TTSEngine()
+        self.tts = KokoroEngine()
         self.music = MusicEngine()
 
     def generate(
@@ -98,6 +98,8 @@ class MeditationPipeline:
         lyria_bpm: int = 70,
         lyria_density: float = 0.2,
         lyria_brightness: float = 0.3,
+        tts_engine: str = "kokoro",
+        f5_voice_slug: str | None = None,
     ) -> tuple[str, str | None]:
         """Run the full pipeline and return the path to the output audio file.
 
@@ -164,8 +166,11 @@ class MeditationPipeline:
                 # ── Step 1: Parse script ────────────────────────────────────────
                 _progress(progress_cb, 0.0, "Parsing meditation script...")
 
-                from core.kokoro_tts.preprocessor import prepare_segments
-                segments = prepare_segments(script)
+                if tts_engine == "f5":
+                    from core.f5_tts.preprocessor import prepare_segments as _prepare
+                else:
+                    from core.kokoro_tts.preprocessor import prepare_segments as _prepare
+                segments = _prepare(script)
 
                 if not segments:
                     raise ValueError("Script is empty or contains no content.")
@@ -177,8 +182,13 @@ class MeditationPipeline:
                 )
 
                 # ── Step 2: Load TTS ────────────────────────────────────────────
-                _progress(progress_cb, 0.05, "Loading Kokoro voice model...")
-                tts = self.tts
+                if tts_engine == "f5":
+                    from core.f5_tts.engine import F5Engine
+                    tts = F5Engine(voice_slug=f5_voice_slug)
+                    _progress(progress_cb, 0.05, "Loading F5-TTS voice model...")
+                else:
+                    tts = self.tts
+                    _progress(progress_cb, 0.05, "Loading Kokoro voice model...")
                 tts.load_model()
 
                 # ── Step 3: Synthesize narration ────────────────────────────────
@@ -188,10 +198,15 @@ class MeditationPipeline:
                     frac = 0.10 + 0.30 * (current / max(total, 1))
                     _progress(progress_cb, frac, f"Synthesizing segment {current}/{total}...")
 
-                voice_audio, voice_activity = tts.synthesize(
-                    segments, voice=voice, speed=speed,
-                    progress_cb=tts_progress, seed=seed,
-                )
+                if tts_engine == "f5":
+                    voice_audio, voice_activity = tts.synthesize(
+                        segments, speed=speed, progress_cb=tts_progress,
+                    )
+                else:
+                    voice_audio, voice_activity = tts.synthesize(
+                        segments, voice=voice, speed=speed,
+                        progress_cb=tts_progress, seed=seed,
+                    )
 
                 logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
 
@@ -223,15 +238,17 @@ class MeditationPipeline:
                 if not vocal_ok:
                     print(f"[Pipeline] {status_message}")
 
-                # ── Phase A: Mastering Engine Init (Neural Denoising bypassed) ───
-                # resemble-enhance is designed for degraded recordings; Kokoro output is
-                # already noise-free, so restore_vocals() introduces phasey metallic
-                # artifacts on a clean signal. Bypassed here; mastering_engine is still
-                # needed for Phase B (master_vocals).
+                # ── Phase A: Mastering Engine Init ──────────────────────────────
+                # Both engines' restore_vocals() stubs are bypassed — output from
+                # Kokoro (ISTFTNet) and F5-TTS (Vocos) is pre-clean.
+                # mastering_engine is still needed for Phase B (master_vocals).
                 _progress(progress_cb, 0.38, "Preparing vocal mastering chain...")
-                from core.kokoro_tts.postprocessor import KokoroMasteringEngine
-                mastering_engine = KokoroMasteringEngine(sample_rate=SAMPLE_RATE)
-                # voice_audio = mastering_engine.restore_vocals(voice_audio, sr=SAMPLE_RATE)  # bypassed: Kokoro is pre-clean
+                if tts_engine == "f5":
+                    from core.f5_tts.postprocessor import F5MasteringEngine
+                    mastering_engine = F5MasteringEngine(sample_rate=SAMPLE_RATE)
+                else:
+                    from core.kokoro_tts.postprocessor import KokoroMasteringEngine
+                    mastering_engine = KokoroMasteringEngine(sample_rate=SAMPLE_RATE)
 
                 logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
 
@@ -266,6 +283,8 @@ class MeditationPipeline:
                 # ── Step 4: Unload TTS, load music model ────────────────────────
                 if not is_instrumental:
                     tts.unload_model()
+                    if tts_engine == "f5":
+                        del tts
 
                 music_model_label = "Lyria RealTime" if use_lyria else ("ACE-Step 1.5" if use_acestep else "MusicGen")
                 _progress(progress_cb, 0.40, f"Switching to {music_model_label}...")

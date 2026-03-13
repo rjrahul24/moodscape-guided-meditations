@@ -38,9 +38,17 @@ from dotenv import load_dotenv
 
 from core.kokoro_tts.engine import KokoroEngine
 from core.pipeline import MeditationPipeline
+from core.f5_tts import voice_registry as _f5_registry
 
 # Load environment variables (like HF_TOKEN) from .env file
 load_dotenv()
+
+# ── F5-TTS voice registry (scanned at startup) ───────────────────────────────
+
+_F5_VOICE_REGISTRY = _f5_registry.scan()
+# Slug list for the dropdown; sorted alphabetically for consistent ordering.
+F5_VOICE_SLUGS = sorted(_F5_VOICE_REGISTRY.keys())
+F5_VOICE_DEFAULT = F5_VOICE_SLUGS[0] if F5_VOICE_SLUGS else None
 
 # ── Voice choices for Kokoro engine ──────────────────────────────────────────
 
@@ -119,6 +127,8 @@ def generate_meditation(
     lyria_bpm,
     lyria_density,
     lyria_brightness,
+    tts_engine_choice,
+    f5_voice_slug,
     progress=gr.Progress(),
 ):
     def progress_cb(fraction, message):
@@ -162,6 +172,9 @@ def generate_meditation(
     # "Studio (SFT / 60-step)" -> "sft"
     acestep_model_type = "turbo" if "Turbo" in acestep_quality else "sft"
 
+    # Map TTS engine label to key
+    tts_engine = "f5" if tts_engine_choice == "F5-TTS" else "kokoro"
+
     try:
         output_path, status_msg = pipeline.generate(
             generation_mode=generation_mode,
@@ -189,6 +202,8 @@ def generate_meditation(
             lyria_bpm=int(lyria_bpm),
             lyria_density=float(lyria_density),
             lyria_brightness=float(lyria_brightness),
+            tts_engine=tts_engine,
+            f5_voice_slug=f5_voice_slug if tts_engine == "f5" else None,
         )
         duration = _get_duration(output_path)
         minutes = int(duration // 60)
@@ -199,7 +214,8 @@ def generate_meditation(
         else:
             music_label = music_model_choice
             lyria_suffix = f" (BPM {lyria_bpm}, density {lyria_density:.2f})" if music_model == "lyria" else ""
-            status = f"Generated with Kokoro + {music_label}{lyria_suffix}. {base_status}"
+            tts_label = "F5-TTS" if tts_engine == "f5" else "Kokoro"
+            status = f"Generated with {tts_label} + {music_label}{lyria_suffix}. {base_status}"
         return output_path, status
     except Exception as e:
         return None, f"Error: {e}"
@@ -280,12 +296,37 @@ with gr.Blocks(
                 visible=False,
             )
 
-            # Kokoro settings (visible by default)
+            # TTS Engine selector
+            tts_engine_radio = gr.Radio(
+                choices=["Kokoro", "F5-TTS"],
+                value="Kokoro",
+                label="TTS Voice Engine",
+                info=(
+                    "Kokoro: 10 curated voices with meditation presets. "
+                    "F5-TTS: zero-shot voice cloning — upload a 10–12s reference clip to use any voice."
+                ),
+            )
+
+            # Kokoro settings (visible by default, hidden when F5-TTS is selected)
             with gr.Accordion("Kokoro Voice Settings", open=False, visible=True) as kokoro_settings:
                 kokoro_voice_dropdown = gr.Dropdown(
                     choices=KOKORO_VOICE_CHOICES,
                     value="balanced_calm",
                     label="Voice",
+                )
+
+            # F5-TTS settings (hidden by default, shown when F5-TTS engine is selected)
+            with gr.Accordion("F5-TTS Voice Settings", open=True, visible=False) as f5_settings:
+                f5_voice_dropdown = gr.Dropdown(
+                    choices=F5_VOICE_SLUGS if F5_VOICE_SLUGS else ["(no voices registered)"],
+                    value=F5_VOICE_DEFAULT,
+                    label="Voice Personality",
+                    interactive=bool(F5_VOICE_SLUGS),
+                    info=(
+                        "Select a registered voice personality. "
+                        "To add voices, place matching .wav and .txt pairs in "
+                        "core/f5_tts/assets/reference_audio/ and reference_transcript/."
+                    ),
                 )
 
             # ACE-Step Metadata (Collapsed by default)
@@ -402,32 +443,35 @@ with gr.Blocks(
             )
 
     # Toggle visibility of generation mode specific settings
-    def toggle_mode_settings(mode, current_music_model):
+    def toggle_mode_settings(mode, current_music_model, current_tts_engine):
         is_inst = mode == "Instrumental Only"
         is_voc = mode == "Vocals Only"
 
         show_acestep = (current_music_model == "ACE-Step 1.5") and not is_voc
         show_lyria = (current_music_model == "Lyria RealTime") and not is_voc
+        show_kokoro = (current_tts_engine == "Kokoro") and not is_inst
+        show_f5 = (current_tts_engine == "F5-TTS") and not is_inst
 
         return (
-            gr.update(visible=not is_inst), # script_input
-            gr.update(visible=not is_voc),  # music_prompt
-            gr.update(visible=is_inst),     # music_duration
-            gr.update(visible=not is_voc),  # music_model_dropdown
-            gr.update(visible=not is_inst), # kokoro_settings
-            gr.update(visible=not is_inst), # speed_slider
-            gr.update(visible=not is_voc),  # duck_slider
-            gr.update(visible=not is_inst), # reverb_slider
-            gr.update(visible=not is_voc),  # reference_audio
-            gr.update(visible=show_acestep), # acestep_quality
-            gr.update(visible=show_acestep), # acestep_metadata
-            gr.update(visible=show_lyria),   # lyria_settings
+            gr.update(visible=not is_inst),   # script_input
+            gr.update(visible=not is_voc),    # music_prompt
+            gr.update(visible=is_inst),       # music_duration
+            gr.update(visible=not is_voc),    # music_model_dropdown
+            gr.update(visible=show_kokoro),   # kokoro_settings
+            gr.update(visible=not is_inst),   # speed_slider
+            gr.update(visible=not is_voc),    # duck_slider
+            gr.update(visible=not is_inst),   # reverb_slider
+            gr.update(visible=not is_voc),    # reference_audio
+            gr.update(visible=show_acestep),  # acestep_quality
+            gr.update(visible=show_acestep),  # acestep_metadata
+            gr.update(visible=show_lyria),    # lyria_settings
+            gr.update(visible=show_f5),       # f5_settings
         )
 
     generation_mode.change(
         fn=toggle_mode_settings,
-        inputs=[generation_mode, music_model_dropdown],
-        outputs=[script_input, music_prompt, music_duration, music_model_dropdown, kokoro_settings, speed_slider, duck_slider, reverb_slider, reference_audio, acestep_quality, acestep_metadata, lyria_settings],
+        inputs=[generation_mode, music_model_dropdown, tts_engine_radio],
+        outputs=[script_input, music_prompt, music_duration, music_model_dropdown, kokoro_settings, speed_slider, duck_slider, reverb_slider, reference_audio, acestep_quality, acestep_metadata, lyria_settings, f5_settings],
     )
 
     # Toggle engine-specific settings accordions for ACE-Step and Lyria
@@ -445,6 +489,19 @@ with gr.Blocks(
         fn=toggle_music_engine_ui,
         inputs=[music_model_dropdown, generation_mode],
         outputs=[acestep_quality, acestep_metadata, lyria_settings],
+    )
+
+    # Toggle kokoro/f5 settings accordions when TTS engine radio changes
+    def toggle_tts_engine_ui(tts_engine, mode):
+        is_inst = mode == "Instrumental Only"
+        show_kokoro = (tts_engine == "Kokoro") and not is_inst
+        show_f5 = (tts_engine == "F5-TTS") and not is_inst
+        return gr.update(visible=show_kokoro), gr.update(visible=show_f5)
+
+    tts_engine_radio.change(
+        fn=toggle_tts_engine_ui,
+        inputs=[tts_engine_radio, generation_mode],
+        outputs=[kokoro_settings, f5_settings],
     )
 
     generate_btn = gr.Button("Generate Meditation", variant="primary", size="lg")
@@ -480,6 +537,8 @@ with gr.Blocks(
             lyria_bpm,
             lyria_density,
             lyria_brightness,
+            tts_engine_radio,
+            f5_voice_dropdown,
         ],
         outputs=[audio_output, status_text],
         show_progress="full",
