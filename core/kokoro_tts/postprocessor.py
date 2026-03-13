@@ -23,6 +23,7 @@ Three processing stages tailored to Kokoro-82M's specific output characteristics
 import logging
 
 import numpy as np
+import noisereduce as nr
 from pedalboard import (
     Compressor,
     HighpassFilter,
@@ -225,6 +226,52 @@ def apply_segment_fades(speech_audio: np.ndarray) -> np.ndarray:
         speech_audio[-fade_out_samples:] *= f_out
 
     return speech_audio
+
+
+# =====================================================================
+# Stage 2b: Spectral gating noise reduction
+# =====================================================================
+
+def reduce_synthesis_noise(
+    audio: np.ndarray,
+    sr: int = SAMPLE_RATE,
+    prop_decrease: float = 0.6,
+    n_std_thresh: float = 1.5,
+) -> np.ndarray:
+    """Remove low-level synthesis hiss via stationary spectral gating.
+
+    Lightweight alternative to the neural denoiser (resemble-enhance), which
+    is disabled on Apple Silicon due to instability. Uses noisereduce's
+    stationary mode — assumes a consistent noise profile across the signal,
+    which matches Kokoro's ISTFTNet vocoder hiss characteristics.
+
+    Conservative defaults (prop_decrease=0.6, n_std_thresh=1.5) preserve
+    soft consonants (/h/, /f/, breathy phonemes) while still reducing the
+    noise floor by ~6 dB.
+
+    Args:
+        audio:         1-D float32 audio at sr.
+        sr:            Sample rate (default 24 kHz).
+        prop_decrease: How much to reduce detected noise (0.0–1.0).
+                       Lower = more conservative. 0.6 is safe for speech.
+        n_std_thresh:  Number of standard deviations above noise mean to
+                       consider as "signal". Higher = more conservative.
+    """
+    if len(audio) < sr * 0.1:  # skip very short clips (<100ms)
+        return audio
+
+    try:
+        denoised = nr.reduce_noise(
+            y=audio,
+            sr=sr,
+            stationary=True,
+            prop_decrease=prop_decrease,
+            n_std_thresh_stationary=n_std_thresh,
+        )
+        return denoised.astype(np.float32)
+    except Exception as e:
+        logger.warning("Spectral gating failed: %s — returning original audio", e)
+        return audio
 
 
 # =====================================================================

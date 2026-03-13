@@ -31,54 +31,69 @@ TTS (24 kHz)
   │
   ▼
 ┌──────────────────────────────────────┐
-│ Phase A: restore_vocals()            │  ← Dry audio, before reverb
-│   • resemble-enhance neural denoise  │
-│   • run_denoise=True (MPS)           │
+│ Per-chunk cleanup (postprocessor)    │
+│   • Hard-clip guard, trailing trim   │
+│   • Spectral flatness detection      │
+│   • RMS normalization (-23 dBFS)     │
+│   • 22ms cos² crossfade assembly     │
+│   • 100ms fade-in, 50ms fade-out     │
 └──────────────────────────────────────┘
-  │
-  ▼
-Voice FX Chain (24 kHz)
-  • Compressor (dynamics)
-  • Reverb (spatial)
-  • Limiter
-  │
-  ▼
-Music FX Chain (24 kHz)
-  • PeakFilter +2 dB @ 300 Hz (warmth)
-  • PeakFilter -3 dB @ 1800 Hz (vocal pocket)
-  • HighShelfFilter -4 dB @ 10 kHz (gentle HF rolloff)
-  • Limiter
-  │
-  ▼
-Mixer (24 kHz)
-  • Align voice + music (2s pre-roll)
-  • Mask-based ducking (-9 dB, 100ms lookahead, 150ms attack, 2000ms release)
-  • Linear fades (3s in / 5s out)
-  • LUFS normalization (-14 LUFS unified target)
-  • Master: HPF 35Hz → Gain → Bus Compressor (2:1) → Limiter (-0.1 dB)
-  │
-  ▼
-Resample → 44.1 kHz (torchaudio)
   │
   ▼
 ┌──────────────────────────────────────┐
-│ Phase B: master_vocals()  (44.1 kHz) │  ← After mix, at final SR
+│ Spectral gating noise reduction      │  ← Replaces disabled neural denoiser
+│   • noisereduce (stationary mode)    │
+│   • prop_decrease=0.6, conservative  │
+└──────────────────────────────────────┘
+  │
+  ▼
+Upsample → 44.1 kHz (torchaudio)
+  │
+  ▼
+┌──────────────────────────────────────┐
+│ Phase B: master_vocals() (44.1 kHz)  │  ← Kokoro-specific mastering EQ
 │   1. Highpass 80 Hz                  │
 │   2. LowShelf +2 dB @ 200 Hz        │
-│   3. De-Esser (7 kHz boost→comp→cut)│
-│   4. Lowpass 15 kHz                  │
-│   5. Limiter -0.5 dB                │
+│   3. Surgical EQ (mud, presence)     │
+│   4. De-Esser (7 kHz ±4 dB boost→   │
+│      compress→cut)                   │
+│   5. Lowpass 9.5 kHz (Nyquist mask) │
+│   6. Limiter -0.5 dB                │
 └──────────────────────────────────────┘
+  │
+  ▼
+Voice FX Chain (44.1 kHz)
+  • NoiseGate (-42 dB) → Highpass 90 Hz
+  • Compressor (2.5:1, -18 dB)
+  • HighShelf -5.5 dB @ 6.5 kHz
+  • Lowpass 8 kHz → Reverb → Limiter
+  │
+  ▼
+Music FX Chain (44.1 kHz)
+  • PeakFilter +2 dB @ 300 Hz (warmth)
+  • PeakFilter -5 dB @ 1500 Hz (vocal pocket)
+  • PeakFilter +0.8 dB @ 5500 Hz (air)
+  • HighShelfFilter -3 dB @ 8 kHz
+  • Limiter
+  │
+  ▼
+Mixer (44.1 kHz)
+  • Align voice + music (2s pre-roll)
+  • Mask-based ducking (-21 dB, 400ms lookahead, 900ms attack, 2500ms release)
+  • Linear fades (3s in / 5s out)
+  • LUFS normalization (-14 LUFS unified target)
+  • Master: HPF 35Hz → Gain(-3dB) → Bus Compressor (2:1) → Limiter (-1.0 dB)
   │
   ▼
 Export: 44.1 kHz / 16-bit PCM WAV
 ```
 
-### Why Two Phases?
+### Why This Order?
 
-- **Phase A** runs on *dry* audio so the neural denoiser sees clean signal without reverb tails
-- **Phase B** runs at *44.1 kHz* so EQ filters (especially the 7 kHz de-esser) operate well below Nyquist for stable, predictable curves
-- The voice FX chain (reverb) sits between the two phases — reverb is applied to denoised audio, then the mastered mix is EQ'd at the final sample rate
+- **Spectral gating** runs on dry audio at 24 kHz before any FX — the noise profile is most stable here
+- **Phase B mastering** runs at *44.1 kHz* so EQ filters (especially the 7 kHz de-esser) operate well below Nyquist for stable, predictable curves
+- The voice FX chain (reverb, compression) follows Phase B — reverb is applied to the mastered signal
+- Neural denoising (resemble-enhance) is **disabled** on Apple Silicon due to instability; spectral gating is the active replacement
 
 ---
 
@@ -93,14 +108,14 @@ Simulates the "Proximity Effect" of a close-mic studio recording. Applied **only
 ### 4.3 De-Esser (6–8 kHz)
 Uses the professional "boost → compress → cut" technique:
 ```
-PeakFilter(7 kHz, +6 dB, Q=2.0)   →  Boost sibilance band
-Compressor(-20 dB, 4:1, 1ms/30ms) →  Compress when sibilance is loud
-PeakFilter(7 kHz, -6 dB, Q=2.0)   →  Cut the boost back to neutral
+PeakFilter(7 kHz, +4 dB, Q=2.0)   →  Boost sibilance band
+Compressor(-20 dB, 3:1, 1ms/50ms) →  Compress when sibilance is loud
+PeakFilter(7 kHz, -4 dB, Q=2.0)   →  Cut the boost back to neutral
 ```
-This only affects the sibilance band when it exceeds the threshold, leaving the rest of the spectrum untouched.
+Reduced from ±6 dB to ±4 dB to avoid triggering on every sibilant. Only affects the sibilance band when it exceeds the threshold.
 
-### 4.4 Lowpass Filter (15 kHz)
-Removes digital hiss and aliasing artifacts above 15 kHz. Set to 15 kHz (not 12 kHz) to preserve vocal "air" and clarity.
+### 4.4 Lowpass Filter (9.5 kHz)
+Psychoacoustic "super-resolution" smoothing: Kokoro TTS runs at 24 kHz native (Nyquist: 12 kHz), upsampled to 44.1 kHz. The 9.5 kHz lowpass creates a smooth, analog-sounding rolloff in the 10.5-12 kHz region, masking the abrupt digital brick-wall at the 12 kHz Nyquist boundary. Sibilance (7 kHz) is already handled by the de-esser above.
 
 ### 4.5 Limiter (-0.5 dB)
 Final brick-wall limiter prevents any overs in the exported file.
@@ -111,11 +126,13 @@ Final brick-wall limiter prevents any overs in the exported file.
 
 | File | Role |
 |---|---|
+| `core/kokoro_tts/postprocessor.py` | `KokoroMasteringEngine` — per-chunk cleanup, crossfade assembly, spectral gating noise reduction, voice FX chain, master EQ chain |
 | `core/parler_tts/postprocessor.py` | `MasteringEngine` — Phase A (`restore_vocals`) and Phase B (`master_vocals`) for Parler TTS |
-| `core/audio_processor.py` | Voice FX chain (compression + reverb + limiter), Music FX chain (HighShelfFilter), Master chain (HPF 35Hz → Gain → Compressor → Limiter) |
+| `core/audio_processor.py` | Voice FX chain (compression + reverb + limiter), Music FX chains (MusicGen, ACE-Step, Lyria), Master chain (HPF 35Hz → Gain → Compressor → Limiter) |
 | `core/mixer.py` | Mask-based ducking, overlay, equal-power crossfade looping, fades, LUFS normalization, resampling, export |
-| `core/parler_tts/preprocessor.py` | Text normalization (number/abbreviation expansion for TTS) |
-| `core/kokoro_tts/engine.py` | TTS synthesis with per-chunk artifact trimmer (silence + spectral flatness detection) |
+| `core/kokoro_tts/preprocessor.py` | Script parsing, text expansion, IPA phoneme injection, prosody punctuation, token-aware chunking |
+| `core/kokoro_tts/engine.py` | TTS synthesis with per-chunk artifact trimming, inter-sentence pausing, spectral gating |
+| `core/qa_monitor.py` | Quality assurance: clipping, LUFS, silence gaps, spectral balance, silence ratio |
 | `core/pipeline.py` | Orchestrates the full signal chain end-to-end |
 
 ---
@@ -139,15 +156,15 @@ class MasteringEngine:
 
 ```python
 # In core/pipeline.py — MeditationPipeline.generate()
-voice_audio = tts.synthesize(...)                          # Step 3:  TTS @ 24 kHz
-voice_audio = mastering_engine.restore_vocals(voice_audio)  # Step 3.5: Phase A denoise
-voice_audio = apply_fx(voice_audio, voice_chain)            # Step 7:  Reverb + dynamics
-music_audio = apply_fx(music_audio, music_chain)            # Step 8:  Music EQ
-mixed = mix(voice_audio, activity, music_audio)             # Step 9:  Duck + fade + LUFS
-mixed = apply_fx(mixed, master_chain)                       # Step 10: Master limiter
-mixed_44k = resample_for_export(mixed, 24000, 44100)       # Step 11: Upsample
-mixed_44k = mastering_engine.master_vocals(mixed_44k)       # Step 11: Phase B EQ
-export_audio(mixed_44k, 44100, "wav")                       # Step 12: 44.1kHz/16-bit
+voice_audio = tts.synthesize(...)                           # Step 3:  TTS @ 24 kHz (includes spectral gating)
+# restore_vocals() bypassed — Kokoro output is pre-clean    # Step 3.5: Neural denoise (disabled)
+voice_audio = resample_to_44100(voice_audio, 24000)         # Step 3.9: Upsample to 44.1 kHz
+voice_audio = mastering_engine.master_vocals(voice_audio)   # Phase B:  EQ / de-ess / limit @ 44.1 kHz
+voice_audio = apply_fx(voice_audio, voice_chain)            # Step 7:   Reverb + dynamics
+music_audio = apply_fx(music_audio, music_chain)            # Step 8:   Music EQ
+mixed = mix(voice_audio, activity, music_audio)             # Step 9:   Duck + fade + LUFS
+# Master chain applied per-chunk in export_audio()          # Step 10:  HPF + Compressor + Limiter
+export_audio(mixed, mix_sr, "wav", master_chain=chain)      # Step 11:  Chunked export @ 44.1kHz
 ```
 
 ---
@@ -162,18 +179,21 @@ export_audio(mixed_44k, 44100, "wav")                       # Step 12: 44.1kHz/1
 
 ## 9. Verification Checklist
 
-- [x] Output audio has no audible hiss above 15 kHz
+- [x] Spectral gating noise reduction active (noisereduce, stationary mode)
+- [x] Output audio has no audible hiss above 9.5 kHz (LowpassFilter masks Nyquist)
 - [x] Sub-bass rumble below 80 Hz is removed from voice (HighpassFilter 80Hz)
 - [x] Subsonic energy below 35 Hz removed from master (HighpassFilter 35Hz)
-- [x] Sibilance (6–8 kHz) is attenuated without affecting other frequencies
+- [x] Sibilance (6-8 kHz) is attenuated via de-esser (±4 dB boost→compress→cut @ 7 kHz)
 - [x] Only one warmth boost (+2 dB @ 200 Hz) — no duplicate EQ
-- [x] De-esser uses frequency-targeted boost→compress→cut (not full-band compression)
 - [x] EQ and filtering operate at 44.1 kHz (not 24 kHz near-Nyquist)
-- [x] Background music ducks smoothly via voice-activity mask (100ms lookahead, 150ms attack, 2000ms release)
-- [x] TTS chunks are cleaned by artifact trimmer (trailing silence + spectral flatness)
+- [x] Background music ducks smoothly via voice-activity mask (400ms lookahead, 900ms attack, 2500ms release)
+- [x] TTS chunks cleaned by artifact trimmer (trailing silence + spectral flatness)
 - [x] Master bus compressor (2:1, 30ms/300ms) smooths peaks before final limiter
-- [x] Unified LUFS target: **−14 LUFS** (streaming distribution standard)
+- [x] Unified LUFS target: **-14 LUFS** (streaming distribution standard)
 - [x] Numbers and abbreviations expanded to words before TTS inference
-- [x] MusicGen spectral flux guard rejects segments with percussive transients
+- [x] IPA phoneme injection for 30+ Sanskrit/yoga terms
+- [x] Prosody punctuation enhancement for natural meditation phrasing
+- [x] Token-aware chunking (100-150 target, 400 ceiling) prevents rushed speech
+- [x] QA checks: clipping, LUFS, silence gaps, spectral balance, silence ratio
 - [x] Equal-power cosine crossfades used for all segment stitching and music looping
 - [x] Final file exported at **44.1 kHz / 16-bit PCM**

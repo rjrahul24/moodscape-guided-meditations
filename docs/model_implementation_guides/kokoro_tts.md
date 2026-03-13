@@ -355,7 +355,7 @@ Force specific pronunciations:
 
 ### The Correct Approach: Silence Array Injection
 
-Kokoro does **not** natively support `[pause:Xs]` markers in raw text — it will either ignore them or attempt to pronounce the word "pause." The correct implementation (already in `core/tts_engine.py` and `core/kokoro_tts/preprocessor.py`) is:
+Kokoro does **not** natively support `[pause:Xs]` markers in raw text — it will either ignore them or attempt to pronounce the word "pause." The correct implementation (in `core/kokoro_tts/engine.py` and `core/kokoro_tts/preprocessor.py`) is:
 
 1. Parse the script to extract typed chunks: `{"type": "speech", "text": "..."}` and `{"type": "pause", "duration_sec": X.X}`
 2. For `speech` chunks → call `KPipeline` → get audio array
@@ -425,7 +425,7 @@ Research documents 1, 2, and 3 converge on these principles:
 
 ### Paragraph Break Behavior
 
-The existing `core/kokoro_tts/preprocessor.py` converts `\n\n` to `[pause:1.5s]`. This is correct. Do not rely on Kokoro's natural paragraph pausing — it is inconsistent (~0.15s variability, per research doc 2).
+The existing `core/kokoro_tts/preprocessor.py` converts `\n\n` to `[pause:6.5s]` — a spacious paragraph break tuned for meditation pacing. Do not rely on Kokoro's natural paragraph pausing — it is inconsistent (~0.15s variability).
 
 ### Target Duration Matching
 
@@ -476,207 +476,106 @@ def calculate_adjusted_speed(
 
 ---
 
-## 10. Post-Processing Recommendations from Research Documents
+## 10. Post-Processing Pipeline
 
-### What the Research Documents Recommend
+### Kokoro-Specific Signal Chain
 
-Research doc 3 mentions several post-processing options. Here is how they map to the existing MoodScape stack:
+MoodScape uses a multi-stage postprocessing pipeline tailored to Kokoro's ISTFTNet vocoder characteristics. All processing lives in `core/kokoro_tts/postprocessor.py`:
 
-| Recommendation | MoodScape Implementation |
-|----------------|--------------------------|
-| Normalize loudness | ✅ Unified −14 LUFS (streaming standard) via `pyloudnorm` in `mixer.py` |
-| Gentle reverb on voice | ✅ Already done via Pedalboard `Reverb` in `audio_processor.py` |
-| Fade in/out | ✅ Already done in `mixer.py` |
-| EQ warmth (low shelf) | ✅ Already done via Pedalboard `LowShelfFilter` in `audio_processor.py` |
-| TTS artifact trimming | ✅ Per-chunk silence trimmer + spectral flatness detector in `core/kokoro_tts/engine.py` |
-| Bus compressor (glue) | ✅ Compressor(2:1, 30ms/300ms) in master chain in `audio_processor.py` |
-| Lookahead sidechain ducking | ✅ 75ms lookahead offline ducking in `mixer.py` |
-| Pitch shifting | ❌ Not needed — voice selection handles this; librosa would add a dependency |
-| Time stretching | ❌ Avoid — use speed parameter instead; stretching degrades quality |
-| pydub for segment merging | ❌ Do not use — Pedalboard + numpy is already superior |
-| FFmpeg subprocess calls | ❌ Do not use — Pedalboard handles all I/O |
+#### Stage 1 — Per-Chunk Cleanup (`process_chunk()`)
+- Hard-clip guard (clamp to [-1, 1])
+- Trailing silence trim (RMS windowing at -45 dBFS, 20ms windows)
+- Spectral flatness detection for repetition-loop artifacts (Wiener entropy > 0.85)
+- RMS normalization to -23 dBFS (EBU R128 speech reference)
 
-The existing MoodScape audio pipeline already implements everything the research documents recommend and more.
+#### Stage 2 — Segment Assembly
+- **22ms cosine-squared crossfade** between chunks (528 samples at 24 kHz)
+- **25ms pre-roll silence** + **100ms cosine fade-in** (masks cold-start prosody drift)
+- **50ms fade-out** at segment boundaries
+- **0.8s inter-sentence pause** (1.2s after ellipsis)
 
----
+#### Stage 2b — Spectral Gating Noise Reduction (`reduce_synthesis_noise()`)
+- Lightweight stationary spectral gating via `noisereduce` library
+- Replaces the disabled neural denoiser (resemble-enhance) which is unstable on Apple Silicon
+- Conservative parameters: `prop_decrease=0.6`, `n_std_thresh=1.5`
+- Reduces ISTFTNet vocoder hiss by ~6 dB without damaging soft consonants
 
-## 11. Complete TTSEngine Implementation (with all improvements)
+#### Stage 3 — Voice FX Chain (`build_voice_chain()`, applied at mix sample rate)
+- NoiseGate (-42 dB, 20:1) — mutes inter-chunk silence, preserves soft phonemes
+- HighpassFilter (90 Hz) — removes sub-bass rumble and plosives
+- Compressor (2.5:1, -18 dB threshold, 2ms/80ms) — gentle glue
+- HighShelfFilter (-5.5 dB @ 6.5 kHz) — de-harsh vocoder artifacts
+- LowpassFilter (8 kHz) — removes metallic TTS hallucinations
+- Reverb (room 0.15, damping 0.6, wet 0.08) — subtle studio presence
+- Limiter (-1 dBFS)
 
-```python
-import os
-import gc
+#### Stage 3b — Master EQ Chain (`build_master_chain()`, applied at 44.1 kHz)
+- HighpassFilter (80 Hz) — DC offset and rumble
+- LowShelfFilter (+2 dB @ 200 Hz) — warmth / proximity effect
+- PeakFilter (-1.5 dB @ 400 Hz, Q=1.0) — mud cut
+- PeakFilter (+1.5 dB @ 3.5 kHz, Q=0.8) — presence
+- PeakFilter (+1.2 dB @ 2.5 kHz, Q=1.2) — consonant intelligibility
+- De-esser: +4 dB → Compressor(3:1, -20 dB) → -4 dB @ 7 kHz — sibilance control
+- LowpassFilter (9.5 kHz) — masks Kokoro's 12 kHz Nyquist brick-wall
+- Limiter (-0.5 dBFS)
 
-# Must be set BEFORE any torch import
-os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+### Quality Assurance (`core/qa_monitor.py`)
+Automated checks run after the master chain:
+- **Clipping detection** — flags if >0.1% of samples exceed ±0.99
+- **LUFS compliance** — verifies within ±2 dB of -14 LUFS target
+- **Long silence detection** — flags silence gaps > 15 seconds
+- **Spectral balance** — warns if presence (2-5 kHz) exceeds warmth (100-300 Hz)
+- **Silence ratio** — warns if outside 15-60% range for meditation
 
-import numpy as np
+### What NOT to Do
 
-SAMPLE_RATE = 24000
-
-# Voices ordered by meditation suitability (best first)
-# Include both American (lang_code='a') and British (lang_code='b') options
-VOICE_CHOICES = [
-    # American English — use with KPipeline(lang_code='a')
-    ("Heart ❤️ — US Female (warm, intimate) [Best]",   "af_heart"),
-    ("Sky 🌤️ — US Female (airy, gentle)",               "af_sky"),
-    ("Nova ✨ — US Female (smooth, calm)",               "af_nova"),
-    ("Nicole 🎙️ — US Female (soft, ASMR)",              "af_nicole"),
-    ("River 💧 — US Female (flowing calm)",              "af_river"),
-    ("Bella 🔥 — US Female (expressive)",               "af_bella"),
-    ("Sarah 🌿 — US Female (natural)",                  "af_sarah"),
-    ("Adam 🏔️ — US Male (deep, grounding)",             "am_adam"),
-    ("Michael 🌊 — US Male (resonant)",                 "am_michael"),
-    # British English — use with KPipeline(lang_code='b')
-    ("Emma 🇬🇧 — UK Female (wise, calm)",               "bf_emma"),
-    ("Lily 🇬🇧 — UK Female (sweet, angelic)",           "bf_lily"),
-    ("Isabella 🇬🇧 — UK Female (gentle)",              "bf_isabella"),
-    ("George 🇬🇧 — UK Male (warm baritone)",           "bm_george"),
-    ("Lewis 🇬🇧 — UK Male (clear)",                    "bm_lewis"),
-]
-
-# British voice IDs — need lang_code='b' pipeline
-BRITISH_VOICES = {"bf_emma", "bf_lily", "bf_isabella", "bm_george", "bm_lewis"}
-
-
-class TTSEngine:
-    def __init__(self):
-        self.pipeline_en_us = None  # lang_code='a' — American English
-        self.pipeline_en_gb = None  # lang_code='b' — British English
-
-    def load_model(self):
-        from kokoro import KPipeline
-        self.pipeline_en_us = KPipeline(lang_code='a')
-        # British pipeline loaded lazily only if needed
-
-    def _get_pipeline(self, voice: str):
-        """Return the correct pipeline for a given voice ID."""
-        if voice in BRITISH_VOICES:
-            if self.pipeline_en_gb is None:
-                from kokoro import KPipeline
-                self.pipeline_en_gb = KPipeline(lang_code='b')
-            return self.pipeline_en_gb
-        return self.pipeline_en_us
-
-    def unload_model(self):
-        del self.pipeline_en_us
-        del self.pipeline_en_gb
-        self.pipeline_en_us = None
-        self.pipeline_en_gb = None
-        gc.collect()
-        try:
-            import torch
-            if torch.backends.mps.is_available():
-                torch.mps.empty_cache()
-            elif torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except (ImportError, AttributeError):
-            pass
-
-    def synthesize(
-        self,
-        segments: list[dict],
-        voice: str = "af_heart",
-        speed: float = 0.85,
-        progress_cb=None,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Synthesize all script segments into a single audio track.
-
-        Returns:
-            voice_audio:    float32 mono array at 24,000 Hz
-            voice_activity: bool array, True where voice is speaking (for ducking)
-        """
-        if self.pipeline_en_us is None:
-            raise RuntimeError("Call load_model() first.")
-
-        # Clamp speed to safe range
-        speed = max(0.65, min(1.0, speed))
-
-        audio_chunks: list[np.ndarray] = []
-        activity_chunks: list[np.ndarray] = []
-        total = len(segments)
-
-        for idx, seg in enumerate(segments):
-            if seg["type"] == "speech":
-                speech_audio = self._synthesize_text(seg["text"], voice, speed)
-                audio_chunks.append(speech_audio.astype(np.float32))
-                activity_chunks.append(np.ones(len(speech_audio), dtype=bool))
-
-            elif seg["type"] == "pause":
-                n_samples = int(seg["duration_sec"] * SAMPLE_RATE)
-                audio_chunks.append(np.zeros(n_samples, dtype=np.float32))
-                activity_chunks.append(np.zeros(n_samples, dtype=bool))
-
-            if progress_cb:
-                progress_cb(idx + 1, total)
-
-        if not audio_chunks:
-            return np.zeros(0, dtype=np.float32), np.zeros(0, dtype=bool)
-
-        return (
-            np.concatenate(audio_chunks).astype(np.float32),
-            np.concatenate(activity_chunks),
-        )
-
-    def _synthesize_text(self, text: str, voice: str, speed: float) -> np.ndarray:
-        """Synthesize a single text chunk, with MPS crash fallback."""
-        pipeline = self._get_pipeline(voice)
-        parts = []
-
-        try:
-            gen = pipeline(
-                text,
-                voice=voice,
-                speed=speed,
-                split_pattern=r'(?<=[.!?…])\s+',  # Split at sentence-end punctuation
-            )
-            for _gs, _ps, audio in gen:
-                if audio is not None and len(audio) > 0:
-                    parts.append(audio)
-
-        except RuntimeError as e:
-            if "MPS" in str(e) or "placeholder" in str(e).lower():
-                # MPS crash fallback — rare but documented
-                try:
-                    import torch
-                    pipeline.model.cpu()
-                    gen = pipeline(text, voice=voice, speed=speed)
-                    for _gs, _ps, audio in gen:
-                        if audio is not None and len(audio) > 0:
-                            parts.append(audio)
-                    pipeline.model.to("mps")
-                except Exception:
-                    pass  # Return silence fallback below
-            else:
-                raise
-
-        if parts:
-            return np.concatenate(parts).astype(np.float32)
-        return np.zeros(int(0.1 * SAMPLE_RATE), dtype=np.float32)
-```
+| Anti-Pattern | Reason | Alternative |
+|-------------|--------|-------------|
+| Pitch shifting | Degrades quality | Use voice selection / blending |
+| Time stretching | Degrades quality | Use Kokoro's `speed` parameter |
+| pydub for segment merging | Slow, low quality | Pedalboard + numpy (already in MoodScape) |
+| FFmpeg subprocess calls | Unnecessary dependency | Pedalboard handles all I/O |
 
 ---
 
-## 12. Gradio UI Updates for `app.py`
+## 11. Implementation File Map
 
-The `VOICE_CHOICES` list in `app.py` should be expanded to include the British voices from research doc 1 (`bf_lily` is a notable addition). Updated list:
+The Kokoro TTS implementation is a self-contained package at `core/kokoro_tts/`:
+
+| File | Purpose |
+|------|---------|
+| `core/kokoro_tts/engine.py` | `KokoroEngine` — model loading, dual-pipeline (US/British), synthesis with per-chunk artifact trimming, inter-sentence pausing, spectral gating noise reduction |
+| `core/kokoro_tts/preprocessor.py` | Script parsing (`[pause:Xs]`, `[breath]`, `\n\n`), text expansion (digits/abbreviations), IPA phoneme injection (30+ Sanskrit/yoga terms), prosody punctuation enhancement, token-aware chunking (100-150 target, 400 ceiling) |
+| `core/kokoro_tts/postprocessor.py` | Per-chunk cleanup (artifact trim, RMS norm), crossfade assembly (22ms cos²), segment fades, spectral gating noise reduction, voice FX chain, master EQ chain, `KokoroMasteringEngine` |
+| `core/kokoro_tts/voice_manager.py` | Voice tensor loading from HuggingFace, weighted blending, 5 meditation presets (`balanced_calm`, `deep_rest`, `soft_whisper`, `golden_hour`, `earth_root`), British voice detection |
+| `core/pipeline.py` | End-to-end orchestration: script → TTS → upsampling → voice FX → music gen → mixing → master → export |
+| `core/qa_monitor.py` | Quality validation: clipping, LUFS, silence gaps, spectral balance, silence ratio |
+
+---
+
+## 12. Gradio UI Voice Options
+
+The `app.py` voice dropdown includes both premium blends and individual voices:
 
 ```python
-VOICE_CHOICES = [
-    ("Heart — US Female (default)", "af_heart"),
-    ("Sky — US Female (airy)",      "af_sky"),
-    ("Nova — US Female (calm)",     "af_nova"),
-    ("Nicole — US Female (ASMR)",   "af_nicole"),
-    ("River — US Female (flowing)", "af_river"),
-    ("Bella — US Female",           "af_bella"),
-    ("Sarah — US Female",           "af_sarah"),
-    ("Emma — UK Female (wise)",     "bf_emma"),
-    ("Lily — UK Female (angelic)",  "bf_lily"),    # ← Added from Research doc 1
-    ("Adam — US Male (grounding)",  "am_adam"),
-    ("Michael — US Male",           "am_michael"),
-    ("George — UK Male (warm)",     "bm_george"),
+KOKORO_VOICE_CHOICES = [
+    # Premium Blends (Recommended)
+    ("Balanced Calm — natural & human (default)",  "balanced_calm"),
+    ("Deep Rest — intimate & breathy",             "deep_rest"),
+    ("Soft Whisper — ASMR relaxation",             "soft_whisper"),
+    ("Golden Hour — warm & airy",                  "golden_hour"),
+    ("Earth Root — grounding blend",               "earth_root"),
+    # High-Quality Individual Voices
+    ("Heart — US Female (warm)",                 "af_heart"),
+    ("Nicole — US Female (calm/ASMR)",           "af_nicole"),
+    # British & Male Voices
+    ("Emma — UK Female (wise)",                  "bf_emma"),
+    ("Adam — US Male (grounding)",               "am_adam"),
+    ("George — UK Male (warm)",                  "bm_george"),
 ]
 ```
+
+Blend presets are resolved by `core/kokoro_tts/voice_manager.py` into weighted tensor sums.
 
 ---
 

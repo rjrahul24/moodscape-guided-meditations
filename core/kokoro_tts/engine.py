@@ -18,6 +18,7 @@ from core.kokoro_tts.postprocessor import (
     process_chunk,
     crossfade_chunks,
     apply_segment_fades,
+    reduce_synthesis_noise,
 )
 from core.kokoro_tts.preprocessor import clamp_speed, split_into_sentences
 
@@ -231,6 +232,10 @@ class KokoroEngine(SpeechEngine):
 
         voice_audio = np.concatenate(audio_chunks).astype(np.float32)
         voice_activity = np.concatenate(activity_chunks)
+
+        # Stage 2b: Spectral gating — remove low-level ISTFTNet synthesis hiss.
+        # Runs on the full assembled audio so the noise profile estimate is stable.
+        voice_audio = reduce_synthesis_noise(voice_audio, sr=SAMPLE_RATE)
 
         return voice_audio, voice_activity
 

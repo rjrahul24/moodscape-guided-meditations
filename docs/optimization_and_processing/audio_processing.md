@@ -15,14 +15,16 @@ All generative outputs are intercepted instantly to upsample to **44.1kHz (44100
 ## 2. Dynamic Audio Mixing Processing
 
 ### Mask-Based Ducking (Primary Method)
-MoodScape uses **voice-activity mask–driven ducking** (`apply_mask_ducking` in `mixer.py`) as the primary ducking method. Instead of re-deriving vocal presence via RMS energy, this method uses the pre-computed `voice_activity` boolean mask — a sample-accurate ground-truth map of when the voice is speaking, constructed natively in `core/kokoro_tts/engine.py` or `core/parler_tts/engine.py`.
+MoodScape uses **voice-activity mask-driven ducking** (`apply_mask_ducking` in `mixer.py`) as the primary ducking method. Instead of re-deriving vocal presence via RMS energy, this method uses the pre-computed `voice_activity` boolean mask — a sample-accurate ground-truth map of when the voice is speaking, constructed natively in `core/kokoro_tts/engine.py` or `core/parler_tts/engine.py`.
 
-- **Lookahead**: The ducking envelope is shifted **100ms** earlier via `np.roll`, so the music starts fading *before* the first syllable — matching broadcast/DAW behaviour.
-- **Attack**: **150ms** — a slower, more natural fade-in for music suppression.
-- **Release**: **2000ms** (2 seconds) — a deliberately slow recovery that matches meditation pacing, allowing music to gradually swell back during pauses.
-- **Duck depth**: **-9 dB** — firmly ducks music during narration while keeping it subtly audible.
+The `mix()` function calls `apply_mask_ducking` with meditation-optimized parameters:
 
-This approach is more precise and computationally cheaper than the RMS-based method, which is retained as `apply_rms_ducking` for fallback use (e.g. Parler TTS edge cases where a mask may be unavailable).
+- **Lookahead**: **400ms** — music starts fading well before the first syllable for a smooth, breath-like transition.
+- **Attack**: **900ms** — very slow fade-in for music suppression; combined with 400ms lookahead, the total pre-duck window is ~1.3s.
+- **Release**: **2500ms** (2.5 seconds) — deliberately slow recovery that matches meditation pacing, allowing music to gradually swell back during pauses.
+- **Duck depth**: Configurable via UI (default **-21 dB**), applied on top of the base music volume (-17 dB), yielding -38 dB total during speech — nearly inaudible behind the voice.
+
+The raw `apply_mask_ducking` defaults (-9 dB, 150ms attack, 2000ms release, 100ms lookahead) are retained for non-meditation use cases. The RMS-based method (`apply_rms_ducking`) is available as a fallback.
 
 ### Spectral Masking
 To clarify vocal enunciation, MoodScape applies a **HighShelfFilter** on ambient tracks that gently rolls off frequencies above **10kHz by -4dB**. This softens MusicGen's synthetic high-end "digital shimmer" while preserving the full ambient timbre between 3–10kHz. Previously a 3kHz LowpassFilter was used, but this destroyed ambient pad harmonics.
@@ -34,12 +36,15 @@ The current music FX chain in `audio_processor.py`:
 ```python
 def make_music_chain() -> Pedalboard:
     return Pedalboard([
-        PeakFilter(cutoff_frequency_hz=300, gain_db=2.0, q=0.7),      # Low-end warmth
-        PeakFilter(cutoff_frequency_hz=1800, gain_db=-3.0, q=0.6),   # Vocal pocket notch
-        HighShelfFilter(cutoff_frequency_hz=10000.0, gain_db=-4.0),   # Gentle HF rolloff
+        PeakFilter(cutoff_frequency_hz=300, gain_db=2.0, q=0.7),       # Low-end warmth
+        PeakFilter(cutoff_frequency_hz=1500, gain_db=-5.0, q=0.3),    # Wide vocal pocket notch
+        PeakFilter(cutoff_frequency_hz=5500, gain_db=0.8, q=0.6),     # Clarity/air presence
+        HighShelfFilter(cutoff_frequency_hz=8000.0, gain_db=-3.0),     # HF shimmer rolloff
         Limiter(threshold_db=-1.0),
     ])
 ```
+
+Engine-specific variants exist for ACE-Step 1.5 (`make_acestep_music_chain`) and Lyria RealTime (`make_lyria_music_chain`) in `core/audio_processor.py`.
 
 ## 4. Master Chain
 
@@ -81,3 +86,9 @@ Before any text reaches the TTS engine, `text_preprocessor.py` runs an `expand_f
 - **Converts digits to words**: integers 0–999 are converted to their English word equivalents (e.g., `4` → `four`, `120` → `one hundred and twenty`).
 
 This prevents Kokoro's G2P engine from mispronouncing or rushing through numeric and abbreviated tokens in meditation scripts.
+
+## 8. Spectral Gating Noise Reduction
+
+After chunk assembly and before the voice FX chain, Kokoro audio passes through a **stationary spectral gating** step (`reduce_synthesis_noise()` in `core/kokoro_tts/postprocessor.py`). This uses the `noisereduce` library with conservative parameters (`prop_decrease=0.6`, `n_std_thresh=1.5`) to reduce low-level ISTFTNet vocoder hiss by ~6 dB without damaging soft consonants.
+
+This replaces the neural denoiser (resemble-enhance), which is disabled on Apple Silicon due to instability. The spectral gating approach is lighter-weight, deterministic, and runs entirely on CPU.
