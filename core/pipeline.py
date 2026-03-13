@@ -53,15 +53,14 @@ def _enhance_music_prompt(user_prompt: str) -> str:
     return enhanced
 
 
-def _enhance_acestep_prompt(user_prompt: str) -> tuple[str, str]:
-    """Build an ACE-Step-optimized prompt from the user's description.
+def _enhance_acestep_prompt(user_prompt: str, duration_hint: float = 120.0) -> tuple[str, str]:
+    """Build an ACE-Step-optimized prompt using the MESA framework.
 
-    ACE-Step benefits from explicit guidance away from transients and
-    towards ambient textures.  This delegates to AceStepEngine's own
-    prompt enhancer which returns (caption, lyrics) tuple.
+    Delegates to AceStepEngine's prompt enhancer which returns
+    (caption, lyrics) tuple with duration-aware structural tags.
     """
     from core.acestep_engine import AceStepEngine
-    return AceStepEngine._enhance_prompt(user_prompt)
+    return AceStepEngine._enhance_prompt(user_prompt, duration_hint=duration_hint)
 
 
 class MeditationPipeline:
@@ -366,7 +365,7 @@ class MeditationPipeline:
                         # AceStepEngine enhances prompts internally per stage;
                         # pass raw stage prompts so they are not double-enhanced.
                         engine_stages = music_prompt_stages
-                        enhanced_prompt, enhanced_lyrics = _enhance_acestep_prompt(music_prompt)
+                        enhanced_prompt, enhanced_lyrics = _enhance_acestep_prompt(music_prompt, duration_hint=music_duration)
                         music_audio = music_engine.generate(
                             enhanced_prompt,
                             music_duration,
@@ -400,7 +399,7 @@ class MeditationPipeline:
                             bpm=lyria_bpm, density=lyria_density, brightness=lyria_brightness,
                         )
                     elif use_acestep:
-                        enhanced_prompt, lyrics = _enhance_acestep_prompt(music_prompt)
+                        enhanced_prompt, lyrics = _enhance_acestep_prompt(music_prompt, duration_hint=music_duration)
                         music_audio = music_engine.generate(
                             enhanced_prompt, music_duration, progress_cb=music_progress,
                             lyrics=lyrics, bpm=bpm, keyscale=keyscale, 
@@ -483,7 +482,7 @@ class MeditationPipeline:
                 if use_lyria:
                     premix_lufs = -22.0
                 elif use_acestep:
-                    premix_lufs = -19.0
+                    premix_lufs = -20.0
                 else:
                     premix_lufs = -20.0
                 music_audio = normalize_loudness(music_audio, mix_sr, target_lufs=premix_lufs)

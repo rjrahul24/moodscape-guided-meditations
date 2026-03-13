@@ -10,21 +10,24 @@ This document is the complete reference for the **ACE-Step 1.5** music generatio
 - What ACE-Step 1.5 is and why it fits meditation audio generation
 - Hardware setup for **Apple Silicon M1 Max (24-Core GPU, 36 GB Unified RAM)** via **MLX**
 - Model architecture overview (LM planner + DiT decoder)
-- Prompt engineering vocabulary specific to ACE-Step + meditation
+- Prompt engineering using the MESA framework
 - Complete implementation walkthrough of `core/acestep_engine.py`
-- Pipeline integration with the existing MusicGen-based workflow
+- Three-phase long-form generation pipeline
+- Pipeline integration with the existing workflow
 - Parameter tuning, memory management, and troubleshooting
 
 ---
 
 ## 2. What is ACE-Step 1.5?
 
-ACE-Step 1.5 is an open-source **text-to-music foundation model** that combines two stages:
+ACE-Step 1.5 is an open-source **text-to-music foundation model** with a two-brain architecture:
 
 | Stage | Component | Role |
 |-------|-----------|------|
-| **Planning** | Language Model (LM) | Reads the text prompt and uses Chain-of-Thought reasoning to plan the musical structure — tempo, key, section layout, dynamics |
-| **Synthesis** | Diffusion Transformer (DiT) | Takes the LM plan and generates high-fidelity audio at **48 kHz stereo** using iterative denoising |
+| **Planning** | Language Model (LM) — 1.7B Qwen-family | Reads the text prompt and uses Chain-of-Thought reasoning to plan musical structure — tempo, key, section layout, dynamics, and 5Hz semantic audio codes |
+| **Synthesis** | Diffusion Transformer (DiT) — ~2B params | Takes the LM plan and renders 48 kHz stereo audio through iterative denoising using a 1D VAE with 1920x compression |
+
+**Key insight:** The LM planner's output quality is the single biggest determinant of final audio quality. A bad plan produces bad audio regardless of DiT settings.
 
 ### Why ACE-Step for Meditation?
 
@@ -41,11 +44,9 @@ ACE-Step 1.5 is an open-source **text-to-music foundation model** that combines 
 | Criteria | MusicGen | ACE-Step 1.5 |
 |----------|----------|--------------|
 | **Native sample rate** | 32 kHz | 48 kHz |
-| **Long-form approach** | Sliding window continuation (30s segments stitched) | Single-pass generation (up to 10 min) |
+| **Long-form approach** | Sliding window continuation (30s segments stitched) | Three-phase pipeline (genesis + cover continuation + boundary smoothing) |
 | **Coherence** | Depends on context overlap; can drift | LM-planned structure; naturally coherent |
 | **Backend** | MPS / CPU via AudioCraft | MLX (Metal native) |
-| **Generation speed** | Fast for short segments | Slower per-call but fewer calls needed |
-| **Maturity** | Well-established (Meta, large community) | Newer, smaller community |
 | **Best for** | Reliable ambient, fast prototyping | Long-form coherent journeys, high fidelity |
 
 ---
@@ -54,8 +55,6 @@ ACE-Step 1.5 is an open-source **text-to-music foundation model** that combines 
 
 ### MLX Backend
 
-ACE-Step 1.5 runs on Apple's **MLX** framework, which provides native Metal GPU acceleration on Apple Silicon. This is the recommended backend for M1 Max:
-
 | Component | Requirement |
 |-----------|-------------|
 | **Chip** | Apple Silicon (M1, M1 Pro, M1 Max, M2, M3, etc.) |
@@ -63,50 +62,31 @@ ACE-Step 1.5 runs on Apple's **MLX** framework, which provides native Metal GPU 
 | **macOS** | 13.0+ (Ventura or later for MLX support) |
 | **Python** | 3.10+ |
 
-> **Note:** Unlike MusicGen (which uses MPS/CPU via PyTorch), ACE-Step uses MLX which accesses Metal GPU directly without the MPS compatibility issues that AudioCraft faces.
-
 ---
 
 ## 4. Installation
 
 ### Prerequisites
 ```bash
-# Confirm Python version
 python3 --version  # 3.10+ required
-
-# MLX requires Apple Silicon — verify
 python3 -c "import platform; print(platform.machine())"  # Should print 'arm64'
 ```
 
 ### Python Dependencies
 ```bash
-# Activate virtual environment
 source .venv/bin/activate
-
-# Install MLX (Apple's native ML framework)
 pip install mlx
-
-# Install ACE-Step 1.5 from the official repository
 pip install git+https://github.com/ace-step/ACE-Step-1.5.git
-
-# Verify installation
 python -c "from acestep.handler import AceStepHandler; print('ACE-Step OK')"
 python -c "from acestep.llm_inference import LLMHandler; print('LLM Handler OK')"
 ```
 
 ### Model Artifacts
 
-ACE-Step requires two model artifacts to be present locally:
-
 | Artifact | Path | Description |
 |----------|------|-------------|
 | **DiT config** | `./ACE-Step-1.5/` | Diffusion Transformer with `acestep-v15-sft` config |
 | **LLM checkpoint** | `./ACE-Step-1.5/checkpoints/` | Language Model `acestep-5Hz-lm-1.7B` |
-
-These are downloaded automatically on first run via the `AceStepHandler` and `LLMHandler` initialization, or can be cloned manually:
-```bash
-git clone https://github.com/ace-step/ACE-Step-1.5.git
-```
 
 ---
 
@@ -116,73 +96,72 @@ git clone https://github.com/ace-step/ACE-Step-1.5.git
 
 | Config | Use Case | Quality | Speed |
 |--------|----------|---------|-------|
-| **`acestep-v15-sft`** ✅ | Production — maximum detail | Highest | Slower |
-| `base` | General use | Good | Moderate |
-| `turbo` | Fast prototyping | Lower | Fastest |
-
-**Recommendation:** Use `acestep-v15-sft` — with 36 GB RAM there's no need to compromise on quality.
-
-### LLM (Language Model Planner)
-
-| Model | Parameters | Use Case |
-|-------|-----------|----------|
-| **`acestep-5Hz-lm-1.7B`** ✅ | 1.7B | Production — good balance of planning quality and speed |
-| `acestep-5Hz-lm-4B` | 4B | Higher quality planning, slower |
+| **`acestep-v15-sft`** | Production — maximum detail | Highest | Slower |
+| `turbo` | Fast prototyping | Lower | Fastest (8 steps) |
 
 ### Generation Parameters
 
 | Parameter | Value | Rationale |
 |-----------|-------|-----------|
-| `instrumental` | `True` | **Always** — meditation tracks must never have vocals |
-| `lyrics` | `"[Instrumental]"` | Reinforces instrumental mode at the token level |
-| `inference_steps` | `32` | Good quality/speed balance; increase to 50 for maximum fidelity |
-| `thinking` | `True` | Enables Chain-of-Thought planning for coherent long-form structure |
-| `duration` | User-specified | Passed directly from the UI; supports up to ~600s (10 min) |
+| `_GUIDANCE_SCALE` | `5.0` | SFT optimal range 5.0–7.0; balances prompt adherence with smooth textures |
+| `_INFERENCE_STEPS` | `50` | SFT max without error accumulation |
+| `_INFERENCE_STEPS_REPAINT` | `50` | Matches base steps for consistency |
+| `_LM_TEMPERATURE` | `0.85` | Richer tonal palettes while maintaining coherence |
+| `_USE_ADG` | `True` | Adaptive Dual Guidance reduces spectral noise |
+| `instrumental` | `True` | Always — meditation tracks must never have vocals |
+| `thinking` | `True` | Enables Chain-of-Thought planning for coherent structure |
+| `vocal_language` | `"unknown"` | Best practice for instrumental tracks |
+| `enable_normalization` | `True` | Consistent output levels from the VAE decoder |
 
 ---
 
-## 6. Prompt Engineering for Meditation Audio
+## 6. Prompt Engineering — MESA Framework
 
-### ACE-Step Prompt Strategy
+### Overview
 
-ACE-Step's LM planner responds well to **explicit structural guidance**. Unlike MusicGen (which has a ~45 word attention window), ACE-Step can process longer, more descriptive prompts because the LM stage has a full transformer context.
+The prompt system uses the **MESA** framework:
+- **M**ood: Emotional context (serene, contemplative, peaceful)
+- **E**lements: Instruments and textures (tibetan bowls, warm pads, soft piano)
+- **S**tructure: Song architecture via structural lyrics tags
+- **A**pplication: Use case context (meditation background, sleep journey)
 
-### Automatic Prompt Enhancement
+### Caption Construction
 
-The `AceStepEngine._enhance_prompt()` method automatically augments the user's prompt:
+`_enhance_prompt()` builds the caption from:
+1. **Base tags** (filtered to avoid duplicating user words): `ambient, meditation, calm, peaceful, warm, spacious, soft dynamics, gentle, soothing, high fidelity, studio quality, clean production`
+2. **User prompt** — appended verbatim to preserve creative intent
+3. **Instrumental constraint** — `no vocals, instrumental` (if not already present)
 
-```python
-# User provides: "Soft piano, warm pads, singing bowls"
-# Engine sends: "Meditation, ambient, minimalist, Soft piano, warm pads, singing bowls, 
-#                slow ambient pads, minimal motifs, no percussion, gentle, warm drone, 
-#                calm, spacious, no drums, slow tempo, high fidelity, lush reverb"
+**Important:** The caption does NOT contain contradictory directives like "no melody" or "no chord changes". These fight the LM planner and produce incoherent output.
+
+### Structural Lyrics
+
+Even for instrumental tracks, structural section tags guide the model's section-aware generation. The tags scale with duration:
+
+**Short tracks (≤90s):**
+```
+[Instrumental]
+[Intro - Gentle ambient texture emerging softly]
+[Verse - Main theme, warm and meditative, slowly developing]
+[Outro - Gradual fade, dissolving into stillness]
 ```
 
-The enhancer only adds keywords the user hasn't already included, to avoid diluting prompt attention with duplicates.
+**Medium tracks (90s–300s):** Adds Bridge and second Verse
 
-### Keyword Vocabulary
+**Long tracks (>300s):** Adds Interlude and second Bridge for expanded meditation arc
 
-**Always-included base:** `Meditation, ambient, minimalist`
-
-**Ambient textures (auto-appended if not present):**
-`slow ambient pads` · `minimal motifs` · `warm drone` · `calm` · `spacious` · `gentle` · `no percussion`
-
-**Tail constraints (always appended):**
-`no drums` · `slow tempo` · `high fidelity` · `lush reverb`
-
-### Curated Presets for ACE-Step
+### Curated Presets
 
 **Deep Sleep / Theta Waves**
 ```
-Deep sub-bass drone, extremely slow evolution, warm analog synth pads, 
-healing 432Hz tones, dark and warm tonal balance, very spacious reverb,
-constant volume throughout
+Deep sub-bass drone, extremely slow evolution, warm analog synth pads,
+healing 432Hz tones, dark and warm tonal balance, very spacious reverb
 ```
 
 **Mindfulness / Breath Focus**
 ```
-Single sustained cello pad, occasional soft singing bowl strike, vast silence, 
-60 BPM feel, warm room reverb, meditative and grounding, minimal movement
+Single sustained cello pad, occasional soft singing bowl strike, vast silence,
+warm room reverb, meditative and grounding, minimal movement
 ```
 
 **Zen Garden / Clarity**
@@ -191,31 +170,12 @@ Soft shakuhachi flute with long decays, warm synth drone, occasional distant gon
 silence between notes, dry reverb, high clarity, introspective
 ```
 
-**Healing / Chakra Work**
-```
-Tibetan singing bowls, pure harmonic overtones, resonant metal vibrations,
-432Hz tuning, distant meditative gong, healing frequencies, sacred warmth
-```
+### Anti-Patterns
 
-**Morning Awakening**
-```
-Light shimmering bells, gentle piano chords with long sustain, birdsong texture,
-slowly rising warm pads, peaceful and hopeful, very slow and gentle
-```
-
-### Anti-Patterns (What NOT to Put in ACE-Step Prompts)
-
-- ❌ `upbeat`, `energetic`, `dance`, `groove` — triggers rhythmic planning in the LM
-- ❌ `vocals`, `singing`, `rap`, `lyrics` — contradicts `instrumental=True`
-- ❌ `fast tempo`, `120 BPM` — fights the meditation intent
-- ❌ Contradictory terms (`beatless with a groove`) — confuses the LM planner
-
-### BPM Control
-
-ACE-Step's LM planner understands BPM constraints. For meditation:
-- **Target BPM:** 40–60 (very slow, meditative)
-- This can be passed via `use_cot_metas=True` or by including `"40 BPM"` in the prompt
-- The LM will plan sections and transitions around this tempo
+- Do NOT include BPM or key in the caption — use dedicated metadata parameters
+- Do NOT use contradictory terms ("no melody", "static harmony")
+- Do NOT use non-standard lyrics tags (`[Drone]`, `[Static Pad]`, `[Beatless]`)
+- Do NOT include `upbeat`, `energetic`, `dance` — triggers rhythmic planning
 
 ---
 
@@ -223,49 +183,75 @@ ACE-Step's LM planner understands BPM constraints. For meditation:
 
 ### Class Interface
 
-`AceStepEngine` mirrors `MusicEngine`'s interface exactly:
+`AceStepEngine` mirrors `MusicEngine`'s interface:
 
 | Method | Signature | Returns |
 |--------|-----------|---------|
-| `load_model()` | `() -> None` | Initializes DiT + LLM on MLX |
+| `load_model()` | `(model_type="sft") -> None` | Initializes DiT + LLM on MLX |
 | `unload_model()` | `() -> None` | Shuts down services, frees memory |
-| `generate()` | `(prompt, total_duration_sec, progress_cb) -> np.ndarray` | Mono float32 at 24 kHz |
+| `generate()` | `(prompt, total_duration_sec, ...) -> np.ndarray` | Mono float32 at 24 kHz |
 
-### Audio Post-Processing Pipeline
+### Audio Post-Processing
 
-ACE-Step outputs **48 kHz stereo**. The Moodscape pipeline expects **24 kHz mono**. The conversion happens inside `generate()`:
+The postprocess chain is minimal — the 1D VAE produces near-lossless quality:
 
 ```
 ACE-Step output (48 kHz stereo tensor)
     │
-    ├── Stereo → Mono: tensor.mean(dim=0, keepdim=True)
+    ├── Stereo → Mono: tensor.mean(dim=0)
     │
     ├── Resample 48 kHz → 24 kHz: torchaudio.functional.resample()
-    │       (lowpass_filter_width=64, rolloff=0.9475 for high-quality sinc interpolation)
+    │       (rolloff=0.9475 provides proper Nyquist filtering)
     │
-    └── Output: float32 numpy array at 24 kHz (same as MusicEngine)
+    ├── Peak normalize to -1 dBFS (consistent output level)
+    │
+    └── Output: float32 numpy array at 24 kHz
 ```
 
-This ensures the downstream pipeline (`mixer.py`, `audio_processor.py`, `export_audio()`) works identically regardless of which music engine was used.
+All spectral shaping is handled by the downstream Pedalboard FX chain (`make_acestep_music_chain()`) at 44.1 kHz.
+
+### Three-Phase Long-Form Pipeline (>90s)
+
+For tracks exceeding 90 seconds, `_generate_infinite()` uses a three-phase approach:
+
+**Phase 1 — Genesis:**
+Generate the initial 60s anchor via `text2music`. This sets the harmonic DNA, timbre palette, and tonal baseline.
+
+**Phase 2 — Continuation via Cover Task:**
+For each subsequent segment, use the `cover` task with `audio_cover_strength` modulation:
+- Segment 2: strength=0.85 (close to anchor)
+- Segment 3: strength=0.80
+- Segment 4+: strength=0.75 (floor 0.70)
+
+The cover task preserves the source's harmonic skeleton while allowing controlled tonal evolution. All intermediate audio stays at native 48 kHz stereo.
+
+**Phase 3 — Boundary Smoothing:**
+Repaint 5-second windows centered on each seam between segments. The DiT automatically smooths rhythm, harmony, and timbre across the boundary.
+
+**Final:** Single postprocess converts the complete 48 kHz stereo track to 24 kHz mono.
+
+### Output Validation
+
+`_validate_output()` checks for:
+- NaN/Inf values (model failure)
+- Near-silence (RMS < -50 dBFS)
+- Excessive clipping (>5% samples at ±1.0)
+- Short output (<50% of requested duration)
+
+Failed generations are retried up to 3 times automatically.
 
 ### Memory Management
 
 ```python
 def unload_model(self):
-    """Release ACE-Step models and aggressively free memory."""
-    if self._dit is not None:
-        self._dit.shutdown_service()  # Clean MLX shutdown
-    
+    self._llm.unload()
     self._dit = None
     self._llm = None
-    self.initialized = False
-    
-    gc.collect()                      # Force Python garbage collection
-    if torch.backends.mps.is_available():
-        torch.mps.empty_cache()       # Clear any MPS-side allocations
+    gc.collect()
+    torch.mps.empty_cache()
 ```
 
-> **Why aggressive teardown?** PyTorch/MLX memory on unified RAM doesn't free immediately after `del`. Explicit `gc.collect()` + `torch.mps.empty_cache()` ensures the 36 GB pool is clear before the next TTS model loads. This is critical for the sequential loading pattern (TTS → Music → unload).
+Explicit `gc.collect()` + `torch.mps.empty_cache()` ensures the 36 GB pool is clear before the next TTS model loads.
 
 ---
 
@@ -273,72 +259,42 @@ def unload_model(self):
 
 ### Sequential Loading Pattern
 
-The pipeline enforces strict sequential model loading to prevent OOM:
-
 ```
-1. Load TTS (Kokoro or Parler) → Synthesize narration → Unload TTS
-2. Load Music Engine (MusicGen or ACE-Step) → Generate music → Unload Music
-3. Mix, apply FX, export (CPU-only, no model needed)
+1. Load TTS → Synthesize narration → Unload TTS
+2. Load ACE-Step → Generate music → Unload ACE-Step
+3. Mix, apply FX, export (CPU-only)
 ```
 
 ### Model Routing in `pipeline.py`
-
-The `music_model` parameter (`"musicgen"` or `"acestep"`) controls which engine is instantiated:
 
 ```python
 if use_acestep:
     from core.acestep_engine import AceStepEngine
     music_engine = AceStepEngine()
-else:
-    music_engine = self.music  # Existing MusicEngine instance
-
 music_engine.load_model()
-music_audio = music_engine.generate(enhanced_prompt, duration, progress_cb=...)
+music_audio = music_engine.generate(enhanced_prompt, duration, ...)
 music_engine.unload_model()
 ```
 
 ### Prompt Enhancement Routing
 
-Each model gets its own prompt enhancer:
-- **MusicGen:** `_enhance_music_prompt()` — caps at 45 words, adds `no drums/vocals/beatless`
-- **ACE-Step:** `_enhance_acestep_prompt()` → delegates to `AceStepEngine._enhance_prompt()` — appends meditation ambient keywords
+- **MusicGen:** `_enhance_music_prompt()` — caps at 45 words
+- **ACE-Step:** `_enhance_acestep_prompt(prompt, duration_hint)` — MESA framework with duration-aware lyrics
 
-### Sample Rate Routing
+### Pre-Mix Loudness
 
-Since MusicGen outputs at 24 kHz and ACE-Step also outputs at 24 kHz (after internal resampling), the pipeline uses the correct `TARGET_SAMPLE_RATE` constant from whichever engine was used:
-
-```python
-if use_acestep:
-    from core.acestep_engine import TARGET_SAMPLE_RATE as MUSIC_SR
-else:
-    from core.music_engine import TARGET_SAMPLE_RATE as MUSIC_SR
-```
-
-Both resolve to `24000` — the pipeline's standard rate.
+ACE-Step output is normalized to **-20 LUFS** before mixing, matching MusicGen's reference level.
 
 ---
 
 ## 9. Gradio UI Integration
 
-### Background Music Model Dropdown
+### ACE-Step Controls
 
-A new `gr.Dropdown` in the settings column:
-
-```python
-music_model_dropdown = gr.Dropdown(
-    choices=["MusicGen", "ACE-Step 1.5"],
-    value="MusicGen",
-    label="Background Music Model",
-)
-```
-
-### Visibility Behavior
-
-| Generation Mode | Music Dropdown Visible? |
-|----------------|------------------------|
-| Instrumental Only | ✅ Yes |
-| Instrumental + Vocal | ✅ Yes |
-| Vocals Only | ❌ Hidden (no music generated) |
+- `music_model_dropdown`: Choices = ["MusicGen", "ACE-Step 1.5", "Lyria RealTime"]
+- `acestep_quality`: Radio button for "Full Quality (SFT)" vs "Turbo (Fast)"
+- `acestep_bpm`: Slider 40–100, default 50
+- `acestep_key`: Dropdown for musical key, default "Auto"
 
 ---
 
@@ -349,31 +305,23 @@ music_model_dropdown = gr.Dropdown(
 pip install git+https://github.com/ace-step/ACE-Step-1.5.git
 ```
 
-### "ModuleNotFoundError: No module named 'mlx'"
-```bash
-pip install mlx
-# MLX only works on Apple Silicon — verify with:
-python -c "import platform; assert platform.machine() == 'arm64', 'Not Apple Silicon'"
-```
-
 ### OOM / Memory Pressure During Generation
 - Ensure TTS model is fully unloaded before ACE-Step loads
-- Close other GPU-intensive applications (Safari tabs, video players)
-- Consider using `inference_steps=32` instead of 50 to reduce peak memory
-- Monitor memory: `sudo memory_pressure` in another terminal
+- Close other GPU-intensive applications
+- Monitor: `sudo memory_pressure`
 
 ### Generated Audio Has Vocals Despite instrumental=True
-- Verify `lyrics="[Instrumental]"` is set in `GenerationParams`
-- Ensure the prompt doesn't contain vocal-adjacent terms (`singing`, `choir`, `voice`)
+- Verify `lyrics` starts with `[Instrumental]`
+- Ensure prompt doesn't contain vocal-adjacent terms
 
-### Audio Quality Issues (Artifacts, Metallic Sound)
-- Increase `inference_steps` from 32 to 50 for higher fidelity
-- Add `"high fidelity, warm, smooth texture"` to the prompt
-- Verify MLX backend is active (`device="mlx"`) — CPU fallback produces lower quality
+### Audio Quality Issues
+- Verify MLX backend is active (check logs for "MLX" or "mps")
+- Increase `_GUIDANCE_SCALE` if output doesn't match prompt (max 7.0)
+- Decrease `_LM_TEMPERATURE` if output is too unpredictable
 
-### Seams or Clicks in Long Tracks
-- ACE-Step generates in a single pass (no stitching needed for tracks ≤10 min)
-- If duration exceeds the model's single-pass limit, the issue may be in downstream processing — check the mixer's crossfade settings
+### Long-Form Seam Artifacts
+- The three-phase pipeline (cover + boundary smoothing) should eliminate seams
+- If artifacts persist, increase `BOUNDARY_WINDOW_SEC` in `_generate_infinite()`
 
 ---
 
@@ -381,19 +329,30 @@ python -c "import platform; assert platform.machine() == 'arm64', 'Not Apple Sil
 
 ```python
 # Model configuration
-DIT_CONFIG = "acestep-v15-sft"           # Full quality DiT
-LLM_MODEL = "acestep-5Hz-lm-1.7B"       # 1.7B parameter LM planner
-DEVICE = "mlx"                           # Metal GPU via MLX
-BACKEND = "mlx"                          # Native Apple Silicon
+DIT_CONFIG = "acestep-v15-sft"
+LLM_MODEL = "acestep-5Hz-lm-1.7B"
+BACKEND = "mlx"
+COMPILE_MODEL = True
 
 # Generation parameters
-INSTRUMENTAL = True                       # Always, for meditation
-LYRICS = "[Instrumental]"                # Token-level vocal suppression
-INFERENCE_STEPS = 32                     # Quality/speed balance (max: 50)
-THINKING = True                          # Chain-of-Thought planning enabled
+GUIDANCE_SCALE = 5.0
+INFERENCE_STEPS = 50
+LM_TEMPERATURE = 0.85
+USE_ADG = True
+INSTRUMENTAL = True
+ENABLE_NORMALIZATION = True
+VOCAL_LANGUAGE = "unknown"
 
 # Audio format
-NATIVE_SAMPLE_RATE = 48000               # ACE-Step native output
-TARGET_SAMPLE_RATE = 24000               # Pipeline standard (matches MusicEngine)
-OUTPUT_FORMAT = "mono float32 numpy"     # Pipeline contract
+NATIVE_SAMPLE_RATE = 48000
+TARGET_SAMPLE_RATE = 24000
+OUTPUT_FORMAT = "mono float32 numpy"
+
+# Long-form pipeline
+GENESIS_LENGTH = 60.0         # Initial anchor segment
+CONTINUATION_LENGTH = 60.0    # Cover continuation segments
+CONTEXT_LENGTH = 30.0         # Source audio for cover task
+CROSSFADE_SEC = 2.0           # Crossfade between segments
+BOUNDARY_WINDOW_SEC = 5.0     # Repaint window at seams
+STORY_CROSSFADE_SEC = 6.0     # Crossfade between story stages
 ```
