@@ -107,11 +107,11 @@ After generation, the audio passes through two sequential chains:
 
 **2. ACE-Step music FX chain** (`make_acestep_music_chain()` in `core/audio_processor.py`):
 ```
-HighpassFilter(60 Hz)                  ← removes diffusion noise rumble below 60 Hz
-LowShelfFilter(200 Hz, +1.5 dB)       ← adds proximity warmth
-PeakFilter(4000 Hz, -1.5 dB, Q=0.8)  ← softens upper-mids to sit behind narration
-HighShelfFilter(10000 Hz, -1.0 dB)    ← smooths the digital edge
-Compressor(-18 dB, 2:1, 80ms, 500ms) ← slow glue, no pumping
+HighpassFilter(60 Hz)                    ← removes diffusion noise rumble below 60 Hz
+LowShelfFilter(200 Hz, +2.0 dB)         ← enveloping warmth (conservative at -14 LUFS premix)
+PeakFilter(4000 Hz, -1.5 dB, Q=0.8)    ← softens upper-mids to sit behind narration
+HighShelfFilter(10000 Hz, -1.0 dB)      ← smooths the digital edge
+Compressor(-20 dB, 2.5:1, 80ms, 800ms) ← tighter macro-control, meditative release
 Limiter(-0.5 dBFS)
 ```
 
@@ -122,10 +122,10 @@ HighpassFilter(35 Hz) → Gain(-3 dB) → Compressor(2:1 glue) → Limiter(-1.0 
 
 **What this means for prompts:**
 - The **60 Hz highpass** removes sub-bass rumble — you do not need to avoid sub-bass in your prompt; the FX chain handles it.
-- The **+1.5 dB low-shelf at 200 Hz** already adds warmth to all ACE-Step output. You can freely include `warm` in your prompt and the effect will compound positively.
+- The **+2.0 dB low-shelf at 200 Hz** already adds warmth to all ACE-Step output. You can freely include `warm` in your prompt and the effect will compound positively.
 - The **-1.5 dB cut at 4 kHz** creates a spectral pocket for narration. Prompts emphasizing upper-mid presence instruments (bright piano, metallic overtones) will be attenuated.
 - The **-1.0 dB shelf at 10 kHz** tames digital edge. Do not add `bright` or `sparkle` descriptors expecting them to survive at full intensity — they will be reduced.
-- The target pre-mix loudness is **-20 LUFS**. The music typically sits at **-3 dB** relative to voice, ducked by the configured amount during speech.
+- The target pre-mix loudness is **-14 LUFS** (matching the final streaming standard). The music enters the mixer at this level, then the `music_volume_db=-17 dB` offset is applied, followed by the configured duck amount during speech.
 
 ---
 

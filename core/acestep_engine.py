@@ -356,8 +356,14 @@ class AceStepEngine:
 
         Phase 1 — Genesis: text2music for the initial anchor segment.
         Phase 2 — Continuation: cover task with decaying audio_cover_strength
-                  to generate harmonically coherent subsequent segments.
-        Phase 3 — Boundary Smoothing: repaint on seam regions.
+                  to generate harmonically coherent subsequent segments. Adjacent
+                  segments are joined with a 2-second equal-power cosine²
+                  crossfade (CROSSFADE_SEC = 2.0) — no hard cuts, no amplitude
+                  discontinuities at any seam boundary.
+        Phase 3 — Boundary Smoothing: 5-second ACE-Step repaint window at each
+                  seam eliminates musical discontinuity via model-level
+                  re-generation. This is a secondary quality pass — not the
+                  primary stitching mechanism (which is the Phase 2 crossfade).
 
         All intermediate audio stays at 48 kHz stereo.  Single postprocess
         at the end eliminates quality-degrading sample-rate round-trips.
