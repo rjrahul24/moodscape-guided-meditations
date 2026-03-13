@@ -11,7 +11,7 @@
 
 MoodScape combines AI models into a single pipeline:
 
-1. **Kokoro TTS** or **Parler TTS** synthesizes calm, natural narration from your script
+1. **Kokoro TTS** synthesizes calm, natural narration from your script
 2. **MusicGen (Meta)** generates custom ambient background music from a text prompt
 3. **Pedalboard (Spotify)** applies studio-quality audio effects — compression, reverb, EQ, limiting
 
@@ -19,26 +19,14 @@ The final mix features **automatic ducking** (music volume lowers when the narra
 
 ---
 
-## Speech Engines
+## Speech Engine
 
-MoodScape supports two TTS engines:
+MoodScape uses **Kokoro TTS** for narration synthesis:
 
-### Kokoro TTS (Default)
 - Ultra-fast, lightweight (82M parameters)
 - Named voice presets (Heart, Sky, Nova, Nicole, etc.) with voice blending
 - Numeric speed control (0.5–1.0)
-- Best for: quick generation, consistent results, familiar voices
-
-### Parler TTS
-- Description-controlled (2.2B parameters, Large v1)
-- Control voice via natural language: describe gender, pitch, speed, tone, warmth, recording quality
-- 34 named speakers for voice consistency (Jon, Lea, etc.)
-- 6 meditation-optimized presets + custom description option
-- Best for: rich expressive control, unique voices, cinematic quality
-
-Both engines output at 24,000 Hz mono and integrate seamlessly with MusicGen and the Pedalboard FX chain.
-
-> **First Run Note:** On first use, Parler TTS will download the model (~4.5 GB for Large, ~1.7 GB for Mini). This only happens once — subsequent runs use the cached model.
+- Outputs at 24,000 Hz mono, integrating seamlessly with MusicGen and the Pedalboard FX chain
 
 ---
 
@@ -46,7 +34,7 @@ Both engines output at 24,000 Hz mono and integrate seamlessly with MusicGen and
 
 | Feature | Detail |
 |---------|--------|
-| AI Narration | Kokoro TTS (fast, preset voices) or Parler TTS (description-controlled) |
+| AI Narration | Kokoro TTS — fast, lightweight, preset voices |
 | AI Music | Meta MusicGen — generates from text prompt, fills exact duration needed |
 | Auto Ducking | Music automatically lowers when narrator speaks; smoothly recovers in silence |
 | Voice FX | Warmth EQ, gentle compression, configurable reverb |
@@ -66,7 +54,6 @@ app.py                    ← Gradio UI entry point
 core/
   speech_engine.py        ← Abstract TTS engine interface (24 kHz mono contract)
   kokoro_tts/             ← Kokoro TTS wrapper (82M params, preset voices)
-  parler_tts/             ← Parler TTS wrapper (2.2B params, description-controlled)
   script_parser.py        ← Parses [pause:Xs] markers into segment list
   music_engine.py         ← MusicGen wrapper (32 kHz → resampled to 24 kHz)
   audio_processor.py      ← Pedalboard FX chains (voice / music / master)
@@ -154,12 +141,11 @@ The Gradio UI opens automatically at **http://localhost:7860**.
 
 1. **Write your script** in the left panel (or edit the pre-filled example)
 2. **Describe the music** style in the Music Prompt box
-3. **Select a TTS engine** — Kokoro TTS (fast) or Parler TTS (expressive)
-4. **Configure voice** — choose a Kokoro preset, or select a Parler voice style / write a custom description
-5. **Open "Audio Settings"** to tune speed, ducking, reverb, and fades
-6. **Choose output format** — WAV for lossless, MP3 for sharing
-7. Click **Generate Meditation** and wait for the progress bar to complete
-8. **Preview** the audio in the browser, then **download** it
+3. **Configure voice** — choose a Kokoro preset from the Voice dropdown
+4. **Open "Audio Settings"** to tune speed, ducking, reverb, and fades
+5. **Choose output format** — WAV for lossless, MP3 for sharing
+6. Click **Generate Meditation** and wait for the progress bar to complete
+7. **Preview** the audio in the browser, then **download** it
 
 ---
 
@@ -202,18 +188,6 @@ When you are ready, gently open your eyes. [pause:3s]
 | Adam | `am_adam` | Male |
 | Michael | `am_michael` | Male |
 
-### Parler TTS Voice Presets
-
-| Preset | Description |
-|--------|-------------|
-| Serene Female | Warm, breathy, compassionate, crystal clear |
-| Gentle Male | Deep, grounding, steady, close-mic |
-| Whisper Female | Soft, sleepy, ASMR-like, low pitch |
-| Calm Coach | Neutral, steady, guiding, even intonation |
-| Jon | Monotone, close-mic, consistent (named speaker) |
-| Lea | Expressive, warm, flowing (named speaker) |
-| Custom Description | Write your own natural-language voice description |
-
 ---
 
 ## Settings Reference
@@ -235,7 +209,7 @@ TTS and MusicGen models are loaded **sequentially**, not simultaneously:
 1. TTS engine is loaded → narration is synthesized → TTS is unloaded + memory freed
 2. MusicGen is loaded → music is generated → MusicGen is unloaded + memory freed
 
-This means even hardware with limited VRAM can run both models without out-of-memory errors. Parler TTS Large v1 uses ~6 GB with bfloat16 precision; Mini v1 uses ~3 GB as a fallback.
+This means even hardware with limited VRAM can run both models without out-of-memory errors.
 
 ---
 
@@ -244,7 +218,6 @@ This means even hardware with limited VRAM can run both models without out-of-me
 | Library | Role |
 |---------|------|
 | [Kokoro TTS](https://github.com/hexgrad/kokoro) | Text-to-speech narration (fast, preset voices) |
-| [Parler TTS](https://github.com/huggingface/parler-tts) | Text-to-speech narration (description-controlled) |
 | [AudioCraft / MusicGen](https://github.com/facebookresearch/audiocraft) | AI music generation |
 | [Pedalboard](https://github.com/spotify/pedalboard) | Audio effects (EQ, compression, reverb, limiting) |
 | [Gradio](https://gradio.app) | Web UI |

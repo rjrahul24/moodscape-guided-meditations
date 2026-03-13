@@ -2,7 +2,7 @@
 
 ## 1. Objective
 
-A high-fidelity vocal and music post-processing "Mastering Chain" for MoodScape. The pipeline handles raw output from both **Kokoro** and **Parler-TTS 2.2B**, removing digital artifacts while enhancing warmth, intimacy, and musical cohesion. Optimized for Apple Silicon with 36 GB unified memory.
+A high-fidelity vocal and music post-processing "Mastering Chain" for MoodScape. The pipeline handles raw output from **Kokoro TTS**, removing digital artifacts while enhancing warmth, intimacy, and musical cohesion. Optimized for Apple Silicon with 36 GB unified memory.
 
 ---
 
@@ -127,8 +127,7 @@ Final brick-wall limiter prevents any overs in the exported file.
 | File | Role |
 |---|---|
 | `core/kokoro_tts/postprocessor.py` | `KokoroMasteringEngine` — per-chunk cleanup, crossfade assembly, spectral gating noise reduction, voice FX chain, master EQ chain |
-| `core/parler_tts/postprocessor.py` | `MasteringEngine` — Phase A (`restore_vocals`) and Phase B (`master_vocals`) for Parler TTS |
-| `core/audio_processor.py` | Voice FX chain (compression + reverb + limiter), Music FX chains (MusicGen, ACE-Step, Lyria), Master chain (HPF 35Hz → Gain → Compressor → Limiter) |
+| `core/audio_processor.py` | Music FX chains (MusicGen, ACE-Step, Lyria), Master chain (HPF 35Hz → Gain → Compressor → Limiter) |
 | `core/mixer.py` | Mask-based ducking, overlay, equal-power crossfade looping, fades, LUFS normalization, resampling, export |
 | `core/kokoro_tts/preprocessor.py` | Script parsing, text expansion, IPA phoneme injection, prosody punctuation, token-aware chunking |
 | `core/kokoro_tts/engine.py` | TTS synthesis with per-chunk artifact trimming, inter-sentence pausing, spectral gating |
@@ -171,9 +170,8 @@ export_audio(mixed, mix_sr, "wav", master_chain=chain)      # Step 11:  Chunked 
 
 ## 8. Deployment Notes
 
-1. **Memory:** Use `torch.bfloat16` for Parler-TTS 2.2B to leave VRAM for resemble-enhance
-2. **Sentence Chunking:** For scripts > 2 minutes, generate in sentence chunks to prevent TTS hallucination
-3. **Music Choice:** For sleep journeys, prioritize low-transient music (pads/drones) for smoother ducking
+1. **Sentence Chunking:** For scripts > 2 minutes, generate in sentence chunks to prevent TTS hallucination
+2. **Music Choice:** For sleep journeys, prioritize low-transient music (pads/drones) for smoother ducking
 
 ---
 

@@ -76,9 +76,6 @@ class MeditationPipeline:
         music_prompt: str,
         voice: str = "golden_hour",
         speed: float = 0.78,
-        tts_engine: str = "kokoro",
-        parler_voice_preset: str = "Serene Female — warm, calm, breathy",
-        parler_custom_description: str = "",
         duck_amount_db: float = -21.0,
         reverb_amount: float = 0.15,
         fade_in_sec: float = 3.0,
@@ -110,9 +107,6 @@ class MeditationPipeline:
                 Used when music_prompt_stages is None.
             voice: Kokoro voice name, preset, or comma-separated blend.
             speed: Speaking speed (0.5–1.0).
-            tts_engine: "kokoro" or "parler".
-            parler_voice_preset: Parler voice preset label.
-            parler_custom_description: Custom Parler voice description.
             duck_amount_db: How much to reduce music during speech (negative dB).
                 Combined with music_volume_db=-17 → total -38 dB during speech.
             reverb_amount: Voice reverb wet level (0.0–0.5).
@@ -170,14 +164,8 @@ class MeditationPipeline:
                 # ── Step 1: Parse script ────────────────────────────────────────
                 _progress(progress_cb, 0.0, "Parsing meditation script...")
 
-                if tts_engine == "kokoro":
-                    # Use Kokoro-specific preprocessing pipeline
-                    from core.kokoro_tts.preprocessor import prepare_segments
-                    segments = prepare_segments(script)
-                else:
-                    # Parler uses its isolated preprocessor
-                    from core.parler_tts.preprocessor import prepare_segments
-                    segments = prepare_segments(script)
+                from core.kokoro_tts.preprocessor import prepare_segments
+                segments = prepare_segments(script)
 
                 if not segments:
                     raise ValueError("Script is empty or contains no content.")
@@ -189,15 +177,9 @@ class MeditationPipeline:
                 )
 
                 # ── Step 2: Load TTS ────────────────────────────────────────────
-                if tts_engine == "parler":
-                    _progress(progress_cb, 0.05, "Loading Parler TTS engine...")
-                    from core.parler_tts.engine import ParlerTTSEngine
-                    tts = ParlerTTSEngine()
-                    tts.load_model()
-                else:
-                    _progress(progress_cb, 0.05, "Loading Kokoro voice model...")
-                    tts = self.tts
-                    tts.load_model()
+                _progress(progress_cb, 0.05, "Loading Kokoro voice model...")
+                tts = self.tts
+                tts.load_model()
 
                 # ── Step 3: Synthesize narration ────────────────────────────────
                 _progress(progress_cb, 0.10, "Synthesizing narration...")
@@ -206,20 +188,10 @@ class MeditationPipeline:
                     frac = 0.10 + 0.30 * (current / max(total, 1))
                     _progress(progress_cb, frac, f"Synthesizing segment {current}/{total}...")
 
-                if tts_engine == "parler":
-                    voice_param = (
-                        parler_custom_description
-                        if parler_voice_preset == "Custom Description" and parler_custom_description
-                        else parler_voice_preset
-                    )
-                    voice_audio, voice_activity = tts.synthesize(
-                        segments, voice=voice_param, speed=speed, progress_cb=tts_progress
-                    )
-                else:
-                    voice_audio, voice_activity = tts.synthesize(
-                        segments, voice=voice, speed=speed,
-                        progress_cb=tts_progress, seed=seed,
-                    )
+                voice_audio, voice_activity = tts.synthesize(
+                    segments, voice=voice, speed=speed,
+                    progress_cb=tts_progress, seed=seed,
+                )
 
                 logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
 
@@ -257,12 +229,8 @@ class MeditationPipeline:
                 # artifacts on a clean signal. Bypassed here; mastering_engine is still
                 # needed for Phase B (master_vocals).
                 _progress(progress_cb, 0.38, "Preparing vocal mastering chain...")
-                if tts_engine == "kokoro":
-                    from core.kokoro_tts.postprocessor import KokoroMasteringEngine
-                    mastering_engine = KokoroMasteringEngine(sample_rate=SAMPLE_RATE)
-                else:
-                    from core.parler_tts.postprocessor import MasteringEngine
-                    mastering_engine = MasteringEngine(sample_rate=SAMPLE_RATE)
+                from core.kokoro_tts.postprocessor import KokoroMasteringEngine
+                mastering_engine = KokoroMasteringEngine(sample_rate=SAMPLE_RATE)
                 # voice_audio = mastering_engine.restore_vocals(voice_audio, sr=SAMPLE_RATE)  # bypassed: Kokoro is pre-clean
 
                 logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
@@ -298,8 +266,6 @@ class MeditationPipeline:
                 # ── Step 4: Unload TTS, load music model ────────────────────────
                 if not is_instrumental:
                     tts.unload_model()
-                    if tts_engine == "parler":
-                        del tts
 
                 music_model_label = "Lyria RealTime" if use_lyria else ("ACE-Step 1.5" if use_acestep else "MusicGen")
                 _progress(progress_cb, 0.40, f"Switching to {music_model_label}...")
@@ -453,14 +419,9 @@ class MeditationPipeline:
             if not is_instrumental:
                 # ── Step 7: Apply voice FX ──────────────────────────────────────
                 _progress(progress_cb, 0.72, "Applying voice effects...")
-                if tts_engine == "kokoro":
-                    from core.kokoro_tts.postprocessor import build_voice_chain, apply_fx
-                    voice_chain = build_voice_chain(reverb_amount=reverb_amount)
-                    voice_audio = apply_fx(voice_audio, voice_chain, mix_sr)
-                else:
-                    from core.audio_processor import make_voice_chain, apply_fx
-                    voice_chain = make_voice_chain(reverb_amount=reverb_amount)
-                    voice_audio = apply_fx(voice_audio, voice_chain, mix_sr)
+                from core.kokoro_tts.postprocessor import build_voice_chain, apply_fx
+                voice_chain = build_voice_chain(reverb_amount=reverb_amount)
+                voice_audio = apply_fx(voice_audio, voice_chain, mix_sr)
 
                 # Align voice_activity to post-FX voice length (reverb tail trim
                 # may change length slightly)

@@ -6,61 +6,11 @@ from pedalboard import (
     Gain,
     HighpassFilter,
     HighShelfFilter,
-    LowpassFilter,
     LowShelfFilter,
-    NoiseGate,
     PeakFilter,
     Limiter,
     Pedalboard,
-    Reverb,
 )
-
-
-def make_voice_chain(reverb_amount: float = 0.08) -> Pedalboard:
-    """FX chain for narration: noise gate → highpass → compression → reverb → limit.
-
-    The HighpassFilter at 80 Hz removes sub-bass rumble from TTS output.
-    Warmth / presence EQ is handled by MasteringEngine.master_vocals()
-    at 44.1 kHz, so this chain focuses on cleanup, dynamics, and spatial
-    effects.
-
-    Args:
-        reverb_amount: Reverb wet level (0.0 = dry, 0.5 = very wet).
-                       Exposed as a Gradio slider (default 0.09).
-    """
-    reverb_amount = float(np.clip(reverb_amount, 0.0, 0.5))
-    return Pedalboard([
-        # Noise gate: mutes inter-chunk silence & residual TTS static before
-        # compression amplifies it.  Threshold raised to -42 dB (was -35) so
-        # soft phonemes like breathy /h/, /f/, and unvoiced trailing stops
-        # are NOT gated — gating these produces the "clipped / robotic" quality
-        # on consonants.  Ratio kept high (20:1) to still close firmly on true
-        # silence and near-silence.
-        NoiseGate(threshold_db=-42, ratio=20.0, attack_ms=2.0, release_ms=80),
-        # Remove sub-bass rumble and plosives from TTS output (80-100Hz range)
-        HighpassFilter(cutoff_frequency_hz=90.0),
-        # Soft compression to gently glue dynamics without pumping or lifting the noise floor.
-        # Threshold: -20dB, Ratio: 2:1 — lighter than before to avoid pulling up inter-word
-        # static. Attack: 5ms lets transients breathe; Release: 100ms prevents pumping.
-        Compressor(threshold_db=-20.0, ratio=2.0, attack_ms=5.0, release_ms=100.0),
-        # High-shelf de-harshener at 5 kHz, -4.5 dB (pre-reverb).
-        # Targeting the broader "presence/sizzle" band (5–9 kHz) where Kokoro's ISTFTNet
-        # vocoder concentrates harshness. Applying HERE (before reverb) treats the artifact
-        # at its source. The existing 9 kHz LowpassFilter above handles the Nyquist
-        # brick-wall artifact; this shelf covers the lower harshness range.
-        HighShelfFilter(cutoff_frequency_hz=5000, gain_db=-4.5),
-        # Low-pass filter (de-essing) above 9 kHz to tame metallic TTS hallucinations
-        LowpassFilter(cutoff_frequency_hz=9000.0),
-        # Subtle chamber/studio reverb so the voice sounds like it is perfectly recorded in a physical room
-        # Room size 0.15 (15%), Damping 0.6 to retain some vocal air
-        Reverb(
-            room_size=0.15,
-            damping=0.6,
-            wet_level=reverb_amount,
-            dry_level=1.0 - reverb_amount,
-        ),
-        Limiter(threshold_db=-1.0),
-    ])
 
 
 def make_music_chain() -> Pedalboard:

@@ -61,7 +61,7 @@ Lyria API (48 kHz stereo int16)
   → deinterleave + average to mono float32     [core/lyria/engine.py: _pcm_to_numpy()]
   → returned at 48 kHz (no resampling)
 
-TTS voice (24 kHz mono, Kokoro/Parler)
+TTS voice (24 kHz mono, Kokoro)
   → upsample_audio(24000 → 48000)              [core/audio_processor.py: upsample_audio()]
   → voice_activity mask repeated ×2 (exact 2:1 ratio)
 
@@ -181,7 +181,7 @@ MeditationPipeline.generate()     [core/pipeline.py]
   → use_lyria = music_model == "lyria"
   → mix_sr = 48000
 
-TTS synthesis → 24 kHz            [kokoro / parler engine]
+TTS synthesis → 24 kHz            [kokoro engine]
 → upsample 24k → 48k              [upsample_audio()]
 → voice_activity repeated ×2
 

@@ -36,20 +36,7 @@ import soundfile as sf
 import gradio as gr
 from dotenv import load_dotenv
 
-# Compatibility shim: transformers >=4.47 renamed/removed SlidingWindowCache.
-# parler_tts (pinned to transformers==4.46.1 API) imports it at module level.
-# We backfill the name with StaticCache so the import succeeds.  parler_tts
-# only uses SlidingWindowCache when cache_implementation=="sliding_window",
-# a path never taken in our inference calls, so StaticCache is a safe alias.
-try:
-    from transformers.cache_utils import SlidingWindowCache as _swc  # noqa: F401
-except ImportError:
-    import transformers.cache_utils as _tcu
-    from transformers.cache_utils import StaticCache
-    _tcu.SlidingWindowCache = StaticCache
-
 from core.kokoro_tts.engine import KokoroEngine
-from core.parler_tts.engine import VOICE_PRESETS as PARLER_VOICE_PRESETS
 from core.pipeline import MeditationPipeline
 
 # Load environment variables (like HF_TOKEN) from .env file
@@ -74,9 +61,6 @@ KOKORO_VOICE_CHOICES = [
     ("Adam — US Male (grounding)",               "am_adam"),
     ("George — UK Male (warm)",                  "bm_george"),
 ]
-
-# Parler TTS preset labels for the dropdown
-PARLER_PRESET_CHOICES = [label for label, _ in PARLER_VOICE_PRESETS]
 
 pipeline = MeditationPipeline()
 
@@ -116,11 +100,8 @@ def generate_meditation(
     script,
     music_prompt,
     music_duration,
-    engine_choice,
     music_model_choice,
     kokoro_voice,
-    parler_preset,
-    parler_custom_desc,
     speed,
     duck_amount,
     reverb_amount,
@@ -142,9 +123,6 @@ def generate_meditation(
 ):
     def progress_cb(fraction, message):
         progress(fraction, desc=message)
-
-    # Map radio label to engine key
-    tts_engine = "parler" if engine_choice == "Parler TTS" else "kokoro"
 
     # Map music model label to engine key
     if music_model_choice == "ACE-Step 1.5":
@@ -192,10 +170,7 @@ def generate_meditation(
             instrumental_duration_m=music_duration,
             voice=kokoro_voice,
             speed=speed,
-            tts_engine=tts_engine,
             music_model=music_model,
-            parler_voice_preset=parler_preset,
-            parler_custom_description=parler_custom_desc,
             duck_amount_db=duck_amount,
             reverb_amount=reverb_amount,
             fade_in_sec=fade_in,
@@ -222,10 +197,9 @@ def generate_meditation(
         if status_msg:
             status = f"Warning: {status_msg}. {base_status}"
         else:
-            engine_label = "Parler TTS" if tts_engine == "parler" else "Kokoro"
             music_label = music_model_choice
             lyria_suffix = f" (BPM {lyria_bpm}, density {lyria_density:.2f})" if music_model == "lyria" else ""
-            status = f"Generated with {engine_label} + {music_label}{lyria_suffix}. {base_status}"
+            status = f"Generated with Kokoro + {music_label}{lyria_suffix}. {base_status}"
         return output_path, status
     except Exception as e:
         return None, f"Error: {e}"
@@ -285,17 +259,6 @@ with gr.Blocks(
 
         # ── Right column: settings ─────────────────────────────────────
         with gr.Column(scale=1):
-            # TTS Engine selector
-            engine_radio = gr.Radio(
-                choices=["Kokoro TTS", "Parler TTS"],
-                value="Kokoro TTS",
-                label="TTS Engine",
-                info=(
-                    "Kokoro: fast, lightweight, preset voices. "
-                    "Parler: slower, richer, description-controlled voices."
-                ),
-            )
-
             # Background Music Model selector
             music_model_dropdown = gr.Dropdown(
                 choices=["MusicGen", "ACE-Step 1.5", "Lyria RealTime"],
@@ -325,29 +288,6 @@ with gr.Blocks(
                     label="Voice",
                 )
 
-            # Parler TTS settings (hidden by default)
-            with gr.Accordion("Parler TTS Settings", open=False, visible=False) as parler_settings:
-                parler_preset_dropdown = gr.Dropdown(
-                    choices=PARLER_PRESET_CHOICES,
-                    value=PARLER_PRESET_CHOICES[0],
-                    label="Voice Style",
-                    info="Select a meditation-optimized voice preset, or choose 'Custom Description' to write your own.",
-                )
-                parler_custom_textbox = gr.Textbox(
-                    label="Custom Voice Description",
-                    placeholder=(
-                        "Example: A warm, low female voice with slow, soothing delivery, "
-                        "breathy tone, and crystal clear studio recording with no background noise."
-                    ),
-                    lines=3,
-                    visible=False,
-                    info=(
-                        "Describe the voice you want. Key terms: warm/cold, breathy/clear, "
-                        "slow/fast, low/high pitch, male/female, close-mic/distant, "
-                        "reverb/no reverb. Use named speakers (Jon, Lea) for consistency."
-                    ),
-                )
- 
             # ACE-Step Metadata (Collapsed by default)
             with gr.Accordion("ACE-Step Metadata (BPM / Key)", open=False, visible=False) as acestep_metadata:
                 acestep_bpm = gr.Slider(
@@ -462,12 +402,10 @@ with gr.Blocks(
             )
 
     # Toggle visibility of generation mode specific settings
-    def toggle_mode_settings(mode, current_engine, current_music_model):
+    def toggle_mode_settings(mode, current_music_model):
         is_inst = mode == "Instrumental Only"
         is_voc = mode == "Vocals Only"
 
-        show_kokoro = (not is_inst) and (current_engine == "Kokoro TTS")
-        show_parler = (not is_inst) and (current_engine == "Parler TTS")
         show_acestep = (current_music_model == "ACE-Step 1.5") and not is_voc
         show_lyria = (current_music_model == "Lyria RealTime") and not is_voc
 
@@ -475,10 +413,8 @@ with gr.Blocks(
             gr.update(visible=not is_inst), # script_input
             gr.update(visible=not is_voc),  # music_prompt
             gr.update(visible=is_inst),     # music_duration
-            gr.update(visible=not is_inst), # engine_radio
             gr.update(visible=not is_voc),  # music_model_dropdown
-            gr.update(visible=show_kokoro), # kokoro_settings
-            gr.update(visible=show_parler), # parler_settings
+            gr.update(visible=not is_inst), # kokoro_settings
             gr.update(visible=not is_inst), # speed_slider
             gr.update(visible=not is_voc),  # duck_slider
             gr.update(visible=not is_inst), # reverb_slider
@@ -490,18 +426,9 @@ with gr.Blocks(
 
     generation_mode.change(
         fn=toggle_mode_settings,
-        inputs=[generation_mode, engine_radio, music_model_dropdown],
-        outputs=[script_input, music_prompt, music_duration, engine_radio, music_model_dropdown, kokoro_settings, parler_settings, speed_slider, duck_slider, reverb_slider, reference_audio, acestep_quality, acestep_metadata, lyria_settings],
+        inputs=[generation_mode, music_model_dropdown],
+        outputs=[script_input, music_prompt, music_duration, music_model_dropdown, kokoro_settings, speed_slider, duck_slider, reverb_slider, reference_audio, acestep_quality, acestep_metadata, lyria_settings],
     )
-
-    # Toggle visibility of engine-specific settings
-    def toggle_engine_settings(engine_choice, mode):
-        is_inst = mode == "Instrumental Only"
-        is_kokoro = engine_choice == "Kokoro TTS"
-        return (
-            gr.update(visible=is_kokoro and not is_inst),       # kokoro_settings
-            gr.update(visible=not is_kokoro and not is_inst),    # parler_settings
-        )
 
     # Toggle engine-specific settings accordions for ACE-Step and Lyria
     def toggle_music_engine_ui(model, mode):
@@ -520,22 +447,6 @@ with gr.Blocks(
         outputs=[acestep_quality, acestep_metadata, lyria_settings],
     )
 
-    engine_radio.change(
-        fn=toggle_engine_settings,
-        inputs=[engine_radio, generation_mode],
-        outputs=[kokoro_settings, parler_settings],
-    )
-
-    # Show/hide custom description textbox based on preset selection
-    def toggle_custom_description(preset):
-        return gr.update(visible=(preset == "Custom Description"))
-
-    parler_preset_dropdown.change(
-        fn=toggle_custom_description,
-        inputs=[parler_preset_dropdown],
-        outputs=[parler_custom_textbox],
-    )
-
     generate_btn = gr.Button("Generate Meditation", variant="primary", size="lg")
 
     with gr.Row():
@@ -550,11 +461,8 @@ with gr.Blocks(
             script_input,
             music_prompt,
             music_duration,
-            engine_radio,
             music_model_dropdown,
             kokoro_voice_dropdown,
-            parler_preset_dropdown,
-            parler_custom_textbox,
             speed_slider,
             duck_slider,
             reverb_slider,

@@ -4,7 +4,7 @@ This document outlines the core architectural logic that powers the generation, 
 
 ## 1. Sample Rate Pipeline Standardization
 Generative AI audio models operate natively across a multitude of disparate sample frequencies. 
-- **Voice TTS (Kokoro/Parler)**: ~24kHz natively
+- **Voice TTS (Kokoro)**: ~24kHz natively
 - **MusicGen**: ~32kHz natively
 
 If these arrays are fed blindly into identical FX Pedals or summed together, extreme timing synchronization and pitch-shift ("chipmunking") degradation occurs. 
@@ -15,7 +15,7 @@ All generative outputs are intercepted instantly to upsample to **44.1kHz (44100
 ## 2. Dynamic Audio Mixing Processing
 
 ### Mask-Based Ducking (Primary Method)
-MoodScape uses **voice-activity mask-driven ducking** (`apply_mask_ducking` in `mixer.py`) as the primary ducking method. Instead of re-deriving vocal presence via RMS energy, this method uses the pre-computed `voice_activity` boolean mask — a sample-accurate ground-truth map of when the voice is speaking, constructed natively in `core/kokoro_tts/engine.py` or `core/parler_tts/engine.py`.
+MoodScape uses **voice-activity mask-driven ducking** (`apply_mask_ducking` in `mixer.py`) as the primary ducking method. Instead of re-deriving vocal presence via RMS energy, this method uses the pre-computed `voice_activity` boolean mask — a sample-accurate ground-truth map of when the voice is speaking, constructed natively in `core/kokoro_tts/engine.py`.
 
 The `mix()` function calls `apply_mask_ducking` with meditation-optimized parameters:
 
