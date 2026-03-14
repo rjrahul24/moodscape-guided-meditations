@@ -48,7 +48,9 @@ load_dotenv()
 _F5_VOICE_REGISTRY = _f5_registry.scan()
 # Slug list for the dropdown; sorted alphabetically for consistent ordering.
 F5_VOICE_SLUGS = sorted(_F5_VOICE_REGISTRY.keys())
-F5_VOICE_DEFAULT = F5_VOICE_SLUGS[0] if F5_VOICE_SLUGS else None
+# (label, value) pairs — label is human-readable, value is the slug for the pipeline.
+F5_VOICE_CHOICES = [(slug.replace("_", " ").title(), slug) for slug in F5_VOICE_SLUGS]
+F5_VOICE_DEFAULT = F5_VOICE_CHOICES[0][1] if F5_VOICE_CHOICES else None
 
 # ── Voice choices for Kokoro engine ──────────────────────────────────────────
 
@@ -318,10 +320,10 @@ with gr.Blocks(
             # F5-TTS settings (hidden by default, shown when F5-TTS engine is selected)
             with gr.Accordion("F5-TTS Voice Settings", open=True, visible=False) as f5_settings:
                 f5_voice_dropdown = gr.Dropdown(
-                    choices=F5_VOICE_SLUGS if F5_VOICE_SLUGS else ["(no voices registered)"],
+                    choices=F5_VOICE_CHOICES if F5_VOICE_CHOICES else ["(no voices registered)"],
                     value=F5_VOICE_DEFAULT,
                     label="Voice Personality",
-                    interactive=bool(F5_VOICE_SLUGS),
+                    interactive=bool(F5_VOICE_CHOICES),
                     info=(
                         "Select a registered voice personality. "
                         "To add voices, place matching .wav and .txt pairs in "

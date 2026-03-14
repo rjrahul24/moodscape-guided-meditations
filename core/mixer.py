@@ -262,14 +262,27 @@ def apply_fades(
 def calculate_loudness_gain(
     audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
-    target_lufs: float = -14.0,
+    target_lufs: float = -18.0,
 ) -> float:
-    """Calculate the linear gain multiplier to hit a target LUFS."""
+    """Calculate the linear gain multiplier to hit a target LUFS.
+    
+    Professional meditation narration targets ~ -18.0 LUFS integrated.
+    For mono archives, we target -21.0 LUFS (mono measures ~3 dB lower 
+     than stereo for same perceived loudness).
+    """
+    meter = pyln.Meter(sample_rate)
+    
+    # Adjust target for mono playback architectures if the source is mono
+    num_channels = audio.shape[0] if audio.ndim == 2 else 1
+    if num_channels == 1 and target_lufs == -18.0:
+        actual_target = -21.0
+    else:
+        actual_target = target_lufs
+
     min_samples = int(0.4 * sample_rate)
     if audio.shape[-1] < min_samples:
         return 1.0
 
-    meter = pyln.Meter(sample_rate)
     audio_for_meter = audio.T if audio.ndim == 2 else audio
     try:
         loudness = meter.integrated_loudness(audio_for_meter)
@@ -279,17 +292,17 @@ def calculate_loudness_gain(
     if not np.isfinite(loudness):
         return 1.0
 
-    if abs(target_lufs - loudness) > 40.0:
+    if abs(actual_target - loudness) > 40.0:
         return 1.0
 
-    gain_db = target_lufs - loudness
+    gain_db = actual_target - loudness
     gain_linear = 10.0 ** (gain_db / 20.0)
     return float(gain_linear)
 
 def normalize_loudness(
     audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
-    target_lufs: float = -14.0,
+    target_lufs: float = -18.0,
 ) -> np.ndarray:
     """Normalize audio to target LUFS. Returns float32, clipped to [-1, 1]."""
     gain = calculate_loudness_gain(audio, sample_rate, target_lufs)
@@ -311,7 +324,7 @@ def mix(
     music_pre_roll_sec: float = 2.0,
     fade_in_sec: float = 3.0,
     fade_out_sec: float = 5.0,
-    target_lufs: float = -14.0,
+    target_lufs: float = -18.0,
 ) -> np.ndarray:
     """Full mix pipeline: align → level → duck → overlay → fades → normalize.
 
@@ -468,7 +481,7 @@ def export_audio(
     output_format: str = "wav",
     target_sample_rate: int = 44100,
     master_chain: Pedalboard | None = None,
-    target_lufs: float = -14.0,
+    target_lufs: float = -18.0,
 ) -> str:
     """Stream audio out to temp file with Pedalboard plugins and normalization.
     
@@ -477,7 +490,7 @@ def export_audio(
     streams directly to a file to prevent immense memory spikes.
 
     Args:
-        target_lufs: Loudness target in LUFS (-14 for streaming distribution).
+        target_lufs: Loudness target in LUFS (-18 for meditation).
     """
     from pedalboard.io import AudioFile
     

@@ -25,16 +25,16 @@ def parse_script(script: str) -> list[dict]:
         double newline      — paragraph break (6.5s pause)
 
     Returns a list of dicts with keys:
-        {"type": "speech", "text": str}
+        {"type": "speech", "text": str, "voice": str|None}
         {"type": "pause", "duration_sec": float}
+        {"type": "voice", "voice": str}
     """
     if not script or not script.strip():
         return []
 
-    # Normalise paragraph breaks to pause markers
-    script = re.sub(r'\n\n+', f' [pause:{_PARAGRAPH_PAUSE_SEC}s] ', script)
-
-    # Normalise "[N second pause]" variants → "[pause:Ns]"
+    # Normalise "[N second pause]" variants → "[pause:Ns]"  (run before \n\n
+    # conversion so explicit tags are already in canonical form when we check
+    # whether a "paragraph" is pause-only below)
     script = re.sub(
         r'\[(\d+(?:\.\d+)?)\s*(?:second|sec|s)\s*pause\]',
         lambda m: f'[pause:{m.group(1)}s]',
@@ -42,22 +42,58 @@ def parse_script(script: str) -> list[dict]:
         flags=re.IGNORECASE,
     )
 
-    # Normalise breath markers → short pause
+    # Normalise breath markers → short pause (same reason: do before \n\n pass)
     script = re.sub(r'\[(?:breath|inhale|exhale)\]', '[pause:1.2s]', script, flags=re.IGNORECASE)
 
-    # Split on pause markers; odd-indexed groups are durations
-    parts = re.split(r'\[pause:(\d+(?:\.\d+)?)s\]', script)
+    # Convert paragraph breaks to pause markers — BUT only when both sides of
+    # the break are actual speech.  If either the block before or after a \n\n
+    # boundary contains only a pause marker (user put [pause:Xs] on its own
+    # line for readability), those newlines are just formatting; skip the extra
+    # paragraph-level pause so the explicit duration is honoured exactly.
+    _PAUSE_ONLY = re.compile(r'^\[pause:\d+(?:\.\d+)?s\]$')
+    blocks = re.split(r'\n\n+', script)
+    parts_joined: list[str] = []
+    for i, block in enumerate(blocks):
+        parts_joined.append(block)
+        if i < len(blocks) - 1:
+            cur_is_pause = _PAUSE_ONLY.fullmatch(block.strip()) is not None
+            nxt_is_pause = _PAUSE_ONLY.fullmatch(blocks[i + 1].strip()) is not None
+            if cur_is_pause or nxt_is_pause:
+                # At least one side is a pause tag — the \n\n is just formatting
+                parts_joined.append(' ')
+            else:
+                parts_joined.append(f' [pause:{_PARAGRAPH_PAUSE_SEC}s] ')
+    script = ''.join(parts_joined)
+
+    # Split on pause AND voice markers. 
+    # Group 1: duration, Group 2: voice name.
+    parts = re.split(r'\[pause:(\d+(?:\.\d+)?)s\]|\[voice:([^\]]+)\]', script)
     segments = []
-    for i, part in enumerate(parts):
-        if i % 2 == 0:
-            text = part.strip()
-            if text:
-                segments.append({'type': 'speech', 'text': text})
-        else:
-            duration = float(part)
+    # With two groups, re.split returns [text, dur1, voice1, text, dur2, voice2, ...]
+    # So we step by 3.
+    for i in range(0, len(parts), 3):
+        text = parts[i].strip()
+        if text:
+            segments.append({'type': 'speech', 'text': text})
+        
+        if i + 1 < len(parts) and parts[i+1] is not None:
+            duration = float(parts[i+1])
             if duration > 0:
                 segments.append({'type': 'pause', 'duration_sec': duration})
-    return segments
+        
+        if i + 2 < len(parts) and parts[i+2] is not None:
+            voice = parts[i+2].strip()
+            segments.append({'type': 'voice', 'voice': voice})
+
+    # Merge back-to-back pause segments (can still arise from edge cases such
+    # as consecutive cue tags) by keeping only the longest of any run.
+    merged: list[dict] = []
+    for seg in segments:
+        if seg['type'] == 'pause' and merged and merged[-1]['type'] == 'pause':
+            merged[-1]['duration_sec'] = max(merged[-1]['duration_sec'], seg['duration_sec'])
+        else:
+            merged.append(seg)
+    return merged
 
 
 def split_into_chunks(text: str) -> list[str]:
@@ -92,10 +128,19 @@ def prepare_segments(script: str) -> list[dict]:
     """
     raw_segments = parse_script(script)
     expanded: list[dict] = []
+    current_voice = None
+    
     for seg in raw_segments:
-        if seg['type'] == 'speech':
+        if seg['type'] == 'voice':
+            current_voice = seg['voice']
+        elif seg['type'] == 'speech':
             chunks = split_into_chunks(seg['text'])
-            expanded.extend({'type': 'speech', 'text': c} for c in chunks)
+            for c in chunks:
+                expanded.append({
+                    'type': 'speech', 
+                    'text': c, 
+                    'voice': current_voice
+                })
         else:
             expanded.append(seg)
     return expanded

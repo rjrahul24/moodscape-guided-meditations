@@ -7,14 +7,18 @@ bandwidth (vs. Kokoro's 9.5 kHz cap which masks its 12 kHz Nyquist artefact).
 """
 
 import numpy as np
+from scipy.signal import butter, sosfiltfilt
 from pedalboard import (
     Compressor,
     HighpassFilter,
+    HighShelfFilter,
     Limiter,
     LowpassFilter,
     LowShelfFilter,
+    NoiseGate,
     PeakFilter,
     Pedalboard,
+    Reverb,
 )
 
 SAMPLE_RATE = 24000
@@ -45,6 +49,44 @@ def crossfade_chunks(chunks: list[np.ndarray]) -> np.ndarray:
         overlap = result[-fade:] * fade_out + c[:fade] * fade_in
         result = np.concatenate([result[:-fade], overlap, c[fade:]])
     return result
+
+
+def split_band_deess(
+    audio: np.ndarray,
+    sr: int,
+    center_freq: float = 6000.0,
+    bandwidth: float = 4000.0,
+    threshold_db: float = -18.0,
+    ratio: float = 4.0,
+) -> np.ndarray:
+    """Dynamic split-band de-esser using scipy for crossover and Pedalboard for compression.
+
+    Isolates the sibilant band (typically 4-8 kHz), compresses it aggressively
+    with a fast attack/release, and sums it back with the untouched non-sibilant signal.
+    This preserves high-end brilliance while taming harsh 's' and 't' transients.
+    """
+    # 1. Isolate the sibilant band using a 4th-order Butterworth bandpass (SOS for stability)
+    nyquist = sr / 2.0
+    low = (center_freq - bandwidth / 2.0) / nyquist
+    high = (center_freq + bandwidth / 2.0) / nyquist
+    sos = butter(4, [low, high], btype="band", output="sos")
+
+    sibilant_band = sosfiltfilt(sos, audio)
+    non_sibilant = audio - sibilant_band
+
+    # 2. Compress the sibilant band
+    # Pedalboard expects (channels, samples)
+    comp = Compressor(
+        threshold_db=threshold_db,
+        ratio=ratio,
+        attack_ms=0.5,
+        release_ms=10.0,
+    )
+    s_2d = sibilant_band.reshape(1, -1) if sibilant_band.ndim == 1 else sibilant_band
+    compressed_sibilant = comp(s_2d, sr).squeeze(0)
+
+    # 3. Recombine
+    return (non_sibilant + compressed_sibilant).astype(np.float32)
 
 
 class F5MasteringEngine:
@@ -79,32 +121,64 @@ class F5MasteringEngine:
         Signal chain (identical to KokoroMasteringEngine except lowpass is
         raised to 13 kHz to preserve Vocos's broader native bandwidth):
 
+            Phase A — split_band_deess(): dynamic sibilance control (preprocessing)
+            Phase B — master_vocals(): EQ / dynamics / reverb at mix sample rate.
+
+        Signal chain (tuned for F5-TTS / Vocos meditation narration):
+
+            NoiseGate(-50 dB, 1.5:1)       — safety gate for clean noise floor
             HighpassFilter(80 Hz)          — remove sub-bass rumble
+            PeakFilter(300 Hz, -2 dB)      — anti-boxiness (cut low-mid mud)
             LowShelfFilter(200 Hz, +2 dB)  — add warmth
-            PeakFilter(400 Hz, -1.5 dB)    — cut low-mid mud
-            PeakFilter(3.5 kHz, +1.5 dB)   — presence / intelligibility
-            PeakFilter(7 kHz, +4 dB)       — air / clarity boost
-            Compressor(-20 dB, 3:1)        — gentle dynamic control
-            PeakFilter(7 kHz, -4 dB)       — de-ess (cancel the air boost)
+            PeakFilter(2.8 kHz, +1.5 dB)   — presence / intelligibility (moderated)
+            HighShelfFilter(10 kHz, +1.5)  — air shelf for clarity
             LowpassFilter(13 kHz)          — remove ultrasonic content
-            Limiter(-0.5 dB)               — hard ceiling
+            Compressor(-22 dB, 2.5:1)      — gentle, transparent leveling
+            Reverb(10% wet)                — spatial intimacy (dark, damped)
+            Limiter(-1.5 dB)               — safe, transparent ceiling
 
         The chain is rebuilt only when the sample rate changes between calls.
         """
         if self._master_chain is None or self._master_chain_sr != sr:
             self._master_chain = Pedalboard([
+                NoiseGate(threshold_db=-50, ratio=1.5, attack_ms=5, release_ms=250),
                 HighpassFilter(cutoff_frequency_hz=80),
+                PeakFilter(cutoff_frequency_hz=300, gain_db=-2.0, q=1.5),
                 LowShelfFilter(cutoff_frequency_hz=200, gain_db=2.0),
-                PeakFilter(cutoff_frequency_hz=400, gain_db=-1.5, q=1.0),
-                PeakFilter(cutoff_frequency_hz=3500, gain_db=1.5, q=0.8),
-                PeakFilter(cutoff_frequency_hz=7000, gain_db=4.0, q=2.0),
-                Compressor(threshold_db=-20, ratio=3.0, attack_ms=1, release_ms=50),
-                PeakFilter(cutoff_frequency_hz=7000, gain_db=-4.0, q=2.0),
+                PeakFilter(cutoff_frequency_hz=2800, gain_db=1.5, q=0.8),
+                HighShelfFilter(cutoff_frequency_hz=10000, gain_db=1.5),
                 LowpassFilter(cutoff_frequency_hz=13000),
-                Limiter(threshold_db=-0.5),
+                Compressor(threshold_db=-22, ratio=2.5, attack_ms=15, release_ms=100),
+                Reverb(room_size=0.2, damping=0.7, wet_level=0.10, dry_level=0.90, width=0.8),
+                Limiter(threshold_db=-1.5, release_ms=80),
             ])
             self._master_chain_sr = sr
+
+        # Phase A: Dynamic De-Essing (Preprocessing)
+        audio = split_band_deess(audio, sr)
 
         audio_2d = audio.astype(np.float32).reshape(1, -1)
         processed = self._master_chain(audio_2d, sr)
         return np.clip(processed.squeeze(0), -1.0, 1.0).astype(np.float32)
+
+
+def build_f5_voice_chain(reverb_amount: float = 0.15) -> Pedalboard:
+    """F5-TTS / Vocos voice FX chain: reverb + limiter only.
+
+    F5MasteringEngine.master_vocals() already handles EQ, de-essing, and
+    dynamic control upstream. This chain adds the user-controlled room reverb
+    and a safety limiter — nothing else. Deliberately omits the noise gate,
+    8 kHz lowpass, and high-shelf present in Kokoro's build_voice_chain, which
+    are tuned for ISTFTNet artifacts and would damage Vocos's 13 kHz native
+    bandwidth.
+    """
+    reverb_amount = float(np.clip(reverb_amount, 0.0, 0.5))
+    return Pedalboard([
+        Reverb(
+            room_size=0.20,
+            damping=0.5,
+            wet_level=reverb_amount,
+            dry_level=1.0 - reverb_amount,
+        ),
+        Limiter(threshold_db=-1.0),
+    ])

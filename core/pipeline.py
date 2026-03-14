@@ -438,8 +438,13 @@ class MeditationPipeline:
             if not is_instrumental:
                 # ── Step 7: Apply voice FX ──────────────────────────────────────
                 _progress(progress_cb, 0.72, "Applying voice effects...")
-                from core.kokoro_tts.postprocessor import build_voice_chain, apply_fx
-                voice_chain = build_voice_chain(reverb_amount=reverb_amount)
+                if tts_engine == "f5":
+                    from core.f5_tts.postprocessor import build_f5_voice_chain
+                    from core.kokoro_tts.postprocessor import apply_fx
+                    voice_chain = build_f5_voice_chain(reverb_amount=reverb_amount)
+                else:
+                    from core.kokoro_tts.postprocessor import build_voice_chain, apply_fx
+                    voice_chain = build_voice_chain(reverb_amount=reverb_amount)
                 voice_audio = apply_fx(voice_audio, voice_chain, mix_sr)
 
                 # Align voice_activity to post-FX voice length (reverb tail trim

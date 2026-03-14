@@ -1,0 +1,11 @@
+# voices.toml — Multi-phase voice definitions for F5-TTS
+#
+# Use this file to define multi-phase reference voices (e.g. opening vs closing
+# narration styles for the same speaker). Single-phase voices are auto-discovered
+# from matching .wav + .txt pairs in reference_audio/ and reference_transcript/.
+#
+# Example entry:
+#
+# [my_voice_slug]
+# default = { ref_audio = "my_voice.wav", ref_text = "The exact words spoken in the clip." }
+# closing = { ref_audio = "my_voice_closing.wav", ref_text = "The exact words in the closing clip." }
