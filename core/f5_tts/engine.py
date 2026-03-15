@@ -21,7 +21,9 @@ Device: MPS on Apple Silicon, CPU fallback elsewhere.
 
 import gc
 import logging
+import os
 import re
+import tempfile
 import warnings
 from pathlib import Path
 
@@ -58,6 +60,31 @@ def _trim_trailing_silence(audio: np.ndarray, sr: int) -> np.ndarray:
     tail = int(_TRIM_TAIL_MS / 1000.0 * sr)
     cut = min(int(active[-1]) + tail + 1, len(audio))
     return audio[:cut]
+
+
+def _last_sentence(text: str) -> str:
+    """Return the last sentence of text for use as a chained ref_text.
+
+    Uses the same sentence-boundary regex as the preprocessor so the split
+    points are consistent. Falls back to the full text for single-sentence chunks.
+    """
+    sents = re.split(r'(?<=[.!?…])\s+', text.strip())
+    return sents[-1] if sents else text
+
+
+def _write_chain_ref(arr: np.ndarray, sr: int) -> str:
+    """Write float32 mono audio to a temp WAV file and return its path.
+
+    soundfile is already a project dependency (imported in mixer.py).
+    The caller is responsible for deleting the file when done.
+    """
+    import soundfile as sf  # lazy import to avoid cost when F5 is not in use
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+    tmp.close()
+    sf.write(tmp.name, arr.astype(np.float32), sr, subtype="PCM_16")
+    return tmp.name
+
+
 _SWAY_COEF = -1.0   # enables sway sampling for smoother prosody
 _CFG_STRENGTH = 2.0  # paper-validated optimal for stable generation
 _ROOM_TONE_LEVEL = 1e-3  # ~-60 dBFS ambient floor for pause segments
@@ -194,6 +221,8 @@ class F5Engine(SpeechEngine):
         self._phases = voice_registry.get_voice(resolved_slug)
         self._phase_assets: dict[str, dict] = {}  # loaded assets (path, text) per phase
         self._model = None
+        self._chain_tmp_paths: list[str] = []       # temp WAV files for chained refs
+        self._chain_cleanup_registered: bool = False
 
         logger.info(
             "F5Engine initialised with voice '%s' (%d phases)",
@@ -269,6 +298,15 @@ class F5Engine(SpeechEngine):
         except ImportError:
             pass
 
+    def _cleanup_chain_tmps(self) -> None:
+        """Delete all chained reference temp WAV files created during synthesis."""
+        for p in self._chain_tmp_paths:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        self._chain_tmp_paths.clear()
+
     # ── Synthesis ─────────────────────────────────────────────────────────────
 
     def synthesize(
@@ -309,6 +347,32 @@ class F5Engine(SpeechEngine):
         chunks: list[tuple[np.ndarray, np.ndarray, str, str | None]] = []
         total = len(segments)
 
+        # ── Chained reference state ────────────────────────────────────────────
+        # Instead of using the same static reference for every chunk, each speech
+        # chunk (after the first) seeds the model from the tail of the previous
+        # chunk's generated audio. This gives the model acoustic context from the
+        # immediately preceding speech, creating natural pitch and energy continuity
+        # across sentence boundaries. The static reference still serves as the
+        # initial seed and is restored after pauses, phase changes, and every
+        # _CHAIN_RESET_EVERY chunks to prevent voice drift over long sessions.
+        _CHAIN_RESET_EVERY = 6          # reset to static ref every N consecutive speech chunks
+        _CHAIN_MAX_REF_SEC = 5.0        # maximum seconds to take as chained ref audio
+        _CHAIN_MAX_REF_FRAC = 0.50      # also cap at 50% of the chunk length (avoids very long refs)
+        _CHAIN_MIN_SAMPLES = int(0.5 * SAMPLE_RATE)  # skip chaining from chunks shorter than 0.5s
+
+        chain_ref_audio: str | None = None  # path to current chained ref WAV (or None → use static)
+        chain_ref_text: str | None = None   # last sentence of previous chunk (ref_text for next)
+        chain_speech_count: int = 0         # consecutive speech chunks since last reset
+        last_phase: str | None = None       # track phase changes for reset trigger
+        prev_was_pause: bool = False        # True if the immediately preceding segment was a pause
+
+        # Register atexit cleanup once per engine instance so temp files are
+        # deleted on process exit even if synthesize() is interrupted.
+        if not self._chain_cleanup_registered:
+            import atexit
+            atexit.register(self._cleanup_chain_tmps)
+            self._chain_cleanup_registered = True
+
         for idx, seg in enumerate(segments):
             if seg["type"] == "speech":
                 # Normalise text: collapse newlines and runs of whitespace so
@@ -342,6 +406,28 @@ class F5Engine(SpeechEngine):
 
                 assets = self._phase_assets[phase]
 
+                # ── Chained reference selection ────────────────────────────
+                # Reset to static reference when:
+                #   (a) first chunk of the session (chain_ref_audio is None)
+                #   (b) a pause segment preceded this chunk
+                #   (c) voice phase just changed
+                #   (d) _CHAIN_RESET_EVERY consecutive speech chunks accumulated
+                #       (prevents voice drift over long sessions)
+                should_reset = (
+                    chain_ref_audio is None
+                    or prev_was_pause
+                    or phase != last_phase
+                    or chain_speech_count >= _CHAIN_RESET_EVERY
+                )
+                if should_reset:
+                    self._cleanup_chain_tmps()
+                    chain_ref_audio = None
+                    chain_ref_text = None
+                    chain_speech_count = 0
+
+                infer_ref_file = chain_ref_audio if chain_ref_audio is not None else assets["audio"]
+                infer_ref_text = chain_ref_text  if chain_ref_text  is not None else assets["text"]
+
                 with warnings.catch_warnings():
                     warnings.filterwarnings(
                         "ignore",
@@ -349,8 +435,8 @@ class F5Engine(SpeechEngine):
                         category=UserWarning,
                     )
                     wav, _sr, _ = self._model.infer(
-                        ref_file=assets["audio"],
-                        ref_text=assets["text"],
+                        ref_file=infer_ref_file,
+                        ref_text=infer_ref_text,
                         gen_text=gen_text,
                         # Pass speed directly to F5's duration predictor so
                         # the model generates the right number of mel frames
@@ -379,6 +465,33 @@ class F5Engine(SpeechEngine):
                 activity = np.abs(arr) > threshold
                 chunks.append((arr, activity, "speech", gen_text))
 
+                # ── Update chain state for next chunk ──────────────────────
+                chain_speech_count += 1
+                last_phase = phase
+                max_ref_samples = min(
+                    int(_CHAIN_MAX_REF_SEC * SAMPLE_RATE),
+                    int(len(arr) * _CHAIN_MAX_REF_FRAC),
+                )
+                if len(arr) >= _CHAIN_MIN_SAMPLES and max_ref_samples > 0:
+                    ref_arr = arr[-max_ref_samples:]
+                    # Delete the previous chain temp file before writing the new one
+                    if chain_ref_audio is not None:
+                        try:
+                            os.unlink(chain_ref_audio)
+                        except OSError:
+                            pass
+                        if chain_ref_audio in self._chain_tmp_paths:
+                            self._chain_tmp_paths.remove(chain_ref_audio)
+                    new_path = _write_chain_ref(ref_arr, SAMPLE_RATE)
+                    self._chain_tmp_paths.append(new_path)
+                    chain_ref_audio = new_path
+                    chain_ref_text = _last_sentence(gen_text)
+                    logger.debug(
+                        "Chain ref updated: %d samples (%.2fs) → %s",
+                        len(ref_arr), len(ref_arr) / SAMPLE_RATE, new_path,
+                    )
+                # (else: chunk too short to be a useful reference — keep previous intact)
+
             elif seg["type"] == "pause":
                 n = int(seg["duration_sec"] * SAMPLE_RATE)
                 # Very-low-level room tone instead of digital zeros: prevents the
@@ -388,8 +501,13 @@ class F5Engine(SpeechEngine):
                 silence_act = np.zeros(n, dtype=bool)
                 chunks.append((silence, silence_act, "pause", None))
 
+            prev_was_pause = (seg["type"] == "pause")
+
             if progress_cb is not None:
                 progress_cb(idx + 1, total)
+
+        # Release all chain temp files now rather than waiting for process exit.
+        self._cleanup_chain_tmps()
 
         if not chunks:
             return np.zeros(0, dtype=np.float32), np.zeros(0, dtype=bool)
@@ -400,11 +518,11 @@ class F5Engine(SpeechEngine):
         chunks = _normalize_chunk_wpm(chunks, SAMPLE_RATE)
 
         # Assemble the final audio with type-aware boundary handling:
-        #   speech → speech : 20 ms crossfade (smooths chunk-cut artifacts)
+        #   speech → speech : 300 ms equal-power cosine crossfade (smooths chunk-cut artifacts)
         #   anything → pause : direct concatenation (preserves exact duration)
         #   pause → anything : direct concatenation (preserves exact duration)
         # This prevents the crossfade overlap from eating into pause timing.
-        FADE_N = int(0.020 * SAMPLE_RATE)  # 20 ms crossfade between speech chunks
+        FADE_N = int(0.300 * SAMPLE_RATE)  # 300 ms equal-power cosine crossfade between speech chunks
 
         result_audio = chunks[0][0].copy().astype(np.float32)
         result_act = chunks[0][1].copy()
@@ -415,11 +533,14 @@ class F5Engine(SpeechEngine):
             cur_audio = cur_audio.astype(np.float32)
 
             if prev_type == "speech" and cur_type == "speech":
-                # Crossfade to smooth the sentence boundary
+                # Equal-power cosine crossfade to smooth the sentence boundary.
+                # cos/sin pair maintains cos²+sin²=1 at every point, eliminating
+                # the amplitude dip that linear crossfades produce at the midpoint.
                 fade = min(FADE_N, len(result_audio), len(cur_audio))
                 if fade > 0:
-                    fade_out = np.linspace(1.0, 0.0, fade, dtype=np.float32)
-                    fade_in = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+                    _t = np.linspace(0.0, np.pi / 2.0, fade, dtype=np.float32)
+                    fade_out = np.cos(_t)   # 1.0 → 0.0
+                    fade_in  = np.sin(_t)   # 0.0 → 1.0
                     overlap = result_audio[-fade:] * fade_out + cur_audio[:fade] * fade_in
                     result_audio = np.concatenate([result_audio[:-fade], overlap, cur_audio[fade:]])
                     result_act = np.concatenate([result_act[:-fade], cur_act[:fade], cur_act[fade:]])

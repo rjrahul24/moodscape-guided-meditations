@@ -28,3 +28,4 @@ build/
 ~/.cache/huggingface/
 .cache/
 ACE-Step-1.5/
+docs/temp/

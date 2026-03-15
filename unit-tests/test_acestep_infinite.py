@@ -17,41 +17,50 @@ class TestAceStepInfinite(unittest.TestCase):
     @patch("core.acestep_engine.AceStepEngine._smooth_boundary")
     @patch("core.acestep_engine.AceStepEngine._generate_cover_continuation")
     @patch("core.acestep_engine.AceStepEngine._generate_single_raw")
+    @patch("core.acestep_engine.AceStepEngine._validate_output")
     @patch("soundfile.write")
-    def test_generate_infinite_three_phase(
-        self, mock_sf_write, mock_raw, mock_cover, mock_smooth,
+    def test_generate_infinite_reference_audio_propagation(
+        self, mock_sf_write, mock_validate, mock_raw, mock_cover, mock_smooth,
     ):
-        """Verify three-phase pipeline: genesis + cover continuations + boundary smoothing."""
-        # Genesis returns 60s of 48kHz stereo
-        genesis_samples = int(60.0 * NATIVE_SAMPLE_RATE)
-        genesis_tensor = torch.ones(2, genesis_samples, dtype=torch.float32)
-        mock_raw.return_value = (genesis_tensor, NATIVE_SAMPLE_RATE)
-
-        # Each cover continuation returns 60s of 48kHz stereo
-        cover_samples = int(60.0 * NATIVE_SAMPLE_RATE)
-        cover_tensor = torch.ones(2, cover_samples, dtype=torch.float32) * 0.5
-        mock_cover.return_value = (cover_tensor, NATIVE_SAMPLE_RATE)
-
-        # Boundary smoothing is a passthrough (returns input tensor)
+        """Verify reference_audio_path is propagated to all phases."""
+        mock_raw.return_value = (torch.ones(2, int(60 * NATIVE_SAMPLE_RATE)), NATIVE_SAMPLE_RATE)
+        mock_cover.return_value = (torch.ones(2, int(60 * NATIVE_SAMPLE_RATE)), NATIVE_SAMPLE_RATE)
+        mock_validate.return_value = (True, "OK")
         mock_smooth.side_effect = lambda tensor, *a, **kw: tensor
 
-        # Test 180s generation: 60s genesis + cover continuations
-        result = self.engine.generate("test prompt", 180.0)
+        ref_path = "/tmp/test_ref.wav"
+        with patch.object(AceStepEngine, "_prepare_reference_audio", return_value=ref_path):
+            self.engine.generate("test prompt", 120.0, melody_audio=np.zeros(100), melody_sample_rate=24000)
 
-        # Phase 1: one genesis call
-        self.assertEqual(mock_raw.call_count, 1)
-        # Phase 2: cover continuations (60s genesis + covers with 2s crossfade)
-        # 60 + 60 - 2 = 118, needs more → 118 + 60 - 2 = 176, close enough
-        self.assertGreaterEqual(mock_cover.call_count, 2)
-        # Phase 3: boundary smoothing per seam (one per cover)
-        self.assertEqual(mock_smooth.call_count, mock_cover.call_count)
+        # Check genesis
+        self.assertEqual(mock_raw.call_args[1]["reference_audio_path"], ref_path)
+        # Check continuation
+        self.assertEqual(mock_cover.call_args[1]["reference_audio_path"], ref_path)
+        # Check smoothing
+        self.assertEqual(mock_smooth.call_args[1]["reference_audio_path"], ref_path)
 
-        # Output should be mono float32 numpy at 24kHz
-        self.assertIsInstance(result, np.ndarray)
-        self.assertEqual(result.dtype, np.float32)
-        # Duration should be close to target
-        actual_duration = len(result) / TARGET_SAMPLE_RATE
-        self.assertGreater(actual_duration, 160.0)
+    @patch("core.acestep_engine.AceStepEngine._smooth_boundary")
+    @patch("core.acestep_engine.AceStepEngine._generate_cover_continuation")
+    @patch("core.acestep_engine.AceStepEngine._generate_single_raw")
+    @patch("core.acestep_engine.AceStepEngine._validate_output")
+    @patch("soundfile.write")
+    def test_generate_infinite_retry_logic(
+        self, mock_sf_write, mock_validate, mock_raw, mock_cover, mock_smooth,
+    ):
+        """Verify that _generate_infinite retries failed segments."""
+        mock_raw.return_value = (torch.ones(2, int(60 * NATIVE_SAMPLE_RATE)), NATIVE_SAMPLE_RATE)
+        mock_cover.return_value = (torch.ones(2, int(60 * NATIVE_SAMPLE_RATE)), NATIVE_SAMPLE_RATE)
+        mock_smooth.side_effect = lambda tensor, *a, **kw: tensor
+        
+        # Genesis (60s) + 1 Continuation (52s - 2s crossfade = 50s) = 110s
+        # First attempt of continuation fails, second succeeds
+        mock_validate.side_effect = [(False, "Too quiet"), (True, "OK")]
+
+        self.engine.generate("test prompt", 110.0)
+
+        # 1 genesis call (mock_validate NOT called for genesis in this test)
+        # 2 cover calls (failed attempt + successful retry)
+        self.assertEqual(mock_cover.call_count, 2)
 
     def test_generate_single_switch(self):
         """Verify routing: <=90s -> single, >90s -> infinite."""

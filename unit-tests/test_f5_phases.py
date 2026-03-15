@@ -7,6 +7,7 @@ sys.path.append(os.getcwd())
 
 from core.f5_tts.engine import F5Engine
 from core.f5_tts.preprocessor import prepare_segments
+from core.f5_tts import voice_registry
 
 def test_phases():
     print("Testing F5-TTS Multi-Phase Voice Support...")
@@ -27,8 +28,13 @@ def test_phases():
     assert speech_segs[1]["voice"] == "closing"
     print("Preprocessor tags verified.")
     
-    # Mock engine
-    engine = F5Engine(voice_slug="female_warm_relaxed")
+    # Mock engine — use first available registered voice
+    registry = voice_registry.scan()
+    if not registry:
+        print("No voices registered — skipping phases test.")
+        return
+    voice_slug = sorted(registry.keys())[0]
+    engine = F5Engine(voice_slug=voice_slug)
     
     class MockModel:
         def __init__(self):

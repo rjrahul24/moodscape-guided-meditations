@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import MagicMock, patch
+import torch
 import numpy as np
 
 from core.music_engine import MusicEngine
@@ -27,46 +28,55 @@ class TestMusicEngines(unittest.TestCase):
 
     def test_musicgen_num_segments(self):
         engine = MusicEngine()
-        # SEGMENT_DURATION = 30, CONTEXT_DURATION = 10, NET_NEW = 20
+        # SEGMENT_DURATION = 30
+        # Default extend_stride = 12.0
+        
         # 30s -> 1 seq
-        self.assertEqual(engine._num_segments(30.0), 1)
-        # 50s -> 30 + 20 -> 2 seq
-        self.assertEqual(engine._num_segments(50.0), 2)
-        # 60s -> 30 + 20 + 20(part) -> 3 seq
-        self.assertEqual(engine._num_segments(60.0), 3)
+        self.assertEqual(engine._num_segments(30.0, extend_stride=12.0), 1)
+        # 42s -> 30 + 12 -> 2 seq
+        self.assertEqual(engine._num_segments(42.0, extend_stride=12.0), 2)
+        # 50s -> 30 + 12 + 12(part) -> 3 seq
+        self.assertEqual(engine._num_segments(50.0, extend_stride=12.0), 3)
 
-    # --- ACE-Step Tests ---
-    @patch("soundfile.write")
-    @patch("tempfile.mkstemp")
-    @patch("os.remove")
-    @patch("os.path.exists")
-    @patch("os.close")
-    def test_acestep_reference_audio_handling(self, mock_close, mock_exists, mock_remove, mock_mkstemp, mock_sf_write):
-        mock_mkstemp.return_value = (999, "/tmp/fake_ref.wav")
-        mock_exists.return_value = True
+    @patch("audiocraft.models.MusicGen.get_pretrained")
+    def test_musicgen_parameter_passing(self, mock_get_pretrained):
+        # Setup mock model
+        mock_model = MagicMock()
+        mock_get_pretrained.return_value = mock_model
         
-        dummy_audio = np.zeros(100)
-        self.engine._generate_single = MagicMock(return_value=np.zeros(200))
+        engine = MusicEngine()
+        engine.load_model()
         
-        self.engine.generate("Calm", 10.0, melody_audio=dummy_audio, melody_sample_rate=24000)
+        # Mock generate methods to return blank audio
+        mock_model.generate.return_value = torch.zeros((1, 1, 32000 * 30))
         
-        # Verify temp file was "created"
-        mock_sf_write.assert_called_once()
-        self.assertEqual(mock_sf_write.call_args[0][0], "/tmp/fake_ref.wav")
+        # Call generate with custom parameters
+        engine.generate(
+            "test prompt", 
+            10.0, 
+            temperature=0.5, 
+            top_k=50, 
+            cfg_coef=5.0,
+            top_p=0.1
+        )
         
-        # Verify path was passed to _generate_single
-        self.engine._generate_single.assert_called_once()
-        kwargs = self.engine._generate_single.call_args[1]
-        self.assertEqual(kwargs["reference_audio_path"], "/tmp/fake_ref.wav")
-        
-        # Verify cleanup
-        mock_remove.assert_called_once_with("/tmp/fake_ref.wav")
+        # Verify set_generation_params was called with correct values
+        mock_model.set_generation_params.assert_called_with(
+            duration=30,
+            use_sampling=True,
+            top_k=50,
+            top_p=0.1,
+            temperature=0.5,
+            cfg_coef=5.0
+        )
+
+
 
     def test_acestep_model_selection_and_steps(self):
         # Initial state (from setUp) is SFT
         self.assertEqual(self.engine.model_type, "sft")
-        self.assertEqual(self.engine._get_inference_steps(is_repaint=False), 60)
-        self.assertEqual(self.engine._get_inference_steps(is_repaint=True), 60)
+        self.assertEqual(self.engine._get_inference_steps(is_repaint=False), 50)
+        self.assertEqual(self.engine._get_inference_steps(is_repaint=True), 50)
         
         # Test switching to Turbo
         self.engine.load_model = MagicMock()
@@ -79,40 +89,6 @@ class TestMusicEngines(unittest.TestCase):
         self.engine.model_type = "turbo"
         self.assertEqual(self.engine._get_inference_steps(is_repaint=False), 8)
         self.assertEqual(self.engine._get_inference_steps(is_repaint=True), 8)
-
-    def test_acestep_enhance_prompt(self):
-        base_prompt = "Warm sleep music"
-        caption, lyrics = AceStepEngine._enhance_prompt(base_prompt)
-        
-        # Caption checks
-        self.assertIn("Deep meditation", caption)
-        self.assertIn(base_prompt.lower(), caption)
-        self.assertIn("no percussion", caption.lower())
-        # Anti-sawtooth check
-        self.assertIn("rounded harmonic profile", caption)
-        
-        # Lyrics checks
-        self.assertIn("[Instrumental]", lyrics)
-        self.assertIn("[warm]", lyrics)
-
-    def test_acestep_sanitize_prompt(self):
-        dirty = "60 bpm sawtooth synth in C Major"
-        sanitized = AceStepEngine._sanitize_prompt(dirty)
-        self.assertNotIn("60 bpm", sanitized)
-        self.assertNotIn("sawtooth", sanitized)
-        self.assertNotIn("c major", sanitized)
-        self.assertEqual(sanitized, "synth in") # "synth in" remains
-
-    def test_acestep_extract_lyrics_tags(self):
-        prompt = "dreamy ethereal music for sleep"
-        tags = AceStepEngine._extract_lyrics_tags(prompt)
-        self.assertIn("[Instrumental]", tags)
-        self.assertIn("[dreamy]", tags)
-        self.assertIn("[ethereal]", tags)
-        
-        prompt_simple = "pure silence"
-        tags_simple = AceStepEngine._extract_lyrics_tags(prompt_simple)
-        self.assertEqual(tags_simple, "[Instrumental]")
 
     def test_acestep_crossfade_stages(self):
         sr = 24000

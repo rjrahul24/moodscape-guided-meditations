@@ -25,14 +25,18 @@ def _progress(cb, fraction, message):
 def _enhance_music_prompt(user_prompt: str) -> str:
     """Build a MusicGen-optimized prompt from the user's description.
 
-    Keeps total under ~45 words for best MusicGen attention utilization.
-    Always includes essential constraints (no drums/vocals). Adds ambient
-    descriptors only if the user hasn't already mentioned them to avoid
-    diluting the attention budget with duplicates.
-    """
-    constraints = "subliminal background, barely audible drone, single sustained note, pure ambient texture, no melody, no chord changes, no drums, no percussion, no vocals, beatless"
+    Token ordering matters: MusicGen's T5 text encoder weighs earlier tokens
+    more heavily, so positive genre anchors are front-loaded, followed by the
+    user's description, then negative exclusions at the tail. Negative terms
+    are soft constraints only — HT Demucs stem separation provides the hard
+    backstop for drums/vocals removal.
 
-    # Add ambient descriptors only if the user hasn't already included them
+    Keeps total under ~45 words for best MusicGen attention utilization.
+    """
+    # Positive genre anchors — front-loaded for T5 encoder weighting
+    genre_anchors = "deep ambient soundscape, evolving synthesizer pads, ethereal reverb"
+
+    # Add contextual descriptors only if the user hasn't already mentioned them
     optional = [
         ("ambient", "ambient"),
         ("reverb", "spacious reverb"),
@@ -42,7 +46,10 @@ def _enhance_music_prompt(user_prompt: str) -> str:
     user_lower = user_prompt.lower()
     extras = [desc for key, desc in optional if key not in user_lower][:2]
 
-    parts = [constraints] + extras + [user_prompt]
+    # Negative exclusions trail — keeps positive intent at the front
+    negative = "no drums, no percussion, no vocals, no beat, no rhythm, beatless"
+
+    parts = [genre_anchors, user_prompt] + extras + [negative]
     enhanced = ", ".join(parts)
 
     # Cap at 45 words to stay within MusicGen's effective attention window
@@ -147,7 +154,7 @@ class MeditationPipeline:
             seed = int(time.time()) % (2**31)
 
         # Unified LUFS target for all meditation sessions
-        target_lufs = -14.0
+        target_lufs = -16.0
 
         is_instrumental = generation_mode == "Instrumental Only"
         is_vocals = generation_mode == "Vocals Only"
@@ -373,6 +380,7 @@ class MeditationPipeline:
                             music_duration,
                             progress_cb=music_progress,
                             prompt_stages=engine_stages,
+                            seed=seed,
                             **melody_kwargs,
                         )
                 else:
@@ -394,6 +402,7 @@ class MeditationPipeline:
                         enhanced_prompt = _enhance_music_prompt(music_prompt)
                         music_audio = music_engine.generate(
                             enhanced_prompt, music_duration, progress_cb=music_progress,
+                            seed=seed,
                             **melody_kwargs,
                         )
 
@@ -467,7 +476,7 @@ class MeditationPipeline:
                 #             music_volume_db offset and ducking are applied in mix()
                 #   MusicGen: -20 LUFS — established reference
                 if use_lyria:
-                    premix_lufs = -22.0
+                    premix_lufs = -16.0
                 elif use_acestep:
                     premix_lufs = -14.0
                 else:
@@ -482,6 +491,11 @@ class MeditationPipeline:
                 else:
                     music_chain = make_music_chain()
                 music_audio = apply_audio_fx(music_audio, music_chain, mix_sr)
+
+                # Carve vocal pocket for intelligibility
+                from core.audio_processor import make_vocal_pocket_chain
+                vocal_pocket_chain = make_vocal_pocket_chain()
+                music_audio = apply_audio_fx(music_audio, vocal_pocket_chain, mix_sr)
 
             # ── Optional: Export stems ──────────────────────────────────────
             stem_paths = None

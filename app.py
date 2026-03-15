@@ -95,8 +95,8 @@ Slowly open your eyes. Thank you for practicing with me today. [pause:3s]\
 """
 
 DEFAULT_MUSIC_PROMPT = (
-    "Soft felt piano, warm analog synth pads, gentle singing bowls, "
-    "sustained strings, slow and evolving, spacious atmosphere"
+    "Warm evolving synthesizer pads, gentle drone textures, soft sustained tones, "
+    "spacious floating atmosphere, peaceful calm new age instrumental"
 )
 
 

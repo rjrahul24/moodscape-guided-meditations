@@ -44,10 +44,14 @@ class MusicEngine:
     Performance: MPS + CFG 4.0 for stable, prompt-adherent ambient output.
     """
 
-    def __init__(self):
+    def __init__(self, use_mbd: bool = False):
         self.model = None
         self.model_name = None
         self.device = None
+        self._mbd = None
+        # MBD is only supported on CUDA; MPS support is untested by Meta and
+        # conflicts with AUDIOCRAFT_DISABLE_MPS_AUTOCAST=1 already set in app.py.
+        self.use_mbd = use_mbd
 
     # ------------------------------------------------------------------
     # Device selection
@@ -149,12 +153,36 @@ class MusicEngine:
 
             raise RuntimeError("No MusicGen model could be loaded.")
 
+        # Load Multi-Band Diffusion decoder if requested and on CUDA.
+        # MBD uses a diffusion model (~12 steps) that requires CUDA; on MPS the
+        # internal autocast conflicts with AUDIOCRAFT_DISABLE_MPS_AUTOCAST=1.
+        self._mbd = None
+        if self.use_mbd:
+            if self.device == "cuda":
+                try:
+                    from audiocraft.models import MultiBandDiffusion
+                    logger.info("[MusicEngine] Loading MultiBandDiffusion decoder...")
+                    self._mbd = MultiBandDiffusion.get_mbd_musicgen()
+                    logger.info("[MusicEngine] MultiBandDiffusion loaded.")
+                except Exception as e:
+                    logger.warning("[MusicEngine] MBD load failed, falling back to EnCodec: %s", e)
+                    self._mbd = None
+            else:
+                logger.warning(
+                    "[MusicEngine] use_mbd=True requested but device=%s — "
+                    "MBD requires CUDA. Falling back to EnCodec decoder.",
+                    self.device,
+                )
+
     def unload_model(self):
         """Release model and free memory."""
         del self.model
         self.model = None
         self.model_name = None
         self.device = None
+        if self._mbd is not None:
+            del self._mbd
+            self._mbd = None
         gc.collect()
         if torch.backends.mps.is_available():
             torch.mps.empty_cache()
@@ -171,6 +199,12 @@ class MusicEngine:
         prompt_stages: list[tuple[str, float]] | None = None,
         melody_audio: np.ndarray | None = None,
         melody_sample_rate: int | None = None,
+        temperature: float = 0.7,
+        top_k: int = 80,
+        top_p: float = 0.0,
+        cfg_coef: float = 4.5,
+        extend_stride: float = 12.0,
+        seed: int | None = None,
     ) -> np.ndarray:
         """Generate background music using sliding window continuation.
 
@@ -199,6 +233,11 @@ class MusicEngine:
                 continuation segments use standard audio context.
             melody_sample_rate: Sample rate of melody_audio (required when
                 melody_audio is provided).
+            temperature: Sampling temperature (lower = more stable).
+            top_k: Top-k token selection (lower = more focused).
+            top_p: Top-p (nucleus) sampling (keep 0.0 for k-only).
+            cfg_coef: Classifier-free guidance strength.
+            extend_stride: Seconds of new audio per segment (sets context window).
 
         Returns:
             Mono float32 numpy array at 24000 Hz.
@@ -206,7 +245,7 @@ class MusicEngine:
         if self.model is None:
             raise RuntimeError("Music model not loaded. Call load_model() first.")
 
-        num_segments = self._num_segments(total_duration_sec)
+        num_segments = self._num_segments(total_duration_sec, extend_stride)
         story_mode = prompt_stages is not None
         logger.info(
             "[MusicEngine] Generating %.0fs of music (%d segments) on %s%s",
@@ -217,10 +256,10 @@ class MusicEngine:
         self.model.set_generation_params(
             duration=SEGMENT_DURATION,
             use_sampling=True,
-            top_k=250,           # Keeps sampling within top-250 tokens
-            top_p=0.0,           # Disabled — top_k handles truncation
-            temperature=0.87,    # Stabilises token sampling for consonant pads (0.85-0.90 sweet spot)
-            cfg_coef=3.0,        # CFG strength — 3.0 is stable; 4.0+ risks NaN logits on MPS
+            top_k=top_k,
+            top_p=top_p,
+            temperature=temperature,
+            cfg_coef=cfg_coef,
         )
 
         if progress_cb is not None:
@@ -261,6 +300,10 @@ class MusicEngine:
             elif self.device == "cuda":
                 torch.cuda.empty_cache()
 
+            # Deterministic generation: seed segment 0 directly, retries use seed+attempt
+            if seed is not None:
+                torch.manual_seed(seed + attempt)
+
             if use_melody:
                 wav = self.model.generate_with_chroma(
                     descriptions=[seg0_prompt],
@@ -268,6 +311,11 @@ class MusicEngine:
                     melody_sample_rate=melody_sample_rate,
                     progress=False,
                 )
+            elif self._mbd is not None:
+                # MBD decoding: request tokens and decode via diffusion instead of EnCodec.
+                # Only supported for generate() — generate_continuation() does not expose tokens.
+                wav, tokens = self.model.generate([seg0_prompt], return_tokens=True, progress=False)
+                wav = self._mbd.tokens_to_wav(tokens)
             else:
                 wav = self.model.generate([seg0_prompt], progress=False)
             current = wav[0].cpu()
@@ -283,12 +331,13 @@ class MusicEngine:
             progress_cb(1, num_segments)
 
         # Net new audio per continuation (context is stripped during stitching)
-        net_new_per_seg = SEGMENT_DURATION - CONTEXT_DURATION
+        net_new_per_seg = extend_stride
+        context_duration = SEGMENT_DURATION - extend_stride
 
         # ── Subsequent segments: continuation with audio context ────────
         for i in range(1, num_segments):
             seg_t0 = time.time()
-            context_samples = int(CONTEXT_DURATION * NATIVE_SAMPLE_RATE)
+            context_samples = int(context_duration * NATIVE_SAMPLE_RATE)
             context = segments[-1][..., -context_samples:]
 
             # Story mode: pick the prompt for the elapsed time at this segment
@@ -316,6 +365,11 @@ class MusicEngine:
                     torch.mps.empty_cache()
                 elif self.device == "cuda":
                     torch.cuda.empty_cache()
+
+                # Each continuation segment gets a deterministic seed derived from
+                # the base seed + segment index, so the full track is reproducible.
+                if seed is not None:
+                    torch.manual_seed(seed + i * MAX_RETRIES + attempt)
 
                 next_wav = self.model.generate_continuation(
                     prompt=context,
@@ -350,7 +404,7 @@ class MusicEngine:
         logger.info("[MusicEngine] All %d segments done in %.1fs", num_segments, total_elapsed)
 
         # ── Stitch segments and trim to exact duration ──────────────────
-        full_audio = self._stitch(segments)
+        full_audio = self._stitch(segments, extend_stride=extend_stride)
 
         target_samples_native = int(total_duration_sec * NATIVE_SAMPLE_RATE)
         if full_audio.shape[-1] > target_samples_native:
@@ -446,12 +500,11 @@ class MusicEngine:
             )
         return is_clean
 
-    def _num_segments(self, duration: float) -> int:
+    def _num_segments(self, duration: float, extend_stride: float = 20.0) -> int:
         """Calculate number of generation passes needed for the target duration."""
         if duration <= SEGMENT_DURATION:
             return 1
-        net_new_per_segment = SEGMENT_DURATION - CONTEXT_DURATION
-        return 1 + math.ceil((duration - SEGMENT_DURATION) / net_new_per_segment)
+        return 1 + math.ceil((duration - SEGMENT_DURATION) / extend_stride)
 
     def _to_mono(tensor: torch.Tensor) -> torch.Tensor:
         # Not used centrally anymore to support native stereo passing, but kept for legacy API compat
@@ -461,16 +514,17 @@ class MusicEngine:
             return tensor.mean(dim=0, keepdim=True)
         return tensor
 
-    def _stitch(self, segments: list[torch.Tensor]) -> torch.Tensor:
+    def _stitch(self, segments: list[torch.Tensor], extend_stride: float = 20.0) -> torch.Tensor:
         """Join continuation segments, stripping the duplicated context region.
 
-        Each continuation output starts with ~CONTEXT_DURATION seconds that echo
+        Each continuation output starts with a context region that echoes
         the audio prompt. We strip that overlap and crossfade at the seam.
         """
         if len(segments) == 1:
             return segments[0]
 
-        ctx_samples = int(CONTEXT_DURATION * NATIVE_SAMPLE_RATE)
+        context_duration = SEGMENT_DURATION - extend_stride
+        ctx_samples = int(context_duration * NATIVE_SAMPLE_RATE)
         fade_samples = int(CROSSFADE_DURATION * NATIVE_SAMPLE_RATE)
         result = segments[0]
 

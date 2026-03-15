@@ -419,13 +419,12 @@ class AceStepEngine:
             remaining = total_duration_sec - (full_tensor.shape[-1] / sr)
             next_len = min(CONTINUATION_LEN, remaining + CROSSFADE_SEC)
 
-            # Cover strength decays: 0.85, 0.80, 0.75, 0.70 (floor)
-            cover_strength = max(0.70, 0.90 - 0.05 * seg_num)
+            # Cover strength decays: 0.85, 0.80, 0.75 (floor)
+            cover_strength = max(0.75, 0.90 - 0.05 * seg_num)
 
             # Use last CONTEXT_LEN seconds as cover source
-            context_samples = min(
-                int(CONTEXT_LEN * sr), full_tensor.shape[-1],
-            )
+            context_samples = int(CONTEXT_LEN * sr)
+            context_samples = min(context_samples, full_tensor.shape[-1])
             context_tensor = full_tensor[:, -context_samples:]
 
             logger.info(
@@ -433,16 +432,35 @@ class AceStepEngine:
                 seg_num, cover_strength, next_len,
             )
 
+            new_tensor = None
             with tempfile.TemporaryDirectory() as tmpdir:
                 src_wav = os.path.join(tmpdir, "cover_src.wav")
                 # soundfile expects (samples, channels) — transpose from (C, T)
                 sf.write(src_wav, context_tensor.cpu().numpy().T, sr)
 
-                new_tensor, _ = self._generate_cover_continuation(
-                    enhanced_prompt, src_wav, next_len,
-                    cover_strength=cover_strength,
-                    lyrics=enhanced_lyrics, bpm=bpm, keyscale=keyscale,
-                )
+                # Generate with validation and retry (up to 3 attempts)
+                for attempt in range(3):
+                    new_tensor, _ = self._generate_cover_continuation(
+                        enhanced_prompt, src_wav, next_len,
+                        cover_strength=cover_strength,
+                        lyrics=enhanced_lyrics, bpm=bpm, keyscale=keyscale,
+                        reference_audio_path=reference_audio_path
+                    )
+                    
+                    # Validate intermediate segment
+                    # Convert to mono numpy for validation
+                    temp_audio = self._postprocess(new_tensor, sr)
+                    valid, reason = self._validate_output(temp_audio, next_len - CROSSFADE_SEC)
+                    if valid:
+                        break
+                    logger.warning(
+                        "[AceStepEngine] Continuation attempt %d/3 failed validation: %s", 
+                        attempt + 1, reason,
+                    )
+                
+                if not valid:
+                    logger.error("[AceStepEngine] Continuation segment %d failed all attempts", seg_num)
+                    # Proceed with what we have but it might be silence/bad
 
             # Crossfade at native 48 kHz stereo
             fade_samples = int(CROSSFADE_SEC * sr)
@@ -477,6 +495,7 @@ class AceStepEngine:
                 window_sec=BOUNDARY_WINDOW_SEC,
                 enhanced_prompt=enhanced_prompt,
                 lyrics=enhanced_lyrics, bpm=bpm, keyscale=keyscale,
+                reference_audio_path=reference_audio_path,
             )
 
         # ── Final: single postprocess to 24 kHz mono ────────────────────
@@ -704,6 +723,7 @@ class AceStepEngine:
         lyrics: str | None = None,
         bpm: int | None = 50,
         keyscale: str | None = "Auto",
+        reference_audio_path: str | None = None,
     ) -> tuple[torch.Tensor, int]:
         """Cover-task continuation → raw 48 kHz stereo tensor.
 
@@ -722,6 +742,7 @@ class AceStepEngine:
             instrumental=True,
             src_audio=src_audio_path,
             audio_cover_strength=cover_strength,
+            reference_audio=reference_audio_path,
             duration=duration_sec,
             bpm=bpm if bpm and bpm > 0 else None,
             keyscale=keyscale if keyscale and keyscale != "Auto" else "",
@@ -770,6 +791,7 @@ class AceStepEngine:
         lyrics: str | None = None,
         bpm: int | None = 50,
         keyscale: str | None = "Auto",
+        reference_audio_path: str | None = None,
     ) -> torch.Tensor:
         """Repaint a short window around a seam to smooth the boundary.
 
@@ -809,6 +831,7 @@ class AceStepEngine:
                 lyrics=lyrics or "[Instrumental]",
                 instrumental=True,
                 src_audio=src_wav,
+                reference_audio=reference_audio_path,
                 repainting_start=repaint_start,
                 repainting_end=repaint_end,
                 duration=window_duration,

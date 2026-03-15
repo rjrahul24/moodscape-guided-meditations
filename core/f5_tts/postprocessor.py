@@ -22,15 +22,15 @@ from pedalboard import (
 )
 
 SAMPLE_RATE = 24000
-CROSSFADE_SAMPLES = int(0.020 * SAMPLE_RATE)  # 20 ms linear crossfade
+CROSSFADE_SAMPLES = int(0.300 * SAMPLE_RATE)  # 300 ms equal-power cosine crossfade
 
 
 def crossfade_chunks(chunks: list[np.ndarray]) -> np.ndarray:
-    """Stitch audio chunks with a 20 ms linear crossfade at each boundary.
+    """Stitch audio chunks with a 300 ms equal-power cosine crossfade at each boundary.
 
-    Uses a linear (rather than cosine-squared) crossfade because F5-TTS
-    chunks are already segmented at clean sentence boundaries, so the
-    simpler fade is sufficient and avoids amplitude pumping.
+    Uses a cos/sin equal-power crossfade (cos²+sin²=1) which maintains constant
+    perceived loudness throughout the transition, eliminating the amplitude dip
+    that linear crossfades produce at the midpoint.
     """
     if not chunks:
         return np.zeros(0, dtype=np.float32)
@@ -44,8 +44,9 @@ def crossfade_chunks(chunks: list[np.ndarray]) -> np.ndarray:
         if fade == 0:
             result = np.concatenate([result, c])
             continue
-        fade_out = np.linspace(1.0, 0.0, fade, dtype=np.float32)
-        fade_in = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+        _t = np.linspace(0.0, np.pi / 2.0, fade, dtype=np.float32)
+        fade_out = np.cos(_t)   # 1.0 → 0.0
+        fade_in  = np.sin(_t)   # 0.0 → 1.0
         overlap = result[-fade:] * fade_out + c[:fade] * fade_in
         result = np.concatenate([result[:-fade], overlap, c[fade:]])
     return result
@@ -149,7 +150,6 @@ class F5MasteringEngine:
                 HighShelfFilter(cutoff_frequency_hz=10000, gain_db=1.5),
                 LowpassFilter(cutoff_frequency_hz=13000),
                 Compressor(threshold_db=-22, ratio=2.5, attack_ms=15, release_ms=100),
-                Reverb(room_size=0.2, damping=0.7, wet_level=0.10, dry_level=0.90, width=0.8),
                 Limiter(threshold_db=-1.5, release_ms=80),
             ])
             self._master_chain_sr = sr
@@ -175,8 +175,8 @@ def build_f5_voice_chain(reverb_amount: float = 0.15) -> Pedalboard:
     reverb_amount = float(np.clip(reverb_amount, 0.0, 0.5))
     return Pedalboard([
         Reverb(
-            room_size=0.20,
-            damping=0.5,
+            room_size=0.18,
+            damping=0.8,
             wet_level=reverb_amount,
             dry_level=1.0 - reverb_amount,
         ),

@@ -40,8 +40,7 @@ def test_params():
             
     mock_model = MockModel()
     engine._model = mock_model
-    engine._ref_audio_proc_path = "mock_path"
-    engine._ref_text_proc = "mock text"
+    engine._phase_assets = {"default": {"audio": "mock_path", "text": "mock text"}}
     
     # Test precision casting (simulating load_model effect)
     mock_model.ema_model.to(torch.float16)

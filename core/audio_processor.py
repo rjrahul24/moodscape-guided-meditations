@@ -10,6 +10,7 @@ from pedalboard import (
     PeakFilter,
     Limiter,
     Pedalboard,
+    LowpassFilter,
 )
 
 
@@ -45,7 +46,6 @@ def make_music_chain() -> Pedalboard:
     """
     return Pedalboard([
         PeakFilter(cutoff_frequency_hz=300, gain_db=2.0, q=0.7),      # Low-end warmth
-        PeakFilter(cutoff_frequency_hz=1500, gain_db=-5.0, q=0.3),    # Vocal pocket notch (wider, deeper carve)
         PeakFilter(cutoff_frequency_hz=5500, gain_db=0.8, q=0.6),     # Clarity/air presence
         HighShelfFilter(cutoff_frequency_hz=8000.0, gain_db=-3.0),    # HF artefact suppression
         Limiter(threshold_db=-1.0),
@@ -72,7 +72,6 @@ def make_acestep_music_chain() -> Pedalboard:
     return Pedalboard([
         HighpassFilter(cutoff_frequency_hz=60.0),
         LowShelfFilter(cutoff_frequency_hz=200, gain_db=2.0),
-        PeakFilter(cutoff_frequency_hz=4000, gain_db=-1.5, q=0.8),
         HighShelfFilter(cutoff_frequency_hz=10000.0, gain_db=-1.0),
         Compressor(
             threshold_db=-20.0,
@@ -112,7 +111,6 @@ def make_lyria_music_chain() -> Pedalboard:
     return Pedalboard([
         HighpassFilter(cutoff_frequency_hz=60.0),                         # Sub-bass removal
         PeakFilter(cutoff_frequency_hz=250, gain_db=-1.5, q=0.8),         # Mud notch
-        PeakFilter(cutoff_frequency_hz=4500, gain_db=-2.0, q=0.7),        # Upper-mid softening
         HighShelfFilter(cutoff_frequency_hz=9000.0, gain_db=-2.5),        # HF warmth rolloff
         Compressor(
             threshold_db=-18.0,
@@ -124,23 +122,49 @@ def make_lyria_music_chain() -> Pedalboard:
     ])
 
 
-def make_master_chain() -> Pedalboard:
-    """Final mastering chain: subsonic HPF → gain → glue compressor → brickwall limiter.
-
-    The HighpassFilter at 35 Hz removes inaudible subsonic rumble from MusicGen
-    output that would otherwise consume digital headroom, causing the limiter
-    to trigger earlier and produce a quieter or more compressed final mix.
-
-    The Compressor at 2:1 ratio with slow attack/release acts as a soft-knee
-    "glue" — gently reining in peaks from music swells without the harsh,
-    pumping sound of aggressive limiting alone.
+def make_vocal_pocket_chain() -> Pedalboard:
+    """Consolidated EQ chain to carve a spectral 'lane' for human speech.
+    
+    Human speech intelligibility resides primarily in the 1-3 kHz range.
+    By carving this pocket in the music track, the voice sits naturally
+    on top without needing excessive volume boosts.
+    
+    Chain:
+      1. HighpassFilter at 30 Hz: Remove sub-bass rumble.
+      2. 300 Hz Peak (-3 dB, Q=0.8): Clear low-mid mud buildup.
+      3. 1000 Hz Peak (-2 dB, Q=0.7): Open space for vowel fundamentals.
+      4. 3000 Hz Peak (-4 dB, Q=1.0): Presence pocket for sibilance/consonants.
+      5. LowpassFilter at 12000 Hz: Tame harsh highs and digital artifacts.
     """
     return Pedalboard([
-        HighpassFilter(cutoff_frequency_hz=35.0),   # Remove inaudible MusicGen rumble
-        Gain(gain_db=-3.0),
-        # Bus compressor: gentle 2:1 glue before the brickwall limiter
-        Compressor(threshold_db=-18.0, ratio=2.0, attack_ms=30.0, release_ms=300.0),
-        Limiter(threshold_db=-1.0),
+        HighpassFilter(cutoff_frequency_hz=30),
+        PeakFilter(cutoff_frequency_hz=300, gain_db=-3, q=0.8),
+        PeakFilter(cutoff_frequency_hz=1000, gain_db=-2, q=0.7),
+        PeakFilter(cutoff_frequency_hz=3000, gain_db=-4, q=1.0),
+        LowpassFilter(cutoff_frequency_hz=12000),
+    ])
+
+
+def make_master_chain() -> Pedalboard:
+    """Final mastering chain: subsonic HPF → glue compression → gain → peak limiter.
+    
+    Tuned for gentle 'glue' and peak control rather than loudness maximization:
+      1. HPF at 30 Hz: Remove subsonic MusicGen rubble.
+      2. Compressor (-24 dB threshold, 1.5:1 ratio): Subtle glue to bind voice 
+         and music together. 30ms attack preserves transients.
+      3. Gain (+1 dB): Makeup gain for the compressor.
+      4. Limiter at -1.5 dBFS: Ensures safe true peak levels for lossy codecs.
+    """
+    return Pedalboard([
+        HighpassFilter(cutoff_frequency_hz=30.0),
+        Compressor(
+            threshold_db=-24.0,
+            ratio=1.5,
+            attack_ms=30.0,
+            release_ms=300.0,
+        ),
+        Gain(gain_db=1.0),
+        Limiter(threshold_db=-1.5, release_ms=200.0),
     ])
 
 

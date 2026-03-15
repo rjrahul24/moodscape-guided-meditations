@@ -9,7 +9,7 @@ Three processing stages tailored to Kokoro-82M's specific output characteristics
     - RMS normalization to -23 dBFS (EBU R128 speech reference)
 
   Stage 2 — Segment assembly:
-    - 22ms cosine-squared crossfade between chunks (preserves consonant onsets)
+    - 300ms cosine-squared crossfade between chunks (smooth blend through silence)
     - 25ms pre-roll silence + 100ms fade-in (masks cold-start prosody drift)
     - 50ms fade-out at segment boundary
 
@@ -42,9 +42,10 @@ logger = logging.getLogger(__name__)
 SAMPLE_RATE = 24000
 
 # ── Crossfade constants ──────────────────────────────────────────────────
-# 22ms at 24 kHz = 528 samples. Shorter than before to reduce inter-chunk
-# phoneme blending at word boundaries — improves consonant intelligibility.
-CROSSFADE_SAMPLES = int(0.022 * SAMPLE_RATE)
+# 300ms at 24 kHz = 7200 samples. Meditation audio has 0.8–1.2s inter-sentence
+# pauses, so crossfade regions overlap silence — no intelligibility risk.
+# 300ms eliminates any residual spectral discontinuity at chunk seams.
+CROSSFADE_SAMPLES = int(0.300 * SAMPLE_RATE)
 
 # ── Segment-level fade constants ─────────────────────────────────────────
 # Masks Kokoro's "cold start" prosody drift in the first ~100ms of each call
@@ -189,11 +190,12 @@ def crossfade_chunks(chunks: list[np.ndarray], crossfade_samples: int = CROSSFAD
 
     result = chunks[0]
     for chunk in chunks[1:]:
-        if len(result) < crossfade_samples or len(chunk) < crossfade_samples:
+        # Clamp to the shortest safe overlap so very short chunks still get a fade
+        overlap = min(crossfade_samples, len(result) // 2, len(chunk) // 2)
+        if overlap < 2:
             result = np.concatenate([result, chunk])
             continue
 
-        overlap = crossfade_samples
         fade_out = np.cos(np.linspace(0, np.pi / 2, overlap)).astype(np.float32) ** 2
         fade_in = np.cos(np.linspace(np.pi / 2, 0, overlap)).astype(np.float32) ** 2
 
@@ -285,6 +287,8 @@ def build_voice_chain(reverb_amount: float = 0.08) -> Pedalboard:
     - Noise gate at -42 dB: mutes inter-chunk silence without gating soft
       phonemes (breathy /h/, /f/, unvoiced trailing stops)
     - Highpass at 90 Hz: removes sub-bass rumble and plosive energy
+    - PeakFilter -2 dB at 300 Hz: cuts Kokoro ISTFTNet's nasal/boxy resonance
+      in the 250–400 Hz band without affecting warmth (LowShelf handles that)
     - Compressor 2.5:1 at -18 dB: glues the track without pumping; lower ratio
       preserves consonant transients for clearer pronunciation
     - High-shelf -5.5 dB at 6.5 kHz: more aggressive de-harshening of Kokoro's
@@ -297,6 +301,7 @@ def build_voice_chain(reverb_amount: float = 0.08) -> Pedalboard:
     return Pedalboard([
         NoiseGate(threshold_db=-42, ratio=20.0, attack_ms=2.0, release_ms=80),
         HighpassFilter(cutoff_frequency_hz=90.0),
+        PeakFilter(cutoff_frequency_hz=300, gain_db=-2.0, q=1.5),  # anti-boxiness: ISTFTNet 250–400 Hz nasal resonance
         Compressor(threshold_db=-18.0, ratio=2.5, attack_ms=2.0, release_ms=80.0),
         HighShelfFilter(cutoff_frequency_hz=6500, gain_db=-5.5),
         LowpassFilter(cutoff_frequency_hz=8000.0),

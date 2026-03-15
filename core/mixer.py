@@ -103,72 +103,77 @@ def apply_rms_ducking(
     return (music_audio[..., :total_samples] * gain_linear).astype(np.float32)
 
 
-def apply_mask_ducking(
-    voice_activity: np.ndarray,
+def apply_envelope_ducking(
+    voice_audio: np.ndarray,
     music_audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
-    duck_amount_db: float = -9.0,
-    attack_ms: float = 150.0,
-    release_ms: float = 2000.0,
-    lookahead_ms: float = 100.0,
+    duck_amount_db: float = -10.0,
+    threshold_db: float = -35.0,
+    attack_ms: float = 10.0,
+    release_ms: float = 800.0,
+    lookahead_ms: float = 20.0,
+    window_ms: float = 50.0,
 ) -> np.ndarray:
-    """Apply ducking using a pre-computed voice activity boolean mask.
-
-    Constructs a dB automation curve from the voice_activity mask, applies
-    lookahead shift, smooths with exponential attack/release envelopes, and
-    multiplies the music array by the resulting linear gain envelope.
-
-    This is the preferred method when using Kokoro TTS (Method A from the
-    architecture guide) because the mask is sample-accurate and requires
-    no additional acoustic analysis.
+    """Sidechain ducker using a smooth RMS envelope follower with asymmetric A/R.
 
     Args:
-        voice_activity:  bool array, True where voice is active, aligned to music.
-        music_audio:     1D float32 music array to duck.
-        sample_rate:     Sample rate of both arrays.
-        duck_amount_db:  dB reduction during speech (negative value, e.g. -9.0).
-        attack_ms:       Time to reach full duck after voice onset.
-        release_ms:      Time to recover after voice stops (long for meditation).
-        lookahead_ms:    Shift duck earlier than voice onset (pre-duck).
+        voice_audio:    1D float32 voice array.
+        music_audio:    1D float32 music array (must be >= voice_audio length).
+        sample_rate:    Sample rate (Hz).
+        duck_amount_db: Target attenuation depth (e.g. -10 dB).
+        threshold_db:   Voice level (dBFS) above which ducking triggers.
+        attack_ms:      Attack time constant (ms).
+        release_ms:     Release time constant (ms).
+        lookahead_ms:   Time (ms) to shift the envelope forward.
+        window_ms:      RMS analysis window (ms).
 
     Returns:
-        Ducked music as 1D float32 array.
+        Ducked music array.
     """
     total_samples = music_audio.shape[-1]
+    voice = np.zeros(total_samples, dtype=np.float32)
+    v_len = min(len(voice_audio), total_samples)
+    voice[:v_len] = voice_audio[:v_len]
 
-    # 1. Build raw dB automation from the boolean mask
-    target_db = np.where(
-        voice_activity[:total_samples],
-        float(duck_amount_db),
-        0.0
-    ).astype(np.float64)
+    # 1. Calculate squared signal and smooth with rolling window for Mean Square
+    window_samples = int((window_ms / 1000.0) * sample_rate)
+    window = np.ones(window_samples) / window_samples
+    ms_env = np.convolve(voice**2, window, mode='same')
+    
+    # 2. Convert to RMS and then dBFS (clip to avoid log of zero)
+    rms_env = np.sqrt(np.maximum(ms_env, 1e-10))
+    db_env = 20.0 * np.log10(rms_env)
 
-    # 2. Lookahead: shift envelope earlier so music starts fading before
-    #    the first syllable of each phrase.
+    # 3. Calculate target gain reduction in dB
+    # Gain reduction only applies when db_env > threshold_db
+    # Proportionally scale reduction up to duck_amount_db
+    # Simple knee logic: reduction = min(0, (threshold_db - db_env)) 
+    # then clamped to duck_amount_db
+    target_reduction_db = np.clip(threshold_db - db_env, duck_amount_db, 0.0)
+    target_gain_linear = 10.0 ** (target_reduction_db / 20.0)
+
+    # 4. Asymmetric Smoothing (EMA)
+    # y[n] = alpha * y[n-1] + (1 - alpha) * x[n]
+    attack_alpha = math.exp(-1.0 / (attack_ms * sample_rate / 1000.0))
+    release_alpha = math.exp(-1.0 / (release_ms * sample_rate / 1000.0))
+    
+    smoothed_gain = np.ones(total_samples, dtype=np.float64)
+    current = 1.0
+    for i in range(total_samples):
+        target = target_gain_linear[i]
+        if target < current: # Attack phase (gain dropping)
+            current = attack_alpha * current + (1.0 - attack_alpha) * target
+        else: # Release phase (gain rising)
+            current = release_alpha * current + (1.0 - release_alpha) * target
+        smoothed_gain[i] = current
+
+    # 5. Lookahead shift
     lookahead_samples = int((lookahead_ms / 1000.0) * sample_rate)
     if lookahead_samples > 0:
-        target_db = np.roll(target_db, -lookahead_samples)
-        target_db[-lookahead_samples:] = 0.0
+        smoothed_gain = np.roll(smoothed_gain, -lookahead_samples)
+        smoothed_gain[-lookahead_samples:] = 1.0
 
-    # 3. Sample-by-sample EMA smoothing for attack and release.
-    #    Attack: how fast music ducks when voice starts.
-    #    Release: how slowly music recovers when voice stops.
-    attack_coeff = math.exp(-1.0 / max(1, attack_ms * sample_rate / 1000.0))
-    release_coeff = math.exp(-1.0 / max(1, release_ms * sample_rate / 1000.0))
-
-    smoothed = np.zeros(total_samples, dtype=np.float64)
-    current = 0.0
-    for i in range(total_samples):
-        t = target_db[i]
-        if t < current:
-            current = attack_coeff * current + (1.0 - attack_coeff) * t
-        else:
-            current = release_coeff * current + (1.0 - release_coeff) * t
-        smoothed[i] = current
-
-    # 4. Convert dB → linear and apply
-    gain_linear = np.power(10.0, smoothed / 20.0).astype(np.float32)
-    return (music_audio[..., :total_samples] * gain_linear).astype(np.float32)
+    return (music_audio * smoothed_gain).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +329,7 @@ def mix(
     music_pre_roll_sec: float = 2.0,
     fade_in_sec: float = 3.0,
     fade_out_sec: float = 5.0,
-    target_lufs: float = -18.0,
+    target_lufs: float = -19.0,
 ) -> np.ndarray:
     """Full mix pipeline: align → level → duck → overlay → fades → normalize.
 
@@ -369,23 +374,22 @@ def mix(
         ], axis=-1)
     aligned_music = aligned_music[..., :target_len]
 
-    # 4. Apply mask-based ducking (Method A — uses pre-computed voice activity)
-    # attack_ms=900: music fades over ~0.9s combined with 400ms lookahead — slow,
-    #   breath-like drop from -17 dB toward -38 dB before the first syllable lands.
-    # release_ms=2500: music floats back up over 2.5s after speech ends — no jarring
-    #   jump, the level rises as a gentle swell between sentences.
-    # lookahead_ms=400: music starts fading 400ms before voice onset so the transition
-    #   is already underway when the first syllable arrives — no abrupt floor drop.
-    # All timings are in ms and converted to samples internally, so behaviour is
-    # identical at 48 kHz (Lyria) and 44.1 kHz (ACE-Step / MusicGen).
-    ducked_music = apply_mask_ducking(
-        aligned_activity,
+    # 4. Apply envelope-follower sidechain ducking
+    # Professional meditation defaults:
+    # attack_ms=10.0: music drops promptly when voice starts.
+    # release_ms=800.0: music returns gently, feeling calming.
+    # lookahead_ms=25.0: music pre-ducks before voice begins.
+    # duck_amount_db: -10 dB (configurable via duck_amount_db argument).
+    
+    ducked_music = apply_envelope_ducking(
+        aligned_voice,
         aligned_music,
         sample_rate=sample_rate,
         duck_amount_db=duck_amount_db,
-        attack_ms=900.0,
-        release_ms=2500.0,
-        lookahead_ms=400.0,
+        threshold_db=-35.0,
+        attack_ms=10.0,
+        release_ms=800.0,
+        lookahead_ms=25.0,
     )
 
     # 5. Sum voice + ducked music
@@ -481,7 +485,7 @@ def export_audio(
     output_format: str = "wav",
     target_sample_rate: int = 44100,
     master_chain: Pedalboard | None = None,
-    target_lufs: float = -18.0,
+    target_lufs: float = -19.0,
 ) -> str:
     """Stream audio out to temp file with Pedalboard plugins and normalization.
     
@@ -500,20 +504,30 @@ def export_audio(
     tmp_path = tmp.name
     tmp.close()
 
-    # Pre-calculate the linear gain to bring the whole file to target LUFS
-    mix_lufs_gain = calculate_loudness_gain(audio, sample_rate, target_lufs)
+    # 1. Apply Pedalboard mastering chain if present to the whole array first.
+    # We do this in-memory (safe for 32GB RAM target hardware).
+    mastered_audio = audio
+    if master_chain:
+        audio_2d = audio.reshape(1, -1) if audio.ndim == 1 else audio
+        mastered_audio = master_chain(audio_2d, sample_rate)
+        if audio.ndim == 1:
+            mastered_audio = mastered_audio.squeeze(0)
+
+    # 2. Pre-calculate the linear gain based on the PRE-normalized mastered audio
+    # to bring the whole file to target LUFS accurately.
+    mix_lufs_gain = calculate_loudness_gain(mastered_audio, sample_rate, target_lufs)
     
-    # 20 second chunks
+    # 20 second chunks for streaming export
     chunk_samples = int(20.0 * sample_rate)
-    total_samples = audio.shape[-1]
-    num_channels = audio.shape[0] if audio.ndim == 2 else 1
+    total_samples = mastered_audio.shape[-1]
+    num_channels = mastered_audio.shape[0] if mastered_audio.ndim == 2 else 1
 
     # Initialize Pedalboard AudioFile struct
     f = AudioFile(tmp_path, "w", samplerate=export_rate, num_channels=num_channels)
 
     for start in range(0, total_samples, chunk_samples):
         end = min(start + chunk_samples, total_samples)
-        chunk = audio[..., start:end]
+        chunk = mastered_audio[..., start:end]
         
         # Resample chunk if needed
         if sample_rate != export_rate:
@@ -522,12 +536,8 @@ def export_audio(
         # Apply normalization gain
         chunk = chunk * mix_lufs_gain
         
-        # Apply Pedalboard mastering chain if present
-        if master_chain:
-            chunk_2d = chunk.reshape(1, -1) if chunk.ndim == 1 else chunk
-            chunk = master_chain(chunk_2d, export_rate)
-            if audio.ndim == 1:
-                chunk = chunk.squeeze(0)
+        # Ensure true peak safety -1.5 dBFS via clipping (limiter already ran during mastering)
+        chunk = np.clip(chunk, -0.84, 0.84) # -1.5 dBFS ≈ 0.841
             
         # write directly as float32. Pedalboard expects (channels, samples).
         if chunk.ndim == 1:
