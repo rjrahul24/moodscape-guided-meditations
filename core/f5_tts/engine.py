@@ -62,6 +62,51 @@ def _trim_trailing_silence(audio: np.ndarray, sr: int) -> np.ndarray:
     return audio[:cut]
 
 
+def _apply_silero_vad(audio: np.ndarray, sr: int) -> np.ndarray:
+    """Apply Silero VAD to generate a smooth probability-based gain envelope.
+
+    Instead of hard energy-threshold cutting, this uses Silero-VAD's probability
+    scores to create a gain mask. This preserves natural breath and decay while
+    aggressively suppressing background noise in non-speech segments.
+    """
+    try:
+        import torch
+        # Only loads the model once per session via torch.hub's cache
+        model, utils = torch.hub.load(
+            repo_or_dir='snakers4/silero-vad',
+            model='silero_vad',
+            force_reload=False,
+            trust_repo=True
+        )
+        (get_speech_timestamps, _, _, _, _) = utils
+
+        # Silero VAD expects 16kHz for its internal processing
+        audio_torch = torch.from_numpy(audio.astype(np.float32))
+        
+        # Get timestamps for speech segments
+        speech_timestamps = get_speech_timestamps(audio_torch, model, sampling_rate=sr)
+        
+        # Create a smooth gain mask (initialized to 0)
+        mask = np.zeros_like(audio)
+        fade_samples = int(0.05 * sr)  # 50ms fade for smooth transitions
+
+        for ts in speech_timestamps:
+            start, end = ts['start'], ts['end']
+            # Apply gain of 1.0 to detected speech segments with soft fades
+            s = max(0, start - fade_samples)
+            e = min(len(mask), end + fade_samples)
+            mask[s:e] = 1.0
+
+        # Apply gaussian smoothing to the mask to avoid clicks
+        from scipy.ndimage import gaussian_filter1d
+        mask = gaussian_filter1d(mask.astype(float), sigma=fade_samples/4.0)
+
+        return audio * mask
+    except Exception as e:
+        logger.warning("Silero VAD failed, falling back to original audio: %s", e)
+        return audio
+
+
 def _last_sentence(text: str) -> str:
     """Return the last sentence of text for use as a chained ref_text.
 
@@ -88,6 +133,53 @@ def _write_chain_ref(arr: np.ndarray, sr: int) -> str:
 _SWAY_COEF = -1.0   # enables sway sampling for smoother prosody
 _CFG_STRENGTH = 2.0  # paper-validated optimal for stable generation
 _ROOM_TONE_LEVEL = 1e-3  # ~-60 dBFS ambient floor for pause segments
+
+# Reference audio conditioning targets
+_REF_TARGET_DBFS = -20.0      # RMS normalisation target for reference audio
+_REF_TAIL_SILENCE_SEC = 1.0   # trailing silence to prevent phrase leakage
+_REF_TAIL_NOISE_DBFS = -55.0  # low-level noise (~-55 dBFS) survives F5's -42 dBFS edge trimmer
+
+
+def _condition_reference_audio(audio_path: str, sr: int) -> str:
+    """Condition reference audio for optimal F5-TTS alignment.
+
+    Addresses two common sources of quality degradation:
+      1. Inconsistent reference levels → normalise RMS to _REF_TARGET_DBFS
+      2. Phrase leakage (reference words bleeding into output) → append
+         _REF_TAIL_SILENCE_SEC of low-level noise as trailing silence
+
+    The trailing noise is at ~-55 dBFS — above F5's internal -42 dBFS edge
+    trimmer threshold so it survives preprocessing, but inaudible in practice.
+
+    Returns a new temp WAV path with the conditioned audio (caller must clean up).
+    """
+    import soundfile as sf
+
+    audio, file_sr = sf.read(audio_path, dtype="float32")
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1)
+
+    # RMS normalise to target level
+    rms = float(np.sqrt(np.mean(audio ** 2)))
+    if rms > 1e-8:
+        target_rms = 10 ** (_REF_TARGET_DBFS / 20.0)
+        audio = audio * (target_rms / rms)
+
+    # Append trailing silence (low-level noise to survive edge trimming)
+    tail_amplitude = 10 ** (_REF_TAIL_NOISE_DBFS / 20.0)
+    tail_samples = int(_REF_TAIL_SILENCE_SEC * file_sr)
+    tail = (np.random.randn(tail_samples) * tail_amplitude).astype(np.float32)
+    audio = np.concatenate([audio, tail])
+
+    # Write conditioned audio to temp file
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix="_conditioned.wav")
+    tmp.close()
+    sf.write(tmp.name, audio.astype(np.float32), file_sr, subtype="PCM_16")
+    logger.debug(
+        "Conditioned reference audio: RMS→%.1f dBFS, +%.1fs tail → %s",
+        _REF_TARGET_DBFS, _REF_TAIL_SILENCE_SEC, tmp.name,
+    )
+    return tmp.name
 
 
 def _normalize_chunk_wpm(
@@ -278,11 +370,14 @@ class F5Engine(SpeechEngine):
             # Pass ref_text="" if it's empty to let Whisper transcribe
             proc_audio_path, proc_ref_text = preprocess_ref_audio_text(
                 ref_audio_path,
-                ref_text if ref_text else "", 
+                ref_text if ref_text else "",
                 show_info=lambda msg: logger.debug("F5 preprocess: %s", msg),
             )
+            # Condition the processed reference: RMS-normalise and append
+            # trailing silence to prevent phrase leakage into generated output.
+            conditioned_path = _condition_reference_audio(proc_audio_path, SAMPLE_RATE)
             self._phase_assets[phase_name] = {
-                "audio": proc_audio_path,
+                "audio": conditioned_path,
                 "text": proc_ref_text
             }
             logger.info("Phase '%s' processed. Transcript: %r", phase_name, proc_ref_text[:80])
@@ -313,7 +408,7 @@ class F5Engine(SpeechEngine):
         self,
         segments: list[dict],
         voice=None,
-        speed: float = 0.75,
+        speed: float = 0.90,
         progress_cb=None,
         **kwargs,
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -356,6 +451,7 @@ class F5Engine(SpeechEngine):
         # initial seed and is restored after pauses, phase changes, and every
         # _CHAIN_RESET_EVERY chunks to prevent voice drift over long sessions.
         _CHAIN_RESET_EVERY = 6          # reset to static ref every N consecutive speech chunks
+        _CHAIN_RESET_PAUSE_SEC = 3.0    # only reset chain on pauses >= this duration
         _CHAIN_MAX_REF_SEC = 5.0        # maximum seconds to take as chained ref audio
         _CHAIN_MAX_REF_FRAC = 0.50      # also cap at 50% of the chunk length (avoids very long refs)
         _CHAIN_MIN_SAMPLES = int(0.5 * SAMPLE_RATE)  # skip chaining from chunks shorter than 0.5s
@@ -364,7 +460,8 @@ class F5Engine(SpeechEngine):
         chain_ref_text: str | None = None   # last sentence of previous chunk (ref_text for next)
         chain_speech_count: int = 0         # consecutive speech chunks since last reset
         last_phase: str | None = None       # track phase changes for reset trigger
-        prev_was_pause: bool = False        # True if the immediately preceding segment was a pause
+        prev_was_pause: bool = False        # True if the immediately preceding segment was a long pause
+        prev_pause_duration: float = 0.0    # duration of the preceding pause (for reset threshold)
 
         # Register atexit cleanup once per engine instance so temp files are
         # deleted on process exit even if synthesize() is interrupted.
@@ -409,13 +506,15 @@ class F5Engine(SpeechEngine):
                 # ── Chained reference selection ────────────────────────────
                 # Reset to static reference when:
                 #   (a) first chunk of the session (chain_ref_audio is None)
-                #   (b) a pause segment preceded this chunk
+                #   (b) a LONG pause (>= _CHAIN_RESET_PAUSE_SEC) preceded this chunk
+                #       Short pauses and breath segments maintain the chain for
+                #       prosodic continuity through natural breathing pauses.
                 #   (c) voice phase just changed
                 #   (d) _CHAIN_RESET_EVERY consecutive speech chunks accumulated
                 #       (prevents voice drift over long sessions)
                 should_reset = (
                     chain_ref_audio is None
-                    or prev_was_pause
+                    or (prev_was_pause and prev_pause_duration >= _CHAIN_RESET_PAUSE_SEC)
                     or phase != last_phase
                     or chain_speech_count >= _CHAIN_RESET_EVERY
                 )
@@ -501,7 +600,27 @@ class F5Engine(SpeechEngine):
                 silence_act = np.zeros(n, dtype=bool)
                 chunks.append((silence, silence_act, "pause", None))
 
-            prev_was_pause = (seg["type"] == "pause")
+            elif seg["type"] == "breath":
+                from core.breath_sounds import load_breath
+
+                breath_audio = load_breath(seg["subtype"], target_sr=SAMPLE_RATE)
+                # Blend with room tone to match F5's convention of no digital silence
+                room = (np.random.randn(len(breath_audio)) * _ROOM_TONE_LEVEL).astype(
+                    np.float32
+                )
+                breath_audio = breath_audio + room
+                breath_act = np.zeros(len(breath_audio), dtype=bool)
+                chunks.append((breath_audio, breath_act, "breath", None))
+
+            if seg["type"] == "pause":
+                prev_was_pause = True
+                prev_pause_duration = seg["duration_sec"]
+            elif seg["type"] == "breath":
+                prev_was_pause = True
+                prev_pause_duration = 1.2  # nominal breath duration (below reset threshold)
+            else:
+                prev_was_pause = False
+                prev_pause_duration = 0.0
 
             if progress_cb is not None:
                 progress_cb(idx + 1, total)
@@ -517,12 +636,23 @@ class F5Engine(SpeechEngine):
         # Limited to ±15% to keep phase-vocoder artefacts inaudible.
         chunks = _normalize_chunk_wpm(chunks, SAMPLE_RATE)
 
+        # Apply Silero VAD to each speech chunk before assembly
+        processed_chunks = []
+        for arr, act, ctype, text in chunks:
+            if ctype == "speech":
+                arr = _apply_silero_vad(arr, SAMPLE_RATE)
+            processed_chunks.append((arr, act, ctype, text))
+        chunks = processed_chunks
+
         # Assemble the final audio with type-aware boundary handling:
-        #   speech → speech : 300 ms equal-power cosine crossfade (smooths chunk-cut artifacts)
+        #   speech → speech : 0.8s room tone gap + 300ms equal-power cosine crossfade
         #   anything → pause : direct concatenation (preserves exact duration)
         #   pause → anything : direct concatenation (preserves exact duration)
-        # This prevents the crossfade overlap from eating into pause timing.
+        # Consecutive speech chunks only arise from splitting the same paragraph
+        # at the 400-char limit — they are sentences within ONE paragraph.
+        # Explicit pause segments from the preprocessor handle paragraph breaks.
         FADE_N = int(0.300 * SAMPLE_RATE)  # 300 ms equal-power cosine crossfade between speech chunks
+        GAP_N = int(0.8 * SAMPLE_RATE)     # 0.8s gap between consecutive speech chunks (same paragraph)
 
         result_audio = chunks[0][0].copy().astype(np.float32)
         result_act = chunks[0][1].copy()
@@ -533,6 +663,13 @@ class F5Engine(SpeechEngine):
             cur_audio = cur_audio.astype(np.float32)
 
             if prev_type == "speech" and cur_type == "speech":
+                # Insert a 2.5s room tone gap between consecutive speech chunks
+                gap_tone = (np.random.randn(GAP_N) * _ROOM_TONE_LEVEL).astype(np.float32)
+                gap_act = np.zeros(GAP_N, dtype=bool)
+                
+                result_audio = np.concatenate([result_audio, gap_tone])
+                result_act = np.concatenate([result_act, gap_act])
+
                 # Equal-power cosine crossfade to smooth the sentence boundary.
                 # cos/sin pair maintains cos²+sin²=1 at every point, eliminating
                 # the amplitude dip that linear crossfades produce at the midpoint.

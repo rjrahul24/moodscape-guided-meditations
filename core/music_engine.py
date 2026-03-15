@@ -205,6 +205,7 @@ class MusicEngine:
         cfg_coef: float = 4.5,
         extend_stride: float = 12.0,
         seed: int | None = None,
+        prompt_schedule_interval: float | None = 60.0,
     ) -> np.ndarray:
         """Generate background music using sliding window continuation.
 
@@ -245,8 +246,12 @@ class MusicEngine:
         if self.model is None:
             raise RuntimeError("Music model not loaded. Call load_model() first.")
 
-        num_segments = self._num_segments(total_duration_sec, extend_stride)
         story_mode = prompt_stages is not None
+        # In story mode, ensure segment boundaries (and thus prompt changes)
+        # occur at least every prompt_schedule_interval seconds.
+        if story_mode and prompt_schedule_interval is not None:
+            extend_stride = min(extend_stride, prompt_schedule_interval)
+        num_segments = self._num_segments(total_duration_sec, extend_stride)
         logger.info(
             "[MusicEngine] Generating %.0fs of music (%d segments) on %s%s",
             total_duration_sec, num_segments, self.device,
@@ -293,6 +298,9 @@ class MusicEngine:
                 melody_tensor.shape[-1] / melody_sample_rate, melody_sample_rate,
             )
 
+        from core.qa_monitor import compute_composite_score
+
+        seg0_candidates: list[tuple[torch.Tensor, float]] = []
         for attempt in range(MAX_RETRIES):
             # Explicit memory cleanup against AudioCraft state leak on retry
             if self.device == "mps":
@@ -320,8 +328,20 @@ class MusicEngine:
                 wav = self.model.generate([seg0_prompt], progress=False)
             current = wav[0].cpu()
             if self._check_spectral_flux(current):
-                break
-            logger.info("[MusicEngine] Segment 1 retry %d/%d", attempt + 1, MAX_RETRIES)
+                arr = current.squeeze().numpy()
+                score = compute_composite_score(arr, NATIVE_SAMPLE_RATE)
+                seg0_candidates.append((current, score))
+                if score > 0.8:
+                    break
+            else:
+                seg0_candidates.append((current, 0.0))
+                logger.info("[MusicEngine] Segment 1 retry %d/%d", attempt + 1, MAX_RETRIES)
+
+        if seg0_candidates:
+            current = max(seg0_candidates, key=lambda c: c[1])[0]
+            if len(seg0_candidates) > 1:
+                scores = [f"{s:.3f}" for _, s in seg0_candidates]
+                logger.info("[MusicEngine] Seg 0 A/B selection — scores: %s", scores)
         segments = [current]
 
         elapsed = time.time() - t0
@@ -359,6 +379,7 @@ class MusicEngine:
             if self.device != "cpu":
                 context = context.to(self.device)
 
+            cont_candidates: list[tuple[torch.Tensor, float]] = []
             for attempt in range(MAX_RETRIES):
                 # Explicit memory cleanup against AudioCraft state leak on retry
                 if self.device == "mps":
@@ -379,8 +400,17 @@ class MusicEngine:
                 )
                 candidate = next_wav[0].cpu()
                 if self._check_spectral_flux(candidate):
-                    break
-                logger.info("[MusicEngine] Segment %d retry %d/%d", i + 1, attempt + 1, MAX_RETRIES)
+                    arr = candidate.squeeze().numpy()
+                    score = compute_composite_score(arr, NATIVE_SAMPLE_RATE)
+                    cont_candidates.append((candidate, score))
+                    if score > 0.8:
+                        break
+                else:
+                    cont_candidates.append((candidate, 0.0))
+                    logger.info("[MusicEngine] Segment %d retry %d/%d", i + 1, attempt + 1, MAX_RETRIES)
+
+            if cont_candidates:
+                candidate = max(cont_candidates, key=lambda c: c[1])[0]
             segments.append(candidate)
             
             # Explicit memory cleanup during large sliding string of generations
@@ -404,7 +434,9 @@ class MusicEngine:
         logger.info("[MusicEngine] All %d segments done in %.1fs", num_segments, total_elapsed)
 
         # ── Stitch segments and trim to exact duration ──────────────────
-        full_audio = self._stitch(segments, extend_stride=extend_stride)
+        full_audio, seam_positions = self._stitch(segments, extend_stride=extend_stride)
+        if seam_positions:
+            full_audio = self._apply_micro_crossfades(full_audio, seam_positions)
 
         target_samples_native = int(total_duration_sec * NATIVE_SAMPLE_RATE)
         if full_audio.shape[-1] > target_samples_native:
@@ -514,19 +546,26 @@ class MusicEngine:
             return tensor.mean(dim=0, keepdim=True)
         return tensor
 
-    def _stitch(self, segments: list[torch.Tensor], extend_stride: float = 20.0) -> torch.Tensor:
+    def _stitch(
+        self, segments: list[torch.Tensor], extend_stride: float = 20.0,
+    ) -> tuple[torch.Tensor, list[int]]:
         """Join continuation segments, stripping the duplicated context region.
 
         Each continuation output starts with a context region that echoes
         the audio prompt. We strip that overlap and crossfade at the seam.
+
+        Returns:
+            (stitched_audio, seam_positions) where seam_positions lists the
+            sample index of each crossfade centre (for micro-crossfade pass).
         """
         if len(segments) == 1:
-            return segments[0]
+            return segments[0], []
 
         context_duration = SEGMENT_DURATION - extend_stride
         ctx_samples = int(context_duration * NATIVE_SAMPLE_RATE)
         fade_samples = int(CROSSFADE_DURATION * NATIVE_SAMPLE_RATE)
         result = segments[0]
+        seam_positions: list[int] = []
 
         for seg in segments[1:]:
             new = seg[..., ctx_samples:]  # strip duplicate context
@@ -539,9 +578,61 @@ class MusicEngine:
             fade_out = torch.cos(t) ** 2
             fade_in = torch.cos(math.pi / 2 - t) ** 2
 
+            # Record seam centre position (midpoint of the blended region)
+            seam_centre = result.shape[-1] - overlap + overlap // 2
+            seam_positions.append(seam_centre)
+
             blended = result[..., -overlap:] * fade_out + new[..., :overlap] * fade_in
             result = torch.cat(
                 [result[..., :-overlap], blended, new[..., overlap:]], dim=-1
             )
 
-        return result
+        return result, seam_positions
+
+    @staticmethod
+    def _apply_micro_crossfades(
+        audio: torch.Tensor,
+        seam_positions: list[int],
+        window: int = 64,
+    ) -> torch.Tensor:
+        """Apply sub-100ms linear fade at zero-crossings near each seam.
+
+        After the macro cosine crossfade, residual high-frequency clicks can
+        remain at seam boundaries.  This pass finds the nearest zero-crossing
+        within ±window samples of each seam centre and applies a tiny
+        triangular (linear fade-out × fade-in) window to smooth it.
+
+        Args:
+            audio:          1-D or (1, N) tensor at NATIVE_SAMPLE_RATE.
+            seam_positions: Sample indices of crossfade centres from _stitch.
+            window:         Half-width in samples (~2 ms at 32 kHz).
+        """
+        waveform = audio.squeeze()
+        mono = waveform.mean(dim=0) if waveform.ndim > 1 else waveform
+
+        for pos in seam_positions:
+            lo = max(0, pos - window)
+            hi = min(len(mono) - 1, pos + window)
+            if hi - lo < 4:
+                continue
+
+            region = mono[lo:hi]
+            # Find zero-crossings (sign changes) in the search window
+            signs = torch.sign(region)
+            crossings = ((signs[1:] * signs[:-1]) < 0).nonzero(as_tuple=False)
+
+            if len(crossings) == 0:
+                zc = pos  # no crossing found — use centre
+            else:
+                # Pick crossing nearest to the seam centre
+                zc = lo + int(crossings[torch.argmin(torch.abs(crossings - window))].item())
+
+            # Apply tiny triangular window centred on zero-crossing
+            half = min(window, zc, audio.shape[-1] - zc - 1)
+            if half < 2:
+                continue
+            ramp = torch.linspace(0.0, 1.0, half, device=audio.device)
+            audio[..., zc - half:zc] *= ramp
+            audio[..., zc:zc + half] *= ramp.flip(0)
+
+        return audio

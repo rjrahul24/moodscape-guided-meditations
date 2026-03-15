@@ -205,24 +205,33 @@ def _loop_with_crossfade(
 def overlay_tracks(
     voice: np.ndarray,
     music: np.ndarray,
-    music_pre_roll_sec: float = 2.0,
+    music_pre_roll_sec: float = 4.0,
+    music_post_roll_sec: float = 8.0,
     sample_rate: int = SAMPLE_RATE,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Align voice and music. Music starts first by pre_roll_sec seconds.
+    """Align voice and music with professional intro/outro structure.
+
+    Music starts ``pre_roll_sec`` before the voice, and continues playing
+    ``post_roll_sec`` after the voice ends — giving the meditation a graceful
+    intro and outro instead of cutting off with the last word.
 
     Returns (aligned_voice, aligned_music) — both same length, ready to sum.
     """
     pre_roll_samples = int(music_pre_roll_sec * sample_rate)
+    post_roll_samples = int(music_post_roll_sec * sample_rate)
 
     if voice.ndim == 1:
-        pad_shape = pre_roll_samples
+        pre_pad = pre_roll_samples
+        post_pad = post_roll_samples
     else:
-        pad_shape = (voice.shape[0], pre_roll_samples)
-        
-    # Prepend silence to voice so music plays alone briefly first
+        pre_pad = (voice.shape[0], pre_roll_samples)
+        post_pad = (voice.shape[0], post_roll_samples)
+
+    # Prepend silence (music plays alone) and append silence (music outro)
     aligned_voice = np.concatenate([
-        np.zeros(pad_shape, dtype=np.float32),
+        np.zeros(pre_pad, dtype=np.float32),
         voice,
+        np.zeros(post_pad, dtype=np.float32),
     ], axis=-1)
 
     total_length = aligned_voice.shape[-1]
@@ -326,9 +335,10 @@ def mix(
     sample_rate: int = SAMPLE_RATE,
     duck_amount_db: float = -3.0,
     music_volume_db: float = -17.0,
-    music_pre_roll_sec: float = 2.0,
+    music_pre_roll_sec: float = 4.0,
+    music_post_roll_sec: float = 8.0,
     fade_in_sec: float = 3.0,
-    fade_out_sec: float = 5.0,
+    fade_out_sec: float = 6.0,
     target_lufs: float = -19.0,
 ) -> np.ndarray:
     """Full mix pipeline: align → level → duck → overlay → fades → normalize.
@@ -341,24 +351,31 @@ def mix(
             -17.0 dB keeps the music present and audible during pauses without
             competing with silence. During speech it drops by an additional
             duck_amount_db → -38 dB total, nearly inaudible behind the voice.
+        music_pre_roll_sec: Music plays alone for this many seconds before
+            the voice begins (intro). Default 4.0s.
+        music_post_roll_sec: Music plays alone for this many seconds after
+            the voice ends (outro), before the fade-out. Default 8.0s.
 
     Called after voice FX and music FX have already been applied.
     Returns mixed mono float32 array ready for master chain + export.
     """
-    # 1. Align voice and music with pre-roll
+    # 1. Align voice and music with pre-roll and post-roll
     aligned_voice, aligned_music = overlay_tracks(
-        voice_audio, music_audio, music_pre_roll_sec, sample_rate
+        voice_audio, music_audio, music_pre_roll_sec, music_post_roll_sec,
+        sample_rate,
     )
 
     # 2. Set baseline music level so it sits behind the voice
     music_gain = np.float32(10.0 ** (music_volume_db / 20.0))
     aligned_music = aligned_music * music_gain
 
-    # 3. Extend voice_activity to match pre-roll offset
+    # 3. Extend voice_activity to match pre-roll + post-roll offsets
     pre_roll_samples = int(music_pre_roll_sec * sample_rate)
+    post_roll_samples = int(music_post_roll_sec * sample_rate)
     aligned_activity = np.concatenate([
         np.zeros(pre_roll_samples, dtype=bool),
         voice_activity,
+        np.zeros(post_roll_samples, dtype=bool),
     ])
     # Match exact length
     target_len = aligned_voice.shape[-1]

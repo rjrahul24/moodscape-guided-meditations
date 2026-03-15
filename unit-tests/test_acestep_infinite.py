@@ -14,13 +14,14 @@ class TestAceStepInfinite(unittest.TestCase):
         self.engine._llm = MagicMock()
         self.engine._dit.initialize_service.return_value = ("Success", True)
 
+    @patch("core.qa_monitor.compute_composite_score", return_value=0.9)
     @patch("core.acestep_engine.AceStepEngine._smooth_boundary")
     @patch("core.acestep_engine.AceStepEngine._generate_cover_continuation")
     @patch("core.acestep_engine.AceStepEngine._generate_single_raw")
     @patch("core.acestep_engine.AceStepEngine._validate_output")
     @patch("soundfile.write")
     def test_generate_infinite_reference_audio_propagation(
-        self, mock_sf_write, mock_validate, mock_raw, mock_cover, mock_smooth,
+        self, mock_sf_write, mock_validate, mock_raw, mock_cover, mock_smooth, mock_score,
     ):
         """Verify reference_audio_path is propagated to all phases."""
         mock_raw.return_value = (torch.ones(2, int(60 * NATIVE_SAMPLE_RATE)), NATIVE_SAMPLE_RATE)
@@ -39,19 +40,20 @@ class TestAceStepInfinite(unittest.TestCase):
         # Check smoothing
         self.assertEqual(mock_smooth.call_args[1]["reference_audio_path"], ref_path)
 
+    @patch("core.qa_monitor.compute_composite_score", return_value=0.9)
     @patch("core.acestep_engine.AceStepEngine._smooth_boundary")
     @patch("core.acestep_engine.AceStepEngine._generate_cover_continuation")
     @patch("core.acestep_engine.AceStepEngine._generate_single_raw")
     @patch("core.acestep_engine.AceStepEngine._validate_output")
     @patch("soundfile.write")
     def test_generate_infinite_retry_logic(
-        self, mock_sf_write, mock_validate, mock_raw, mock_cover, mock_smooth,
+        self, mock_sf_write, mock_validate, mock_raw, mock_cover, mock_smooth, mock_score,
     ):
         """Verify that _generate_infinite retries failed segments."""
         mock_raw.return_value = (torch.ones(2, int(60 * NATIVE_SAMPLE_RATE)), NATIVE_SAMPLE_RATE)
         mock_cover.return_value = (torch.ones(2, int(60 * NATIVE_SAMPLE_RATE)), NATIVE_SAMPLE_RATE)
         mock_smooth.side_effect = lambda tensor, *a, **kw: tensor
-        
+
         # Genesis (60s) + 1 Continuation (52s - 2s crossfade = 50s) = 110s
         # First attempt of continuation fails, second succeeds
         mock_validate.side_effect = [(False, "Too quiet"), (True, "OK")]
@@ -62,7 +64,8 @@ class TestAceStepInfinite(unittest.TestCase):
         # 2 cover calls (failed attempt + successful retry)
         self.assertEqual(mock_cover.call_count, 2)
 
-    def test_generate_single_switch(self):
+    @patch("core.qa_monitor.compute_composite_score", return_value=0.9)
+    def test_generate_single_switch(self, mock_score):
         """Verify routing: <=90s -> single, >90s -> infinite."""
         with patch.object(AceStepEngine, "_generate_single") as mock_single, \
              patch.object(AceStepEngine, "_generate_infinite") as mock_infinite, \

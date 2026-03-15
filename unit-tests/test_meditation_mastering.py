@@ -2,7 +2,7 @@ import os
 import sys
 import numpy as np
 import pyloudnorm as pyln
-from pedalboard import Pedalboard, NoiseGate, Compressor, Limiter, PeakFilter, HighShelfFilter, Reverb
+from pedalboard import Pedalboard, NoiseGate, Compressor, Limiter, PeakFilter, HighShelfFilter
 
 # Add project root to path
 sys.path.append(os.getcwd())
@@ -34,9 +34,9 @@ def test_mastering():
     assert abs(peak_300.gain_db + 2.0) < 0.001
     assert peak_300.q == 1.5
     
-    # Verify Moderated Presence (2800Hz)
-    peak_presence = next(e for e in chain if isinstance(e, PeakFilter) and e.cutoff_frequency_hz == 2800)
-    print(f"Presence (2800Hz) gain: {peak_presence.gain_db}")
+    # Verify Presence (3200Hz — Fletcher-Munson peak sensitivity)
+    peak_presence = next(e for e in chain if isinstance(e, PeakFilter) and e.cutoff_frequency_hz == 3200)
+    print(f"Presence (3200Hz) gain: {peak_presence.gain_db}")
     assert abs(peak_presence.gain_db - 1.5) < 0.001
 
     # Verify Air Shelf (10kHz)
@@ -45,18 +45,15 @@ def test_mastering():
     assert shelf_air.cutoff_frequency_hz == 10000
     assert abs(shelf_air.gain_db - 1.5) < 0.001
     
-    # Verify Compressor settings
+    # Verify Compressor settings (-20 dB: gentle leveling for meditation)
     compressor = next(e for e in chain if isinstance(e, Compressor))
     print(f"Compressor threshold: {compressor.threshold_db}, ratio: {compressor.ratio}")
-    assert abs(compressor.threshold_db + 22.0) < 0.001
+    assert abs(compressor.threshold_db + 20.0) < 0.001
     assert compressor.ratio == 2.5
     
-    # Verify Reverb
-    reverb = next(e for e in chain if isinstance(e, Reverb))
-    print(f"Reverb wet level: {reverb.wet_level}, room size: {reverb.room_size}")
-    assert abs(reverb.wet_level - 0.1) < 0.001
-    assert abs(reverb.room_size - 0.2) < 0.001
-    
+    # Reverb is applied downstream in build_f5_voice_chain (convolution reverb),
+    # not in the mastering chain itself.
+
     # Verify Limiter settings
     limiter = next(e for e in chain if isinstance(e, Limiter))
     print(f"Limiter threshold: {limiter.threshold_db}, release: {limiter.release_ms}")

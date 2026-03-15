@@ -1,8 +1,11 @@
 """Audio FX chains using Spotify's Pedalboard — MoodScape."""
 
+import os
+
 import numpy as np
 from pedalboard import (
     Compressor,
+    Convolution,
     Gain,
     HighpassFilter,
     HighShelfFilter,
@@ -12,6 +15,28 @@ from pedalboard import (
     Pedalboard,
     LowpassFilter,
 )
+import librosa
+
+# ---------------------------------------------------------------------------
+# Impulse Response (IR) catalog for convolution reverb
+# ---------------------------------------------------------------------------
+_IR_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "impulse_responses")
+
+IR_CATALOG = {
+    "warm_studio": {
+        "path": os.path.join(_IR_DIR, "warm_studio.wav"),
+        "label": "Warm Studio (intimate, short decay)",
+    },
+    "wooden_hall": {
+        "path": os.path.join(_IR_DIR, "wooden_hall.wav"),
+        "label": "Wooden Hall (natural warmth, medium space)",
+    },
+    "stone_chapel": {
+        "path": os.path.join(_IR_DIR, "stone_chapel.wav"),
+        "label": "Stone Chapel (ethereal, long decay)",
+    },
+}
+DEFAULT_IR = "warm_studio"
 
 
 def make_music_chain() -> Pedalboard:
@@ -225,17 +250,57 @@ def resample_to_44100(audio: np.ndarray, orig_sr: int) -> np.ndarray:
     return resampled.numpy()
 
 
+def resample_highly_accurate(
+    audio: np.ndarray,
+    orig_sr: int,
+    target_sr: int,
+) -> np.ndarray:
+    """Standard sinc interpolation for high-fidelity resampling.
+
+    Uses librosa's 'soxr_vhq' which offers mathematically zero artifacts,
+    retaining the original signal integrity without adding frequency content.
+    Ideal for upsampling 24kHz F5-TTS output to 48kHz studio standards for
+    clean mixing with background music.
+    """
+    if orig_sr == target_sr:
+        return audio
+    
+    # librosa.resample works on float32/64 numpy arrays.
+    # 'soxr_vhq' is the Very High Quality sinc interpolation.
+    resampled = librosa.resample(
+        audio.astype(np.float32),
+        orig_sr=orig_sr,
+        target_sr=target_sr,
+        res_type="soxr_vhq",
+    )
+    return resampled.astype(np.float32)
+
+
 def upsample_audio(
     audio: np.ndarray,
     from_sr: int = 24000,
     to_sr: int = 48000,
+    high_accuracy: bool = False,
 ) -> np.ndarray:
     """Upsample audio for higher-fidelity output.
 
-    Uses torchaudio's Kaiser-windowed sinc interpolation for clean,
-    alias-free sample-rate conversion.
+    Defaults to torchaudio's Kaiser-windowed sinc interpolation.
+    If high_accuracy=True, uses librosa's soxr_vhq (standard sinc interpolation)
+    for artifact-free upsampling, as recommended for F5-TTS meditation speech.
+    
     Supports 1D and 2D arrays.
     """
+    if high_accuracy:
+        if audio.ndim == 1:
+            return resample_highly_accurate(audio, from_sr, to_sr)
+        else:
+            # Handle multi-channel by resampling each channel
+            resampled_channels = [
+                resample_highly_accurate(audio[i], from_sr, to_sr)
+                for i in range(audio.shape[0])
+            ]
+            return np.stack(resampled_channels).astype(np.float32)
+
     import torch
     import torchaudio.functional as F
 

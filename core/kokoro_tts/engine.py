@@ -223,6 +223,13 @@ class KokoroEngine(SpeechEngine):
                 audio_chunks.append(np.zeros(num_samples, dtype=np.float32))
                 activity_chunks.append(np.zeros(num_samples, dtype=bool))
 
+            elif segment["type"] == "breath":
+                from core.breath_sounds import load_breath
+
+                breath_audio = load_breath(segment["subtype"], target_sr=SAMPLE_RATE)
+                audio_chunks.append(breath_audio)
+                activity_chunks.append(np.zeros(len(breath_audio), dtype=bool))
+
             if progress_cb is not None:
                 progress_cb(idx + 1, total)
 

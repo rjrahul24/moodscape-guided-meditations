@@ -12,15 +12,15 @@ F5-TTS is the second TTS engine available in MoodScape, offering zero-shot voice
 | Vocoder | Vocos |
 | Native sample rate | 24 000 Hz (matches Kokoro / pipeline contract) |
 | Device | MPS (Apple Silicon) with CPU fallback |
-| Voice input | Reference audio + verbatim transcript |
-| Key inference param | `nfe_step=32`, `sway_sampling_coef=-1.0` |
+| Voice input | Reference audio + verbatim transcript (via VoiceRegistry) |
+| Key inference params | `nfe_step=32`, `sway_sampling_coef=-1.0`, `cfg_strength=2.0` |
 
 **Why F5-TTS?**
 
-- **Zero-shot cloning** — no fine-tuning required; one 10–12s clip is enough
-- **Vocos vocoder** — produces a cleaner signal than Kokoro's ISTFTNet; no hiss artefacts, no spectral noise gating needed
-- **Native 24 kHz output** — matches the pipeline's `SAMPLE_RATE` constant exactly; no resampling within the engine
-- **SpeechEngine compliance** — implements the same `load_model / unload_model / synthesize / get_available_voices` interface as KokoroEngine, so all downstream pipeline stages (mixing, mastering, FX) are engine-agnostic
+- **Zero-shot cloning** -- no fine-tuning required; one 10-12s clip is enough
+- **Vocos vocoder** -- produces a cleaner signal than Kokoro's ISTFTNet; no hiss artefacts, no spectral noise gating needed
+- **Native 24 kHz output** -- matches the pipeline's `SAMPLE_RATE` constant exactly; no resampling within the engine
+- **SpeechEngine compliance** -- implements the same `load_model / unload_model / synthesize / get_available_voices` interface as KokoroEngine, so all downstream pipeline stages (mixing, mastering, FX) are engine-agnostic
 
 ---
 
@@ -28,37 +28,68 @@ F5-TTS is the second TTS engine available in MoodScape, offering zero-shot voice
 
 ```
 core/f5_tts/
-├── __init__.py          — package marker
-├── engine.py            — F5Engine(SpeechEngine)
-├── preprocessor.py      — character-aware script chunker
-├── postprocessor.py     — crossfade assembly + F5MasteringEngine
+├── __init__.py              -- package marker
+├── engine.py                -- F5Engine(SpeechEngine): synthesis, chaining, VAD, WPM normalization
+├── preprocessor.py          -- character-aware script chunker (400-char limit)
+├── postprocessor.py         -- F5MasteringEngine, split-band de-esser, voice FX chain
+├── voice_registry.py        -- voice asset discovery and multi-phase resolution
 └── assets/
-    ├── README.md        — reference audio format requirements
-    └── ref_meditation.wav  ← YOU MUST PLACE THIS FILE HERE
+    ├── README.md            -- reference audio format requirements
+    ├── voices.toml          -- multi-phase voice definitions
+    ├── reference_audio/     -- .wav files (24 kHz, mono, 16-bit PCM)
+    └── reference_transcript/ -- .txt transcripts (verbatim)
 ```
 
 ---
 
-## 3. Voice Selection
+## 3. Voice Selection (VoiceRegistry)
 
-The `voice` argument to `F5Engine.synthesize()` accepts two forms:
+Voice identity is resolved at construction time via a **voice slug** that maps to registered asset pairs:
 
-| Form | Usage |
-|---|---|
-| `"default"` | Uses the bundled `core/f5_tts/assets/ref_meditation.wav` + the hardcoded transcript in `engine.py` |
-| `(ref_audio_path, ref_text)` | Custom zero-shot cloning from any uploaded audio file |
+```python
+engine = F5Engine(voice_slug="female_meditative_warm")
+```
 
-In the Gradio UI:
-- Leave the F5-TTS settings accordion empty → uses the bundled default voice
-- Upload a reference clip and type the transcript → clones the uploaded voice
+### VoiceRegistry System
 
-The pipeline passes the user's UI selections to `pipeline.generate()` as `f5_ref_audio` and `f5_ref_text`. The engine resolves these into a `(path, text)` tuple internally.
+The `voice_registry.py` module discovers voices by scanning `core/f5_tts/assets/`:
+
+1. Scans `reference_audio/*.wav` for audio files
+2. Matches each `.wav` with a corresponding `.txt` transcript in `reference_transcript/`
+3. Validates transcript is non-empty
+4. Layers multi-phase definitions from `voices.toml` (TOML format with phase names as keys)
+
+### Multi-Phase Voices
+
+A single voice can have multiple **phases** for different sections of a meditation:
+
+```toml
+# voices.toml example
+[female_meditative_warm]
+default = { audio = "female_meditative_warm.wav", transcript = "female_meditative_warm.txt" }
+closing = { audio = "female_meditative_warm_closing.wav", transcript = "female_meditative_warm_closing.txt" }
+```
+
+Phase switching is triggered by `[voice:phase_name]` markers in the meditation script:
+
+```
+Welcome to this meditation session...
+
+[voice:closing]
+Thank you for joining. Carry this peace with you...
+```
+
+### Gradio UI Integration
+
+- Voice registry is scanned at startup, populating a dropdown in the UI
+- Selecting "F5-TTS" shows a voice personality dropdown; selecting "Kokoro" hides it
+- Both TTS accordions are hidden in "Instrumental Only" mode
 
 ---
 
 ## 4. Reference Audio Recording Guide
 
-The quality of zero-shot cloning depends almost entirely on the reference audio. Follow these guidelines:
+The quality of zero-shot cloning depends almost entirely on the reference audio.
 
 ### Format Requirements
 
@@ -67,165 +98,187 @@ The quality of zero-shot cloning depends almost entirely on the reference audio.
 | Format | WAV (PCM), uncompressed |
 | Sample rate | 24 000 Hz |
 | Channels | Mono |
-| Duration | 10–12 seconds |
+| Duration | 10-12 seconds |
 | Bit depth | 16-bit or 32-bit float |
 
-You can convert any recording to the correct format with:
+Convert any recording:
 ```bash
-ffmpeg -i input.mp3 -ar 24000 -ac 1 -sample_fmt s16 ref_meditation.wav
+ffmpeg -i input.mp3 -ar 24000 -ac 1 -sample_fmt s16 voice_name.wav
 ```
 
-### Recording Setup
+### Recording Tips
 
-- **Room**: Soft furnishings absorb reflections. A bedroom, walk-in wardrobe, or carpeted studio works well. Avoid bathrooms, kitchens, and rooms with bare walls.
-- **Microphone**: Any clean condenser or large-diaphragm USB mic. Position it 20–30 cm from your mouth, slightly off-axis to reduce plosives.
-- **Pop filter**: Use one. Plosive bursts ("p", "b", "t") cause alignment failures in the transcript matching.
-- **Background noise**: Turn off HVAC, fans, and notifications. Even subtle noise bleeds into every generated segment at scale.
+- **Room**: Soft furnishings absorb reflections. Avoid bathrooms or bare-walled rooms.
+- **Microphone**: Any clean condenser or large-diaphragm USB mic, 20-30 cm from mouth, slightly off-axis.
+- **Pop filter**: Use one. Plosive bursts cause alignment failures.
+- **Background noise**: Turn off HVAC, fans, and notifications.
+- **Speaking style**: Calm, compassionate, slightly slower than conversational (~120 WPM). Do not whisper.
+- **Avoid**: Strong emotion, vocal fry, and uptalk -- these are difficult to clone consistently.
 
-### Speaking Style
+### The Verbatim Transcript Requirement
 
-- Match the tone you want in the final meditation: calm, compassionate, slightly slower than conversational pace.
-- Do not whisper — F5-TTS needs a full voiced signal for reliable cloning.
-- Avoid strong emotion or vocal fry; both are difficult to clone consistently.
-- A pace of ~120 words per minute works well (standard meditation narration is 100–130 wpm).
+F5-TTS aligns reference audio against its transcript at the character level. A single word mismatch shifts the alignment window, causing metallic artefacts, pitch drift, or stutter. Rules:
 
-### Reference Content
-
-The content of the reference clip does not matter — it will not appear in the output. Choose any text that lets you speak naturally and demonstrates your full vocal range.
-
-**Example reference script** (used as default in `engine.py`):
-```
-Allow yourself to settle here, right where you are.
-There is nothing to do, nowhere to go.
-Simply rest in this moment, breathing gently.
-```
+1. Type exactly what the speaker says, including filler words
+2. Match punctuation as spoken
+3. Do **not** add IPA or phonetic spelling -- F5-TTS does its own G2P
 
 ---
 
-## 5. The Verbatim Transcript Requirement
+## 5. Reference Audio Conditioning
 
-F5-TTS aligns the reference audio against its transcript to extract speaker timbre, prosody, and rhythm. The model performs forced alignment at the character level. A single word mismatch shifts the alignment window, causing:
+At model load time (`load_model()`), each reference audio phase is automatically conditioned:
 
-- Metallic or robotic artefacts
-- Pitch drift mid-sentence
-- Stutter or repetition at chunk boundaries
+1. **F5's `preprocess_ref_audio_text()`** clips to ~12s and performs Whisper transcription
+2. **RMS normalization** to -20 dBFS -- ensures consistent reference levels across voices
+3. **1.0s trailing silence** (low-level noise at -55 dBFS) -- prevents phrase leakage where reference words bleed into generated output. The noise level is above F5's internal -42 dBFS edge trimmer threshold so it survives preprocessing.
 
-**Rules for the transcript:**
-1. Type exactly what the speaker says, including filler words ("um", "uh")
-2. Match punctuation as spoken (commas → micro-pause, full stop → longer pause)
-3. Do not add phonetic spelling or IPA — unlike Kokoro, F5-TTS does not use IPA injection
-4. If using the default bundled voice, the transcript is already set in `_DEFAULT_REF_TEXT` in [engine.py](../core/f5_tts/engine.py)
+This runs once per voice phase load (not per chunk), adding zero per-chunk overhead.
 
 ---
 
 ## 6. Preprocessing
 
-F5-TTS preprocessing ([preprocessor.py](../core/f5_tts/preprocessor.py)) performs **character-count chunking** rather than Kokoro's token-count chunking.
+F5-TTS preprocessing ([preprocessor.py](../../core/f5_tts/preprocessor.py)) performs **character-count chunking** at a 400-character limit.
 
-### Why Different?
+### Why Character-Count Chunking?
 
-F5-TTS has a hard ~30-second context window per `infer()` call. At a meditative pace of 0.75, 200 characters ≈ 7–10 seconds of audio, which safely fits within the window.
-
-Kokoro's preprocessor merges sentences into 100–150-token chunks (targeting its optimal batch size). That logic is not applicable here.
+F5-TTS has a hard ~30-second context window per `infer()` call. At a meditative pace of 0.75 speed, 400 characters = ~10-15 seconds of audio, safely within the window.
 
 ### What Preprocessing Does NOT Include
 
 Unlike Kokoro's preprocessor, F5-TTS preprocessing does **not**:
-- Expand digits to words (`42` → "forty two")
-- Inject IPA phonemes (`chakra` → `[chakra](/tʃɑːkɹə/)`)
-- Insert prosody commas at phrasing boundaries
+- Expand digits to words
+- Inject IPA phonemes
+- Insert prosody commas
 
-F5-TTS performs its own G2P (grapheme-to-phoneme) from raw prose. Passing Kokoro's IPA injection format would corrupt F5's input, since the brackets and IPA characters would be read as literal text.
-
-**Write natural, unpunctuated meditation prose. F5-TTS handles it.**
+F5-TTS performs its own G2P from raw prose. Write natural meditation prose.
 
 ### Pause Markers
-
-All pause marker formats supported by Kokoro are also supported by F5-TTS preprocessing:
 
 | Marker | Pause duration |
 |---|---|
 | `[pause:Xs]` | X seconds |
 | `[N second pause]` | N seconds |
-| `[breath]` / `[inhale]` / `[exhale]` | 1.2 seconds |
+| `[breath]` / `[inhale]` / `[exhale]` | 1.2 seconds (real breath samples) |
 | Double newline | 6.5 seconds |
 
 ---
 
-## 7. Postprocessing
+## 7. Synthesis Engine
 
-F5-TTS postprocessing ([postprocessor.py](../core/f5_tts/postprocessor.py)) provides two components:
+### Chained Reference System
 
-### `crossfade_chunks()`
+Instead of using the same static reference for every chunk, F5Engine maintains a **quasi-autoregressive** chain:
 
-Stitches audio chunks with a 20 ms linear crossfade at each boundary. This is simpler than Kokoro's cosine-squared crossfade because F5-TTS produces clean sentence boundaries without the cold-start prosody drift that requires Kokoro's pre-roll and fade-in.
+- Each speech chunk (after the first) seeds the model from the **tail of the previous chunk's audio**
+- This provides acoustic context for natural pitch and energy continuity across sentences
+- The static reference is restored after:
+  - **Long pauses (>= 3.0s)** -- section boundaries warrant a fresh voice anchor
+  - **Voice phase changes** -- different reference audio for the new phase
+  - **Every 6 consecutive speech chunks** -- prevents voice drift on long sessions
+- Short pauses (< 3.0s) and breath segments **maintain** the chain for prosodic continuity
 
-### `F5MasteringEngine`
+Constants:
+- `_CHAIN_RESET_EVERY = 6` -- reset to static ref every N consecutive speech chunks
+- `_CHAIN_RESET_PAUSE_SEC = 3.0` -- only long pauses trigger reset
+- `_CHAIN_MAX_REF_SEC = 5.0` -- maximum seconds of previous chunk tail to use
+- `_CHAIN_MAX_REF_FRAC = 0.50` -- cap chain ref at 50% of previous chunk length
 
-Implements the same two-method interface as `KokoroMasteringEngine`:
+### Text Normalization
 
-| Method | Purpose |
-|---|---|
-| `restore_vocals(audio, sr)` | Stub — Vocos is pre-clean, returns audio unchanged |
-| `master_vocals(audio, sr)` | EQ / de-ess / limiting at the mix sample rate |
+Before passing text to F5's `infer()`:
+- Collapse whitespace and newlines
+- Lower-case ALL_CAPS words (prevents letter-by-letter G2P spelling)
+- Append trailing ellipsis (cues natural decay tail rather than abrupt cutoff)
 
-**Why no spectral gating?** Kokoro's ISTFTNet vocoder produces a characteristic broadband hiss above 12 kHz, which requires spectral noise gating before mastering. Vocos produces a clean signal without this artefact — no gating is needed.
+### Inference Parameters
 
-**Why 13 kHz lowpass (vs. Kokoro's 9.5 kHz)?** Kokoro's 12 kHz Nyquist limit means all spectral content above 12 kHz is aliasing artefact. Masking it at 9.5 kHz removes the artefact. Vocos has a broader native bandwidth; 13 kHz preserves its natural "air" without passing ultrasonic content.
+| Parameter | Value | Notes |
+|---|---|---|
+| `nfe_step` | 32 | Production quality. Use 16 for fast iteration. |
+| `cfg_strength` | 2.0 | Paper-validated optimal for stable generation |
+| `sway_sampling_coef` | -1.0 | Enables sway sampling for smoother meditative prosody |
+| `speed` | 0.75 (default) | Duration predictor generates correct mel frame count |
+| `remove_silence` | False | Engine handles silence trimming explicitly |
 
-The mastering chain:
-```
-HighpassFilter(80 Hz)         — remove sub-bass rumble
-LowShelfFilter(200 Hz, +2 dB) — warmth
-PeakFilter(400 Hz, -1.5 dB)   — mud cut
-PeakFilter(3.5 kHz, +1.5 dB)  — presence / intelligibility
-PeakFilter(7 kHz, +4 dB)      — air / clarity boost
-Compressor(-20 dB, 3:1)       — gentle dynamic control
-PeakFilter(7 kHz, -4 dB)      — de-ess (cancel the air boost)
-LowpassFilter(13 kHz)         — remove ultrasonic content
-Limiter(-0.5 dB)              — hard ceiling
-```
+### Post-Inference Processing
+
+1. **Trailing silence trimming**: Remove samples below -45 dBFS, keep 50ms decay tail
+2. **WPM normalization**: Measure each chunk's words-per-minute, time-stretch outliers to within +/-15% of session median via librosa
+3. **Silero VAD**: Probability-based gain envelope preserves natural breath/decay while suppressing non-speech noise
+4. **Assembly**: 0.8s room tone gap + 300ms equal-power cosine crossfade between speech chunks; direct concatenation at pause boundaries
+
+### Room Tone
+
+Pauses and breath segments use low-level noise (1e-3 amplitude, ~-60 dBFS) instead of digital silence. This prevents the unnatural "dead air" artefact and keeps reverb tails active through pauses.
 
 ---
 
-## 8. Pipeline Integration
+## 8. Postprocessing (Mastering)
 
-### New Parameters on `pipeline.generate()`
+### F5MasteringEngine
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `tts_engine` | `str` | `"kokoro"` | `"kokoro"` or `"f5"` |
-| `f5_ref_audio` | `str \| None` | `None` | Path to user-uploaded reference WAV |
-| `f5_ref_text` | `str` | `""` | Verbatim transcript of the reference clip |
+Two-phase mastering engine ([postprocessor.py](../../core/f5_tts/postprocessor.py)):
+
+**Phase A -- `restore_vocals()`**: Stub. Vocos output is pre-clean; no neural denoising needed.
+
+**Phase B -- `master_vocals()`**: EQ / dynamics at the mix sample rate (48 kHz for F5).
+
+#### Split-Band De-Esser (Preprocessing)
+
+- Isolates 4-8 kHz sibilant band via 4th-order Butterworth bandpass
+- Compresses sibilant band: threshold -18 dB, ratio 4:1, attack 0.5ms, release 10ms
+- Recombines with untouched non-sibilant signal
+
+#### Mastering Chain
+
+```
+NoiseGate(-50 dB, 1.5:1, 5ms/250ms)    -- safety gate for clean noise floor
+HighpassFilter(80 Hz)                    -- remove sub-bass rumble
+PeakFilter(300 Hz, -2 dB, Q=1.5)        -- anti-boxiness (cut low-mid mud)
+LowShelfFilter(200 Hz, +2 dB)           -- warmth
+PeakFilter(3.2 kHz, +1.5 dB, Q=0.8)    -- presence / intelligibility
+HighShelfFilter(10 kHz, +1.5 dB)        -- air shelf for clarity
+HighShelfFilter(8 kHz, -1.0 dB)         -- tame brightness without killing air
+LowpassFilter(13 kHz)                   -- remove ultrasonic content
+Compressor(-20 dB, 2.5:1, 15ms/100ms)  -- gentle, transparent leveling
+Limiter(-1.5 dB, 80ms)                  -- safe ceiling
+```
+
+**Why 13 kHz lowpass (vs. Kokoro's 9.5 kHz)?** Vocos has broader native bandwidth than Kokoro's ISTFTNet. 13 kHz preserves natural "air."
+
+**No algorithmic reverb in mastering.** Reverb is applied downstream via the user-controlled convolution reverb in `build_f5_voice_chain()`.
+
+### Voice FX Chain
+
+`build_f5_voice_chain(reverb_amount, ir_name)` -- convolution reverb + limiter only:
+
+```
+Convolution(impulse_response, mix=reverb_amount)  -- real IR reverb (0-50% wet)
+Limiter(-1.0 dB)                                  -- safety ceiling
+```
+
+Available impulse responses: `warm_studio`, `wooden_hall`, `stone_chapel`.
+
+---
+
+## 9. Pipeline Integration
 
 ### Branching Points in pipeline.py
 
-There are two branch points where the pipeline dispatches to the correct engine:
+1. **Script parsing**: imports `core.f5_tts.preprocessor.prepare_segments`
+2. **Model loading**: instantiates `F5Engine(voice_slug=...)` locally per call
+3. **Synthesis**: `tts.synthesize(segments, speed=speed, progress_cb=...)`
+4. **Mastering init**: instantiates `F5MasteringEngine(sample_rate=24000)`
+5. **Upsampling**: F5 forces 48 kHz mixing with `high_accuracy=True` (soxr_vhq)
+6. **Voice FX**: `build_f5_voice_chain(reverb_amount, ir_name)`
 
-1. **Step 1 — Script parsing**: imports `core.f5_tts.preprocessor.prepare_segments` for F5, `core.kokoro_tts.preprocessor.prepare_segments` for Kokoro
-2. **Step 2 — Model loading**: instantiates `F5Engine()` locally for F5 (never stored in `self.tts`), uses `self.tts` (KokoroEngine) otherwise
-3. **Step 3 — Synthesis**: passes `voice=f5_voice` tuple for F5, `voice=voice` string for Kokoro
-4. **Phase A — Mastering init**: instantiates `F5MasteringEngine` for F5, `KokoroMasteringEngine` for Kokoro
-
-All downstream stages (upsample, Phase B mastering, voice FX, mixing, export) are **unchanged** — both mastering engines share the same `master_vocals(audio, sr)` interface.
+All downstream stages (mixing, sidechain ducking, master chain, export) are engine-agnostic.
 
 ### Memory Management
 
-For F5-TTS, the engine is instantiated **locally per call** (not stored in `self`). After synthesis, `tts.unload_model()` + `del tts` are called explicitly before the music engine is loaded. This maintains the sequential VRAM allocation pattern — only one neural model is resident at a time.
-
----
-
-## 9. UI Integration
-
-The Gradio UI adds:
-
-1. **TTS Voice Engine radio** — appears in the right column between the music quality radio and the Kokoro settings accordion. Default: `"Kokoro"`.
-
-2. **F5-TTS Voice Settings accordion** — hidden by default; visible when F5-TTS is selected. Contains:
-   - `gr.Audio` (upload) — reference voice clip (optional; leave empty for bundled default)
-   - `gr.Textbox` — verbatim transcript (optional; leave empty for bundled default)
-
-3. **Conditional visibility**: selecting F5-TTS hides the Kokoro settings accordion and shows F5-TTS settings, and vice versa. Both are hidden in "Instrumental Only" mode (no TTS needed).
+F5Engine is instantiated locally per `generate()` call. After synthesis: `tts.unload_model()` + `del tts` before the music engine loads. Only one neural model is resident at a time.
 
 ---
 
@@ -233,31 +286,30 @@ The Gradio UI adds:
 
 | Setting | Value | Notes |
 |---|---|---|
-| `nfe_step` | 32 | Production quality. Use 16 for fast script iteration (lower prosodic detail). |
-| `sway_sampling_coef` | -1.0 | Enables sway sampling. Produces smoother, more natural prosody for monotone narration. Disable (set to 0) only if you notice timing artefacts. |
-| `speed` | 0.75 | Default meditation pace. Kokoro default is 0.70; F5-TTS at 0.75 produces comparable real-time duration due to different timing models. |
-| Device | MPS | Apple Silicon M-series. CPU fallback for non-Apple hardware. F5-TTS does NOT support MLX natively (unlike the ACE-Step LLM planner). |
-| First-run | Slow | Model weights (~1.5 GB) are downloaded from HuggingFace on first use and cached in `~/.cache/huggingface/`. |
+| `nfe_step` | 32 | Production quality. Use 16 for fast script iteration. |
+| `sway_sampling_coef` | -1.0 | Smoother, more natural prosody. Disable (set to 0) only for timing artefacts. |
+| `speed` | 0.75 | Default meditation pace. |
+| Device | MPS | Apple Silicon. CPU fallback for non-Apple hardware. |
+| Precision | fp16 | `ema_model.to(torch.float16)` -- prevents distortion artefacts seen in bf16. |
+| First-run | Slow | Model weights (~1.5 GB) downloaded from HuggingFace on first use. |
 
 ### Expected Generation Speed (Apple M1 Max, MPS)
 
 | Segment length | NFE=32 | NFE=16 |
 |---|---|---|
-| Short (1–2 sentences, ~150 chars) | ~3–6s | ~2–3s |
-| Medium (3–4 sentences, ~400 chars after chunking) | ~6–12s | ~4–6s |
+| Short (1-2 sentences, ~150 chars) | ~3-6s | ~2-3s |
+| Medium (3-4 sentences, ~400 chars) | ~6-12s | ~4-6s |
 
-Long scripts are chunked into ≤200-character segments, so generation time scales linearly with the number of chunks.
+Long scripts are chunked into <=400-character segments; generation time scales linearly with chunk count.
 
 ---
 
 ## 11. Known Limitations
 
-1. **No Sanskrit / yoga term phoneme injection** — Kokoro's preprocessor injects IPA pronunciation hints for terms like "chakra", "pranayama", and "namaste". F5-TTS does its own G2P; these terms will be pronounced according to the model's training data, which may not match the intended Sanskrit pronunciation.
+1. **No Sanskrit / yoga term phoneme injection** -- Kokoro's preprocessor injects IPA for terms like "chakra". F5-TTS does its own G2P; these terms are pronounced per the model's training data.
 
-2. **Fresh inference per chunk** — Each ≤200-character chunk is a separate `infer()` call with the same reference audio. There is no cross-chunk prosodic context; pacing and intonation may vary slightly between chunks on long scripts.
+2. **No deterministic seed support** -- F5-TTS does not expose a seed parameter. The `seed=` kwarg from the pipeline is silently ignored. Generation is not reproducible across runs.
 
-3. **Voice consistency over long scripts** — Zero-shot cloning is stochastic. The cloned voice is highly consistent within a single session but may drift subtly on very long meditations (>30 minutes). This is expected behaviour.
+3. **30-second context ceiling** -- F5-TTS has a hard inference limit of ~30s per call. The 400-character chunking keeps segments safely under this. If truncation occurs, add punctuation to the script.
 
-4. **30-second context ceiling** — F5-TTS has a hard inference limit of ~30 seconds per call. The 200-character chunking keeps every segment safely under this limit at meditative pace (0.75), but unusually long sentences without punctuation may still approach the ceiling. If you observe truncation, add punctuation to the script.
-
-5. **No deterministic seed support** — F5-TTS does not expose a seed parameter in its public API. The `seed=` kwarg passed by the pipeline is silently ignored (absorbed by `**kwargs`). Generation is not reproducible across runs.
+4. **Voice consistency over very long scripts** -- Zero-shot cloning is stochastic. The chained reference system and periodic reset maintain consistency, but subtle drift may occur on very long meditations (>30 minutes).

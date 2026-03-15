@@ -240,6 +240,20 @@ Repaint 5-second windows centered on each seam between segments. The DiT automat
 
 Failed generations are retried up to 3 times automatically.
 
+### A/B Selection on Retry
+
+Rather than keeping the last successful attempt, the retry loops collect all candidates (both single-stage and continuation segments) and score each via `core.qa_monitor.compute_composite_score()`. The candidate with the **highest composite score** is selected. The composite score combines:
+
+| Check | Weight |
+|---|---|
+| Spectral warmth dominance | 0.25 |
+| Spectral rolloff within 8 kHz | 0.20 |
+| Onset smoothness (no transient spikes) | 0.20 |
+| Clipping-free | 0.20 |
+| LUFS proximity to -16 dBFS | 0.15 |
+
+**Early exit**: if any candidate scores **> 0.8**, generation stops immediately — further retries are skipped. This avoids wasting compute when the first attempt is already high-quality.
+
 ### Memory Management
 
 ```python

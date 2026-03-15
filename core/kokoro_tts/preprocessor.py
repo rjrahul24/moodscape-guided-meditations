@@ -82,25 +82,36 @@ def parse_script(script: str) -> list[dict]:
         script,
         flags=re.IGNORECASE,
     )
-    # Normalize breath/inhale/exhale → 1.2s pause (ellipsis-equivalent pacing)
-    script = re.sub(r'\[(?:breath|inhale|exhale)\]', '[pause:1.2s]', script, flags=re.IGNORECASE)
+    # Normalize breath/inhale/exhale → tagged breath markers (preserve semantics)
+    script = re.sub(
+        r'\[(breath|inhale|exhale)\]',
+        lambda m: f'[breath:{m.group(1).lower()}]',
+        script,
+        flags=re.IGNORECASE,
+    )
 
-    pause_pattern = r'\[pause:(\d+(?:\.\d+)?)s\]'
-    parts = re.split(pause_pattern, script)
+    # Split on pause markers and breath markers.
+    # Group 1: pause duration, Group 2: breath subtype.
+    pattern = r'\[pause:(\d+(?:\.\d+)?)s\]|\[breath:(breath|inhale|exhale)\]'
+    parts = re.split(pattern, script)
 
     segments = []
-    for i, part in enumerate(parts):
-        if i % 2 == 0:
-            text = part.strip()
-            if text:
-                segments.append({"type": "speech", "text": text})
-        else:
-            duration = float(part)
+    # re.split with 2 groups gives [text, dur, breath, text, dur, breath, ...]
+    for i in range(0, len(parts), 3):
+        text = parts[i].strip()
+        if text:
+            segments.append({"type": "speech", "text": text})
+
+        if i + 1 < len(parts) and parts[i + 1] is not None:
+            duration = float(parts[i + 1])
             if duration > 0:
                 if segments and segments[-1]["type"] == "pause":
                     segments[-1]["duration_sec"] += duration
                 else:
                     segments.append({"type": "pause", "duration_sec": duration})
+
+        if i + 2 < len(parts) and parts[i + 2] is not None:
+            segments.append({"type": "breath", "subtype": parts[i + 2]})
 
     return segments
 

@@ -91,14 +91,15 @@ class TestMusicEngines(unittest.TestCase):
         self.assertEqual(self.engine._get_inference_steps(is_repaint=True), 8)
 
     def test_acestep_crossfade_stages(self):
-        sr = 24000
+        from core.acestep_engine import TARGET_SAMPLE_RATE
+        sr = TARGET_SAMPLE_RATE  # 48 kHz (native ACE-Step rate)
         # 3 second segments
         s1 = np.ones(sr * 3, dtype=np.float32)
         s2 = np.ones(sr * 3, dtype=np.float32) * 0.5
-        
+
         # 1-second crossfade
         res = AceStepEngine._crossfade_stages([s1, s2], crossfade_sec=1.0)
-        
+
         # Total should be 3s + 3s - 1s = 5s
         self.assertEqual(res.shape[0], sr * 5)
         self.assertEqual(res.dtype, np.float32)

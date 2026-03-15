@@ -19,4 +19,5 @@ mlx
 mlx-lm
 accelerate>=0.26.0
 f5-tts>=1.0.0
+silero-vad
 git+https://github.com/ace-step/ACE-Step-1.5.git

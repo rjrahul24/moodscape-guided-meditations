@@ -11,7 +11,7 @@ Key difference from kokoro_tts/preprocessor.py:
 
 import re
 
-MAX_CHUNK_CHARS = 300
+MAX_CHUNK_CHARS = 400
 _PARAGRAPH_PAUSE_SEC = 6.5
 
 
@@ -42,8 +42,13 @@ def parse_script(script: str) -> list[dict]:
         flags=re.IGNORECASE,
     )
 
-    # Normalise breath markers → short pause (same reason: do before \n\n pass)
-    script = re.sub(r'\[(?:breath|inhale|exhale)\]', '[pause:1.2s]', script, flags=re.IGNORECASE)
+    # Normalise breath markers → tagged breath markers (preserve semantics)
+    script = re.sub(
+        r'\[(breath|inhale|exhale)\]',
+        lambda m: f'[breath:{m.group(1).lower()}]',
+        script,
+        flags=re.IGNORECASE,
+    )
 
     # Convert paragraph breaks to pause markers — BUT only when both sides of
     # the break are actual speech.  If either the block before or after a \n\n
@@ -65,25 +70,31 @@ def parse_script(script: str) -> list[dict]:
                 parts_joined.append(f' [pause:{_PARAGRAPH_PAUSE_SEC}s] ')
     script = ''.join(parts_joined)
 
-    # Split on pause AND voice markers. 
-    # Group 1: duration, Group 2: voice name.
-    parts = re.split(r'\[pause:(\d+(?:\.\d+)?)s\]|\[voice:([^\]]+)\]', script)
+    # Split on pause, voice, AND breath markers.
+    # Group 1: pause duration, Group 2: voice name, Group 3: breath subtype.
+    parts = re.split(
+        r'\[pause:(\d+(?:\.\d+)?)s\]|\[voice:([^\]]+)\]|\[breath:(breath|inhale|exhale)\]',
+        script,
+    )
     segments = []
-    # With two groups, re.split returns [text, dur1, voice1, text, dur2, voice2, ...]
-    # So we step by 3.
-    for i in range(0, len(parts), 3):
+    # With three groups, re.split returns [text, dur, voice, breath, text, ...]
+    # So we step by 4.
+    for i in range(0, len(parts), 4):
         text = parts[i].strip()
         if text:
             segments.append({'type': 'speech', 'text': text})
-        
-        if i + 1 < len(parts) and parts[i+1] is not None:
-            duration = float(parts[i+1])
+
+        if i + 1 < len(parts) and parts[i + 1] is not None:
+            duration = float(parts[i + 1])
             if duration > 0:
                 segments.append({'type': 'pause', 'duration_sec': duration})
-        
-        if i + 2 < len(parts) and parts[i+2] is not None:
-            voice = parts[i+2].strip()
+
+        if i + 2 < len(parts) and parts[i + 2] is not None:
+            voice = parts[i + 2].strip()
             segments.append({'type': 'voice', 'voice': voice})
+
+        if i + 3 < len(parts) and parts[i + 3] is not None:
+            segments.append({'type': 'breath', 'subtype': parts[i + 3]})
 
     # Merge back-to-back pause segments (can still arise from edge cases such
     # as consecutive cue tags) by keeping only the longest of any run.

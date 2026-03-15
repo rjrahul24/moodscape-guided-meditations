@@ -413,6 +413,39 @@ MusicGen occasionally generates sudden percussive transients or rhythmic bursts 
 
 This catches hallucinated drum hits, clicks, and rhythmic events that CFG alone may miss.
 
+### A/B Selection on Retry
+
+When a segment fails the spectral flux check and is regenerated, MoodScape does not simply keep the last successful attempt. Instead, all candidates (including failed attempts that still produced audio) are scored via `compute_composite_score()` (from `core/qa_monitor.py`), and the highest-scoring candidate is selected.
+
+The composite score weights five sub-checks:
+
+| Check | Weight |
+|---|---|
+| Spectral warmth dominance (warmth energy / total energy) | 0.25 |
+| Spectral rolloff within 8 kHz | 0.20 |
+| Onset smoothness (peak/median onset ratio) | 0.20 |
+| Clipping-free | 0.20 |
+| LUFS proximity to -16 dBFS target | 0.15 |
+
+**Early exit**: if any candidate scores above **0.8**, generation stops immediately and that candidate is used — no further retries are needed. This avoids wasting compute on already-good segments.
+
+### Micro-Crossfades at Seam Points
+
+After `_stitch()` assembles the full audio, a secondary refinement pass eliminates residual clicks at segment seam points. The implementation:
+
+1. `_stitch()` now returns `(audio_tensor, seam_positions: list[int])` — a list of sample indices marking the centre of each crossfade.
+2. `_apply_micro_crossfades(audio, seam_positions, window=64)` is called on the assembled audio.
+3. For each seam: search ±64 samples around the recorded centre for the nearest zero-crossing (sign change in the waveform).
+4. Apply a 128-sample triangular window centred on that zero-crossing — attenuates to zero at both edges then back.
+
+At 32 kHz, 64 samples ≈ 2 ms. This is well within perceptual masking and audibly eliminates clicks without affecting the macro crossfade region.
+
+### Prompt Scheduling for Long-Form Tracks
+
+For story-mode meditations (where the prompt evolves over time — e.g., shifting from "body scan" to "open monitoring" to "closing"), `generate()` accepts a `prompt_schedule_interval` parameter (default `60.0` seconds).
+
+When active, the sliding window `extend_stride` is capped to `min(extend_stride, prompt_schedule_interval)`, ensuring that segment boundaries — and therefore prompt changes — occur at least every N seconds. This reuses the existing `_stage_prompt_for_time()` mechanism without introducing new prompt logic.
+
 ---
 
 ## 8. Prompt Engineering for Meditation Audio
@@ -665,7 +698,11 @@ class MusicEngine:
             if progress_cb:
                 progress_cb(i + 1, num_segments)
 
-        full = self._stitch(segments)
+        full, seam_positions = self._stitch(segments)
+
+        # Apply sub-ms micro-crossfades at seam zero-crossings to eliminate clicks
+        if seam_positions:
+            full = self._apply_micro_crossfades(full, seam_positions)
 
         # Trim to exact length
         target_native = int(total_duration_sec * NATIVE_SR)
@@ -692,14 +729,20 @@ class MusicEngine:
             return tensor.mean(dim=0, keepdim=True)
         return tensor
 
-    def _stitch(self, segments: list) -> torch.Tensor:
-        """Join continuation segments, skipping the duplicated context region."""
+    def _stitch(self, segments: list) -> tuple[torch.Tensor, list[int]]:
+        """Join continuation segments, skipping the duplicated context region.
+
+        Returns:
+            (full_audio, seam_positions) — seam_positions contains the sample
+            index of each crossfade centre, used by _apply_micro_crossfades().
+        """
         if len(segments) == 1:
-            return segments[0]
+            return segments[0], []
 
         ctx = int(CONTEXT_DURATION * NATIVE_SR)
         fade = int(CROSSFADE_DURATION * NATIVE_SR)
         result = segments[0]
+        seam_positions: list[int] = []
 
         for seg in segments[1:]:
             new = seg[..., ctx:]  # Strip duplicate context
@@ -707,18 +750,56 @@ class MusicEngine:
                 continue
 
             overlap = min(fade, result.shape[-1], new.shape[-1])
-            fade_out = torch.linspace(1.0, 0.0, overlap)
-            fade_in  = torch.linspace(0.0, 1.0, overlap)
+
+            # Equal-power cosine² crossfade (preserves perceived loudness at seams)
+            t = torch.linspace(0, math.pi / 2, overlap)
+            fade_out = torch.cos(t) ** 2
+            fade_in  = torch.cos(math.pi / 2 - t) ** 2
 
             blended = result[..., -overlap:] * fade_out + new[..., :overlap] * fade_in
 
-            # Note: The actual implementation uses equal-power cosine crossfade:
-            # t = torch.linspace(0, math.pi/2, overlap)
-            # fade_out = torch.cos(t) ** 2
-            # fade_in = torch.cos(math.pi/2 - t) ** 2
+            # Record seam centre before extending result
+            seam_centre = result.shape[-1] - overlap + overlap // 2
+            seam_positions.append(seam_centre)
+
             result = torch.cat([result[..., :-overlap], blended, new[..., overlap:]], dim=-1)
 
-        return result
+        return result, seam_positions
+
+    @staticmethod
+    def _apply_micro_crossfades(
+        audio: torch.Tensor,
+        seam_positions: list[int],
+        window: int = 64,
+    ) -> torch.Tensor:
+        """Apply sub-ms triangular fade at each seam's nearest zero-crossing.
+
+        Searches ±window samples around each recorded seam centre for the
+        nearest sign change, then applies a 2*window triangular window centred
+        on that zero-crossing.  At 32 kHz, window=64 ≈ 2 ms — audibly
+        eliminates residual clicks without disturbing the macro crossfade.
+        """
+        audio = audio.clone()
+        for centre in seam_positions:
+            lo = max(0, centre - window)
+            hi = min(audio.shape[-1] - 1, centre + window)
+            mono = audio[0, lo:hi + 1].numpy()
+            zc = None
+            for j in range(len(mono) - 1):
+                if mono[j] * mono[j + 1] < 0:
+                    zc = lo + j
+                    break
+            if zc is None:
+                zc = centre
+            fade_lo = max(0, zc - window)
+            fade_hi = min(audio.shape[-1], zc + window)
+            fade_len = fade_hi - fade_lo
+            tri = torch.cat([
+                torch.linspace(0, 1, fade_len // 2),
+                torch.linspace(1, 0, fade_len - fade_len // 2),
+            ])
+            audio[..., fade_lo:fade_hi] *= tri
+        return audio
 ```
 
 ---
@@ -797,7 +878,16 @@ MEDITATION_DEFAULTS = {
 # Segment architecture
 SEGMENT_DURATION = 30     # Seconds per MusicGen call
 CONTEXT_DURATION = 5      # Seconds fed as audio context for continuation
-CROSSFADE_DURATION = 2    # Seconds of equal-power cosine crossfade at segment seams
+CROSSFADE_DURATION = 2    # Seconds of equal-power cosine² crossfade at segment seams
+
+# Micro-crossfade (seam cleanup)
+MICRO_XF_WINDOW = 64      # Samples searched either side of seam for zero-crossing (~2ms at 32kHz)
+
+# Prompt scheduling (story mode)
+PROMPT_SCHEDULE_INTERVAL = 60.0  # Seconds; caps extend_stride so prompts advance at least this often
+
+# A/B selection
+AB_EARLY_EXIT_SCORE = 0.8  # If composite score exceeds this, skip remaining retries
 
 # Sample rates
 NATIVE_SR = 32000         # MusicGen output

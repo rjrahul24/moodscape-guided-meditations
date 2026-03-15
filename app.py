@@ -131,6 +131,7 @@ def generate_meditation(
     lyria_brightness,
     tts_engine_choice,
     f5_voice_slug,
+    reverb_ir_choice,
     progress=gr.Progress(),
 ):
     def progress_cb(fraction, message):
@@ -206,6 +207,7 @@ def generate_meditation(
             lyria_brightness=float(lyria_brightness),
             tts_engine=tts_engine,
             f5_voice_slug=f5_voice_slug if tts_engine == "f5" else None,
+            reverb_ir=reverb_ir_choice,
         )
         duration = _get_duration(output_path)
         minutes = int(duration // 60)
@@ -398,6 +400,15 @@ with gr.Blocks(
                     step=0.05,
                     label="Voice Reverb",
                 )
+                reverb_ir_dropdown = gr.Dropdown(
+                    choices=[
+                        ("Warm Studio (intimate, short decay)", "warm_studio"),
+                        ("Wooden Hall (natural warmth, medium space)", "wooden_hall"),
+                        ("Stone Chapel (ethereal, long decay)", "stone_chapel"),
+                    ],
+                    value="warm_studio",
+                    label="Reverb Space",
+                )
                 fade_in_slider = gr.Slider(
                     minimum=0,
                     maximum=10,
@@ -407,8 +418,8 @@ with gr.Blocks(
                 )
                 fade_out_slider = gr.Slider(
                     minimum=0,
-                    maximum=10,
-                    value=5,
+                    maximum=15,
+                    value=6,
                     step=0.5,
                     label="Fade Out (seconds)",
                 )
@@ -541,6 +552,7 @@ with gr.Blocks(
             lyria_brightness,
             tts_engine_radio,
             f5_voice_dropdown,
+            reverb_ir_dropdown,
         ],
         outputs=[audio_output, status_text],
         show_progress="full",

@@ -107,6 +107,7 @@ class MeditationPipeline:
         lyria_brightness: float = 0.3,
         tts_engine: str = "kokoro",
         f5_voice_slug: str | None = None,
+        reverb_ir: str = "warm_studio",
     ) -> tuple[str, str | None]:
         """Run the full pipeline and return the path to the output audio file.
 
@@ -154,16 +155,17 @@ class MeditationPipeline:
             seed = int(time.time()) % (2**31)
 
         # Unified LUFS target for all meditation sessions
-        target_lufs = -16.0
+        target_lufs = -19.0
 
         is_instrumental = generation_mode == "Instrumental Only"
         is_vocals = generation_mode == "Vocals Only"
         use_acestep = music_model == "acestep"
         use_lyria = music_model == "lyria"
 
-        # Lyria mixes at its native 48 kHz; all other engines mix at 44.1 kHz.
+        # Lyria, ACE-Step, and F5 instances mix at native 48 kHz for quality; 
+        # all other engines mix at 44.1 kHz.
         # TTS voice (24 kHz) is upsampled to match whichever rate is selected.
-        mix_sr = 48000 if use_lyria else TARGET_SR
+        mix_sr = 48000 if (use_lyria or use_acestep or tts_engine == "f5") else TARGET_SR
 
         logger.info("Starting generation — mode=%s, music_model=%s, voice=%s, speed=%s, seed=%s, lufs=%s",
                     generation_mode, music_model, voice, speed, seed, target_lufs)
@@ -260,12 +262,16 @@ class MeditationPipeline:
                 logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
 
                 # Upsample Voice to the mix sample rate:
-                #   Lyria path → 48 kHz (TTS upsampled to match native Lyria quality)
-                #   All other engines → 44.1 kHz (studio standard)
-                if use_lyria:
+                #   Lyria / ACE-Step path → 48 kHz (preserves native music resolution)
+                #   MusicGen → 44.1 kHz (studio standard)
+                if mix_sr == 48000:
                     from core.audio_processor import upsample_audio
-                    _progress(progress_cb, 0.39, "Upsampling TTS audio to 48kHz (Lyria path)...")
-                    voice_audio = upsample_audio(voice_audio, from_sr=SAMPLE_RATE, to_sr=48000)
+                    _progress(progress_cb, 0.39, "Upsampling TTS audio to 48kHz (High Fidelity sinc)...")
+                    # Use high_accuracy=True for F5 TTS to ensure mathematically zero artifacts
+                    voice_audio = upsample_audio(
+                        voice_audio, from_sr=SAMPLE_RATE, to_sr=48000, 
+                        high_accuracy=(tts_engine == "f5")
+                    )
                     # 48000 / 24000 = 2 exactly — clean integer repeat
                     voice_activity = np.repeat(voice_activity, 2)
                 else:
@@ -317,7 +323,8 @@ class MeditationPipeline:
                     music_duration = instrumental_duration_m * 60.0
                 else:
                     voice_duration = len(voice_audio) / mix_sr
-                    music_duration = voice_duration + 10  # extra for pre-roll + fade-out
+                    # Music must cover: pre-roll (4s) + voice + post-roll (8s) + safety margin
+                    music_duration = voice_duration + 15
 
                 _progress(progress_cb, 0.45, f"Generating background music ({music_model_label})...")
 
@@ -427,12 +434,16 @@ class MeditationPipeline:
                     separator.unload_model()
                     del separator
 
-                # Resample music audio to the mix sample rate.
-                # Lyria is already at 48 kHz (mix_sr) — no resampling needed.
-                # ACE-Step and MusicGen output at 24 kHz and must be upsampled.
-                if use_lyria:
-                    _progress(progress_cb, 0.70, "Lyria audio at native 48kHz — no resampling needed.")
-                    # music_audio is already at 48 kHz mono float32
+                if mix_sr == 48000:
+                    _progress(progress_cb, 0.70, f"Ensuring {music_model_label} audio is at 48kHz mixing rate...")
+                    if not (use_lyria or use_acestep):
+                        # music_audio is from MusicGen (24kHz) and needs upsampling
+                        from core.audio_processor import upsample_audio
+                        from core.music_engine import TARGET_SAMPLE_RATE as MUSIC_SR
+                        music_audio = upsample_audio(music_audio, from_sr=MUSIC_SR, to_sr=48000)
+                    else:
+                        # Lyria and ACE-Step already output at 48kHz
+                        pass
                 else:
                     _progress(progress_cb, 0.70, f"Upsampling {music_model_label} audio to 44.1kHz standard...")
                     from core.audio_processor import resample_to_44100
@@ -450,10 +461,10 @@ class MeditationPipeline:
                 if tts_engine == "f5":
                     from core.f5_tts.postprocessor import build_f5_voice_chain
                     from core.kokoro_tts.postprocessor import apply_fx
-                    voice_chain = build_f5_voice_chain(reverb_amount=reverb_amount)
+                    voice_chain = build_f5_voice_chain(reverb_amount=reverb_amount, ir_name=reverb_ir)
                 else:
                     from core.kokoro_tts.postprocessor import build_voice_chain, apply_fx
-                    voice_chain = build_voice_chain(reverb_amount=reverb_amount)
+                    voice_chain = build_voice_chain(reverb_amount=reverb_amount, ir_name=reverb_ir)
                 voice_audio = apply_fx(voice_audio, voice_chain, mix_sr)
 
                 # Align voice_activity to post-FX voice length (reverb tail trim
@@ -542,9 +553,9 @@ class MeditationPipeline:
             # ── Step 11: Export ─────────────────────────────────────────────
             _progress(progress_cb, 0.95, f"Exporting {output_format.upper()}...")
 
-            # Lyria always exports at 48 kHz (native quality).
-            # Other engines respect the user's upsample_48k preference.
-            export_sr = 48000 if (use_lyria or upsample_48k) else TARGET_SR
+            # Lyria and ACE-Step export at native 48 kHz.
+            # MusicGen respects the user's upsample_48k preference.
+            export_sr = 48000 if (use_lyria or use_acestep or upsample_48k) else TARGET_SR
 
             output_path = export_audio(
                 mixed,

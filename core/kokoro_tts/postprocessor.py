@@ -27,6 +27,7 @@ import noisereduce as nr
 from pedalboard import (
     Compressor,
     HighpassFilter,
+    Convolution,
     HighShelfFilter,
     Limiter,
     LowpassFilter,
@@ -34,7 +35,6 @@ from pedalboard import (
     NoiseGate,
     PeakFilter,
     Pedalboard,
-    Reverb,
 )
 
 logger = logging.getLogger(__name__)
@@ -280,8 +280,8 @@ def reduce_synthesis_noise(
 # Stage 3: Pedalboard FX chains (Kokoro-specific)
 # =====================================================================
 
-def build_voice_chain(reverb_amount: float = 0.08) -> Pedalboard:
-    """Kokoro-tailored voice FX chain: noise gate → highpass → compression → reverb → limit.
+def build_voice_chain(reverb_amount: float = 0.08, ir_name: str = "warm_studio") -> Pedalboard:
+    """Kokoro-tailored voice FX chain: noise gate → highpass → compression → convolution reverb → limit.
 
     Tuned for Kokoro's ISTFTNet vocoder characteristics:
     - Noise gate at -42 dB: mutes inter-chunk silence without gating soft
@@ -294,10 +294,14 @@ def build_voice_chain(reverb_amount: float = 0.08) -> Pedalboard:
     - High-shelf -5.5 dB at 6.5 kHz: more aggressive de-harshening of Kokoro's
       "radio static" vocoder artifact (6–9 kHz), applied pre-reverb
     - Lowpass at 8 kHz: harder digital ceiling removes metallic TTS hallucinations
-    - Reverb: subtle chamber/studio for natural room presence
+    - Convolution reverb: real IR for natural room presence (replaces algorithmic)
     - Limiter: brickwall at -1 dBFS
     """
+    from core.audio_processor import IR_CATALOG, DEFAULT_IR
+
     reverb_amount = float(np.clip(reverb_amount, 0.0, 0.5))
+    ir_path = IR_CATALOG.get(ir_name, IR_CATALOG[DEFAULT_IR])["path"]
+
     return Pedalboard([
         NoiseGate(threshold_db=-42, ratio=20.0, attack_ms=2.0, release_ms=80),
         HighpassFilter(cutoff_frequency_hz=90.0),
@@ -305,11 +309,9 @@ def build_voice_chain(reverb_amount: float = 0.08) -> Pedalboard:
         Compressor(threshold_db=-18.0, ratio=2.5, attack_ms=2.0, release_ms=80.0),
         HighShelfFilter(cutoff_frequency_hz=6500, gain_db=-5.5),
         LowpassFilter(cutoff_frequency_hz=8000.0),
-        Reverb(
-            room_size=0.15,
-            damping=0.6,
-            wet_level=reverb_amount,
-            dry_level=1.0 - reverb_amount,
+        Convolution(
+            impulse_response_filename=ir_path,
+            mix=reverb_amount,
         ),
         Limiter(threshold_db=-1.0),
     ])

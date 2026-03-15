@@ -2,7 +2,7 @@
 
 Model: ACE-Step 1.5 (DiT decoder + LM planner)
 Device: MPS (PyTorch) with MLX-accelerated DiT and LLM
-Output: Mono float32 at 24 kHz (native 48 kHz stereo downmixed and resampled)
+Output: Mono float32 at 48 kHz (native rate preserved; stereo downmixed to mono)
 Story mode: generate each meditation stage as a separate inference call and
             crossfade the results — allows deliberate tonal evolution across
             the meditation arc (e.g. centering → depth → integration).
@@ -22,7 +22,7 @@ import torchaudio
 logger = logging.getLogger(__name__)
 
 NATIVE_SAMPLE_RATE = 48000       # ACE-Step native output rate
-TARGET_SAMPLE_RATE = 24000       # Pipeline standard rate (matches MusicEngine)
+TARGET_SAMPLE_RATE = 48000       # Preserve native 48 kHz through the pipeline
 
 # ── Generation quality knobs ──────────────────────────────────────────────────
 # guidance_scale: CFG strength for the SFT model.
@@ -277,8 +277,11 @@ class AceStepEngine:
             if progress_cb is not None:
                 progress_cb(0, 1)
 
-            # Generate with validation and retry (up to 3 attempts)
+            # Generate with validation and A/B selection (up to 3 attempts)
+            from core.qa_monitor import compute_composite_score
+
             audio = None
+            candidates: list[tuple[np.ndarray, float]] = []
             for attempt in range(3):
                 audio = self._generate_single(
                     enhanced_prompt, total_duration_sec, lyrics=enhanced_lyrics,
@@ -286,11 +289,22 @@ class AceStepEngine:
                 )
                 valid, reason = self._validate_output(audio, total_duration_sec)
                 if valid:
-                    break
-                logger.warning(
-                    "[AceStepEngine] Attempt %d/3 failed validation: %s", attempt + 1, reason,
-                )
-            if not valid:
+                    score = compute_composite_score(audio, TARGET_SAMPLE_RATE)
+                    candidates.append((audio, score))
+                    if score > 0.8:
+                        break  # good enough
+                else:
+                    logger.warning(
+                        "[AceStepEngine] Attempt %d/3 failed validation: %s", attempt + 1, reason,
+                    )
+                    candidates.append((audio, 0.0))
+
+            if candidates:
+                audio = max(candidates, key=lambda c: c[1])[0]
+                if len(candidates) > 1:
+                    scores = [f"{s:.3f}" for _, s in candidates]
+                    logger.info("[AceStepEngine] A/B selection — scores: %s", scores)
+            if not valid and not any(s > 0 for _, s in candidates):
                 logger.error("[AceStepEngine] All attempts failed: %s", reason)
 
             if progress_cb is not None:
@@ -325,7 +339,7 @@ class AceStepEngine:
             progress_cb: Called with (completed_stages, total_stages).
 
         Returns:
-            Mono float32 numpy array at TARGET_SAMPLE_RATE (24 000 Hz).
+            Mono float32 numpy array at TARGET_SAMPLE_RATE (48 000 Hz).
         """
         n = len(prompt_stages)
         logger.info(
@@ -438,7 +452,10 @@ class AceStepEngine:
                 # soundfile expects (samples, channels) — transpose from (C, T)
                 sf.write(src_wav, context_tensor.cpu().numpy().T, sr)
 
-                # Generate with validation and retry (up to 3 attempts)
+                # Generate with validation and A/B selection (up to 3 attempts)
+                from core.qa_monitor import compute_composite_score
+
+                cont_candidates: list[tuple[torch.Tensor, float]] = []
                 for attempt in range(3):
                     new_tensor, _ = self._generate_cover_continuation(
                         enhanced_prompt, src_wav, next_len,
@@ -446,21 +463,30 @@ class AceStepEngine:
                         lyrics=enhanced_lyrics, bpm=bpm, keyscale=keyscale,
                         reference_audio_path=reference_audio_path
                     )
-                    
+
                     # Validate intermediate segment
-                    # Convert to mono numpy for validation
                     temp_audio = self._postprocess(new_tensor, sr)
                     valid, reason = self._validate_output(temp_audio, next_len - CROSSFADE_SEC)
                     if valid:
-                        break
-                    logger.warning(
-                        "[AceStepEngine] Continuation attempt %d/3 failed validation: %s", 
-                        attempt + 1, reason,
-                    )
-                
-                if not valid:
+                        score = compute_composite_score(temp_audio, TARGET_SAMPLE_RATE)
+                        cont_candidates.append((new_tensor, score))
+                        if score > 0.8:
+                            break
+                    else:
+                        logger.warning(
+                            "[AceStepEngine] Continuation attempt %d/3 failed validation: %s",
+                            attempt + 1, reason,
+                        )
+                        cont_candidates.append((new_tensor, 0.0))
+
+                if cont_candidates:
+                    new_tensor = max(cont_candidates, key=lambda c: c[1])[0]
+                    if len(cont_candidates) > 1:
+                        scores = [f"{s:.3f}" for _, s in cont_candidates]
+                        logger.info("[AceStepEngine] Continuation A/B — scores: %s", scores)
+
+                if not valid and not any(s > 0 for _, s in cont_candidates):
                     logger.error("[AceStepEngine] Continuation segment %d failed all attempts", seg_num)
-                    # Proceed with what we have but it might be silence/bad
 
             # Crossfade at native 48 kHz stereo
             fade_samples = int(CROSSFADE_SEC * sr)
@@ -1053,18 +1079,17 @@ class AceStepEngine:
 
     @staticmethod
     def _postprocess(tensor: torch.Tensor, source_rate: int = NATIVE_SAMPLE_RATE) -> np.ndarray:
-        """Convert ACE-Step 48 kHz stereo output to 24 kHz mono float32.
+        """Convert ACE-Step 48 kHz stereo output to 48 kHz mono float32.
 
-        Minimal processing — the 1D VAE produces near-lossless quality.
-        All spectral shaping is handled by the downstream Pedalboard FX
-        chain (make_acestep_music_chain) at 44.1 kHz.
+        Preserves the native 48 kHz sample rate to avoid discarding spectral
+        content above 12 kHz (24 kHz Nyquist). The pipeline upsamples TTS to
+        48 kHz to match before mixing.
 
         Chain:
         1. CPU / float32 conversion
         2. Stereo → mono (channel average)
-        3. Resample 48 kHz → 24 kHz (Kaiser-windowed sinc interpolation)
-        4. Peak normalization to -1 dBFS (consistent output level)
-        5. Safety clip to [-1, 1]
+        3. Peak normalization to -1 dBFS (consistent output level)
+        4. Safety clip to [-1, 1]
         """
         # 1. CPU / float32
         if tensor.device.type != "cpu":
@@ -1077,26 +1102,13 @@ class AceStepEngine:
         elif tensor.ndim == 1:
             tensor = tensor.unsqueeze(0)
 
-        # 3. Resample 48 kHz → 24 kHz
-        # The resampler's own anti-alias filter (rolloff=0.9475) provides
-        # proper Nyquist filtering — no separate pre-filter needed.
-        if source_rate != TARGET_SAMPLE_RATE:
-            tensor = torchaudio.functional.resample(
-                tensor,
-                orig_freq=source_rate,
-                new_freq=TARGET_SAMPLE_RATE,
-                lowpass_filter_width=64,
-                rolloff=0.9475,
-            )
-
-        # 4. Peak normalization to -1 dBFS
-        # Ensures consistent output level for the downstream pipeline.
+        # 3. Peak normalization to -1 dBFS
         peak = tensor.abs().max()
         if peak > 1e-6:
             target_peak = 10 ** (-1.0 / 20.0)  # -1 dBFS ≈ 0.891
             tensor = tensor * (target_peak / peak)
 
-        # 5. Safety clip
+        # 4. Safety clip
         tensor = tensor.clamp(-1.0, 1.0)
 
         return tensor.squeeze().cpu().numpy().astype(np.float32)

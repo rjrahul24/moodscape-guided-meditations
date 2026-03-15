@@ -3,10 +3,12 @@
 Verifies that:
   1. First chunk always uses the static reference.
   2. Second consecutive speech chunk uses a chained temp WAV (not the static path).
-  3. An intervening pause resets the chain (next speech uses static again).
-  4. A voice phase change resets the chain.
-  5. After _CHAIN_RESET_EVERY (6) consecutive speech chunks, reset to static.
-  6. All temp files are deleted after synthesize() returns.
+  3. A long pause (>= 3.0s) resets the chain (next speech uses static again).
+  4. A short pause (< 3.0s) does NOT reset the chain.
+  5. A breath segment does NOT reset the chain.
+  6. A voice phase change resets the chain.
+  7. After _CHAIN_RESET_EVERY (6) consecutive speech chunks, reset to static.
+  8. All temp files are deleted after synthesize() returns.
 """
 
 import os
@@ -81,14 +83,14 @@ def test_second_chunk_uses_chained_ref():
     print(f"PASS: second chunk uses chained ref ({calls[1]['ref_file']})")
 
 
-def test_pause_resets_chain():
+def test_long_pause_resets_chain():
     engine, calls = _make_engine_with_mock()
     if engine is None:
         return
 
     segments = [
         {"type": "speech", "text": "Before pause.", "voice": None},
-        {"type": "pause", "duration_sec": 2.0},
+        {"type": "pause", "duration_sec": 4.0},  # >= 3.0s threshold → resets chain
         {"type": "speech", "text": "After pause.", "voice": None},
     ]
     engine.synthesize(segments)
@@ -96,9 +98,49 @@ def test_pause_resets_chain():
     assert len(calls) == 2
     assert calls[0]["ref_file"] == "static_ref.wav", "First chunk should use static"
     assert calls[1]["ref_file"] == "static_ref.wav", (
-        "Chunk after pause should reset to static ref"
+        "Chunk after long pause (>= 3.0s) should reset to static ref"
     )
-    print("PASS: pause resets chain to static ref")
+    print("PASS: long pause (4.0s) resets chain to static ref")
+
+
+def test_short_pause_maintains_chain():
+    engine, calls = _make_engine_with_mock()
+    if engine is None:
+        return
+
+    segments = [
+        {"type": "speech", "text": "Before short pause.", "voice": None},
+        {"type": "pause", "duration_sec": 1.5},  # < 3.0s threshold → chain maintained
+        {"type": "speech", "text": "After short pause.", "voice": None},
+    ]
+    engine.synthesize(segments)
+
+    assert len(calls) == 2
+    assert calls[0]["ref_file"] == "static_ref.wav", "First chunk should use static"
+    assert calls[1]["ref_file"] != "static_ref.wav", (
+        "Chunk after short pause (< 3.0s) should maintain chain (not reset)"
+    )
+    print("PASS: short pause (1.5s) maintains chain")
+
+
+def test_breath_maintains_chain():
+    engine, calls = _make_engine_with_mock()
+    if engine is None:
+        return
+
+    segments = [
+        {"type": "speech", "text": "Before breath.", "voice": None},
+        {"type": "breath", "subtype": "breath"},
+        {"type": "speech", "text": "After breath.", "voice": None},
+    ]
+    engine.synthesize(segments)
+
+    assert len(calls) == 2
+    assert calls[0]["ref_file"] == "static_ref.wav", "First chunk should use static"
+    assert calls[1]["ref_file"] != "static_ref.wav", (
+        "Chunk after breath should maintain chain (breath < 3.0s threshold)"
+    )
+    print("PASS: breath segment maintains chain")
 
 
 def test_phase_change_resets_chain():
@@ -183,7 +225,9 @@ if __name__ == "__main__":
     tests = [
         test_first_chunk_uses_static_ref,
         test_second_chunk_uses_chained_ref,
-        test_pause_resets_chain,
+        test_long_pause_resets_chain,
+        test_short_pause_maintains_chain,
+        test_breath_maintains_chain,
         test_phase_change_resets_chain,
         test_chain_resets_every_n_chunks,
         test_temp_files_deleted_after_synthesize,
