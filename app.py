@@ -233,18 +233,18 @@ CUSTOM_CSS = """
 
 /* ── DESIGN TOKENS ────────────────────────────────────────── */
 :root {
-    --c-bg:          #060B18;
-    --c-surface:     rgba(255,255,255,0.035);
-    --c-surface-2:   rgba(255,255,255,0.06);
-    --c-border:      rgba(255,255,255,0.10);
-    --c-border-mid:  rgba(255,255,255,0.16);
-    --c-violet:      #7C3AED;
-    --c-indigo:      #4F46E5;
-    --c-cyan:        #06B6D4;
-    --c-text-1:      #E8EDF5;    /* primary — bright enough to read comfortably */
-    --c-text-2:      #9AACCB;    /* secondary — readable but clearly subordinate */
-    --c-text-3:      #6B86A8;    /* muted — labels, section headers (≥4.5:1 contrast) */
-    --c-text-4:      #4D6480;    /* placeholder — subtle but still legible */
+    --c-bg:          #040711;
+    --c-surface:     rgba(255,255,255,0.04);
+    --c-surface-2:   rgba(255,255,255,0.07);
+    --c-border:      rgba(255,255,255,0.18);    /* Increased visibility */
+    --c-border-mid:  rgba(255,255,255,0.25);    /* Increased visibility */
+    --c-violet:      #8B5CF6;
+    --c-indigo:      #6366F1;
+    --c-cyan:        #22D3EE;
+    --c-text-1:      #F8FAFC;    /* Maximum contrast primary */
+    --c-text-2:      #CBD5E1;    /* Bright secondary */
+    --c-text-3:      #94A3B8;    /* Readable labels */
+    --c-text-4:      #64748B;    /* Legible placeholder */
     --r-sm:  10px;
     --r-md:  14px;
     --r-lg:  20px;
@@ -259,390 +259,183 @@ body { background: var(--c-bg) !important; }
 .gradio-container {
     min-height: 100vh !important;
     font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif !important;
-    /* Multi-point aurora gradient — very subtle, gives depth */
     background:
-        radial-gradient(ellipse 90% 55% at 8%  -5%,  rgba(124,58,237,0.13)  0%, transparent 65%),
-        radial-gradient(ellipse 70% 50% at 92% 105%,  rgba(79,70,229,0.11)   0%, transparent 65%),
-        radial-gradient(ellipse 55% 35% at 55%  55%,  rgba(6,182,212,0.035)  0%, transparent 55%),
+        radial-gradient(ellipse 70% 50% at 5%  -5%,  rgba(139,92,246,0.15)  0%, transparent 70%),
+        radial-gradient(ellipse 60% 45% at 95% 105%, rgba(99,102,241,0.14)   0%, transparent 70%),
+        radial-gradient(ellipse 50% 30% at 50%  50%,  rgba(34,211,238,0.04)  0%, transparent 60%),
         var(--c-bg) !important;
 }
 
 /* ── HEADER ───────────────────────────────────────────────── */
 .app-header {
     text-align: center;
-    padding: 3.5rem 1rem 2rem;
-    position: relative;
+    padding: 4rem 1rem 2.5rem;
 }
 
-/* Thin gradient divider below header */
 .app-header::after {
     content: '';
     display: block;
-    width: 180px;
-    height: 1px;
-    margin: 1.75rem auto 0;
-    background: linear-gradient(90deg,
-        transparent       0%,
-        rgba(124,58,237,0.55) 35%,
-        rgba(79,70,229,0.55)  65%,
-        transparent       100%);
+    width: 140px;
+    height: 1.5px;
+    margin: 2rem auto 0;
+    background: linear-gradient(90deg, transparent, var(--c-violet), var(--c-indigo), transparent);
+    opacity: 0.6;
 }
 
 .app-header h1 {
     font-family: 'Space Grotesk', sans-serif !important;
-    font-size: clamp(2.8rem, 6vw, 4.2rem) !important;
-    font-weight: 700 !important;
-    background: linear-gradient(135deg, #C4B5FD 0%, #818CF8 45%, #67E8F9 100%);
+    font-size: clamp(3rem, 7vw, 4.5rem) !important;
+    font-weight: 800 !important;
+    background: linear-gradient(135deg, #FFF 0%, #C4B5FD 40%, #818CF8 100%);
     -webkit-background-clip: text !important;
-    background-clip: text !important;
     -webkit-text-fill-color: transparent !important;
-    color: transparent !important;
-    letter-spacing: -0.04em !important;
-    line-height: 1 !important;
-    margin: 0 0 0.9rem !important;
-    padding: 0 !important;
+    letter-spacing: -0.05em !important;
+    line-height: 0.9 !important;
+    margin-bottom: 1.2rem !important;
 }
 
-/* Subtitle under the h1 */
-.app-header .prose p, .app-header > * p, .app-header p {
-    font-size: 0.975rem !important;
+.app-header p {
+    font-size: 1.05rem !important;
     color: var(--c-text-2) !important;
     font-weight: 400 !important;
-    letter-spacing: 0.015em !important;
-    line-height: 1.65 !important;
-    max-width: 500px;
+    letter-spacing: 0.01em !important;
+    max-width: 520px;
     margin: 0 auto !important;
+    opacity: 0.9;
 }
 
 /* ── GLASS CARDS ──────────────────────────────────────────── */
 .glass-panel {
     background: var(--c-surface) !important;
-    backdrop-filter: blur(28px) saturate(160%) !important;
-    -webkit-backdrop-filter: blur(28px) saturate(160%) !important;
+    backdrop-filter: blur(32px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(32px) saturate(180%) !important;
     border: 1px solid var(--c-border) !important;
     border-radius: var(--r-xl) !important;
-    padding: 1.75rem !important;
-    box-shadow:
-        inset 0 1px 0 rgba(255,255,255,0.065),
-        0 24px 64px rgba(0,0,0,0.45),
-        0 0 0 0.5px rgba(0,0,0,0.2) !important;
-    transition: box-shadow 0.35s ease !important;
+    padding: 2rem !important;
+    box-shadow: 
+        inset 0 0.5px 1px rgba(255,255,255,0.15),
+        0 20px 50px rgba(0,0,0,0.5) !important;
 }
 
-.glass-panel:focus-within {
-    box-shadow:
-        inset 0 1px 0 rgba(255,255,255,0.08),
-        0 28px 72px rgba(0,0,0,0.5),
-        0 0 40px rgba(124,58,237,0.06) !important;
-}
-
-/* ── INPUT LABELS ─────────────────────────────────────────── */
-label > span:first-child,
-.label-wrap span {
-    font-size: 12px !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.03em !important;
-    color: var(--c-text-2) !important;
-}
-
-/* ── MARKDOWN SECTION HEADINGS ────────────────────────────── */
-.prose h3 {
-    font-family: 'Space Grotesk', sans-serif !important;
-    font-size: 0.72rem !important;
-    font-weight: 700 !important;
-    letter-spacing: 0.09em !important;
-    text-transform: uppercase !important;
-    color: var(--c-text-3) !important;
-    margin: 0.25rem 0 1rem !important;
-    padding-bottom: 0.6rem !important;
-    border-bottom: 1px solid var(--c-border) !important;
-}
-
-.prose h4 {
-    font-family: 'Space Grotesk', sans-serif !important;
-    font-size: 0.68rem !important;
-    font-weight: 700 !important;
-    letter-spacing: 0.08em !important;
-    text-transform: uppercase !important;
-    color: var(--c-text-3) !important;
-    margin: 1.25rem 0 0.7rem !important;
-}
-
-/* ── TEXT INPUTS & TEXTAREAS ──────────────────────────────── */
-textarea,
-input[type="text"],
-input[type="number"] {
-    background: rgba(6,11,24,0.65) !important;
-    border: 1px solid var(--c-border) !important;
-    border-radius: var(--r-md) !important;
-    color: var(--c-text-1) !important;
-    font-family: 'Plus Jakarta Sans', sans-serif !important;
-    font-size: 0.9rem !important;
-    line-height: 1.65 !important;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
-}
-
-textarea:focus,
-input[type="text"]:focus,
-input[type="number"]:focus {
-    border-color: rgba(124,58,237,0.45) !important;
-    box-shadow: 0 0 0 3px rgba(124,58,237,0.09) !important;
-    outline: none !important;
-}
-
-textarea::placeholder { color: var(--c-text-4) !important; }
-
-/* ── DROPDOWNS ────────────────────────────────────────────── */
-.wrap.svelte-iyf88w,
-ul.options {
-    background: #0C1221 !important;
+/* ── DROPDOWNS REFINEMENT ─────────────────────────────────── */
+/* Targeting the specific Gradio dropdown container and options list */
+.wrap.svelte-iyf88w, .wrap.gradio-dropdown {
+    background: rgba(13, 18, 33, 0.95) !important;
     border: 1px solid var(--c-border-mid) !important;
     border-radius: var(--r-md) !important;
-    box-shadow: 0 16px 40px rgba(0,0,0,0.6) !important;
+    box-shadow: 0 12px 30px rgba(0,0,0,0.7) !important;
+}
+
+ul.options {
+    background: #0B0F1A !important;
+    border: 1px solid var(--c-border-mid) !important;
+    border-radius: var(--r-md) !important;
+    margin-top: 6px !important;
+    padding: 6px !important;
+    z-index: 9999 !important;
+    box-shadow: 0 15px 45px rgba(0,0,0,0.8) !important;
 }
 
 ul.options li {
-    color: var(--c-text-2) !important;
-    font-size: 0.875rem !important;
-    transition: background 0.12s ease !important;
-}
-
-ul.options li:hover,
-ul.options li.selected {
-    background: rgba(124,58,237,0.14) !important;
-    color: #C4B5FD !important;
-}
-
-/* ── SLIDERS ──────────────────────────────────────────────── */
-input[type="range"] {
-    accent-color: var(--c-violet) !important;
-    cursor: pointer !important;
-}
-
-/* Slider value number input */
-.output-number input {
-    background: rgba(124,58,237,0.09) !important;
-    border: 1px solid rgba(124,58,237,0.22) !important;
-    border-radius: 7px !important;
-    color: #A78BFA !important;
-    font-weight: 600 !important;
-    font-size: 0.82rem !important;
-}
-
-/* ── RADIO & CHECKBOX ─────────────────────────────────────── */
-input[type="radio"],
-input[type="checkbox"] {
-    accent-color: var(--c-violet) !important;
-    cursor: pointer !important;
-}
-
-/* ── TABS ─────────────────────────────────────────────────── */
-.tabs > .tab-nav {
-    background: rgba(0,0,0,0.28) !important;
-    border-bottom: 1px solid var(--c-border) !important;
-    border-radius: var(--r-lg) var(--r-lg) 0 0 !important;
-    padding: 0.35rem 0.35rem 0 !important;
-    gap: 2px !important;
-}
-
-.tabs > .tab-nav > button {
-    font-family: 'Plus Jakarta Sans', sans-serif !important;
-    font-size: 0.79rem !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.03em !important;
-    color: var(--c-text-3) !important;
-    padding: 0.6rem 1.1rem !important;
-    border-radius: var(--r-sm) var(--r-sm) 0 0 !important;
-    border: 1px solid transparent !important;
-    background: transparent !important;
-    cursor: pointer !important;
-    transition: color 0.18s ease, background 0.18s ease !important;
-    margin-bottom: -1px !important;
-    position: relative !important;
-}
-
-.tabs > .tab-nav > button:hover {
-    color: var(--c-text-2) !important;
-    background: rgba(255,255,255,0.04) !important;
-}
-
-.tabs > .tab-nav > button.selected {
-    color: #B4A7F5 !important;
-    background: rgba(124,58,237,0.12) !important;
-    border-color: rgba(124,58,237,0.25) !important;
-    border-bottom: none !important;
-}
-
-/* Tab content pane */
-.tabitem {
-    background: rgba(255,255,255,0.014) !important;
-    border: 1px solid var(--c-border) !important;
-    border-top: none !important;
-    border-radius: 0 0 var(--r-lg) var(--r-lg) !important;
-    padding: 1.35rem !important;
-}
-
-/* ── GENERATE BUTTON ──────────────────────────────────────── */
-.primary-btn,
-button.primary,
-button[variant="primary"] {
-    background: linear-gradient(135deg, #7C3AED 0%, #4F46E5 55%, #0E7490 100%) !important;
-    border: none !important;
-    border-radius: var(--r-md) !important;
-    color: #fff !important;
-    font-family: 'Space Grotesk', sans-serif !important;
-    font-weight: 700 !important;
-    font-size: 1rem !important;
-    letter-spacing: 0.04em !important;
-    padding: 0.875rem 2.25rem !important;
-    cursor: pointer !important;
-    width: 100% !important;
-    position: relative !important;
-    overflow: hidden !important;
-    transition: transform 0.25s ease, box-shadow 0.25s ease !important;
-    box-shadow:
-        0 0 0 1px rgba(124,58,237,0.35),
-        0 4px 22px rgba(124,58,237,0.38),
-        inset 0 1px 0 rgba(255,255,255,0.13) !important;
-    text-shadow: 0 1px 3px rgba(0,0,0,0.4) !important;
-}
-
-/* Shimmer sweep on hover */
-.primary-btn::after,
-button.primary::after,
-button[variant="primary"]::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(105deg,
-        transparent 35%,
-        rgba(255,255,255,0.08) 50%,
-        transparent 65%);
-    transform: translateX(-100%);
-    transition: transform 0.55s ease;
-    pointer-events: none;
-}
-
-.primary-btn:hover::after,
-button.primary:hover::after,
-button[variant="primary"]:hover::after {
-    transform: translateX(100%);
-}
-
-.primary-btn:hover,
-button.primary:hover,
-button[variant="primary"]:hover {
-    transform: translateY(-3px) !important;
-    box-shadow:
-        0 0 0 1px rgba(124,58,237,0.45),
-        0 8px 36px rgba(124,58,237,0.52),
-        inset 0 1px 0 rgba(255,255,255,0.18) !important;
-}
-
-.primary-btn:active,
-button.primary:active,
-button[variant="primary"]:active {
-    transform: translateY(-1px) !important;
-}
-
-/* ── SECONDARY BUTTONS ────────────────────────────────────── */
-button:not(.primary):not([variant="primary"]):not(.tab-nav > button) {
-    background: rgba(255,255,255,0.04) !important;
-    border: 1px solid var(--c-border) !important;
-    border-radius: var(--r-sm) !important;
-    color: var(--c-text-2) !important;
-    font-family: 'Plus Jakarta Sans', sans-serif !important;
-    font-size: 0.82rem !important;
-    transition: background 0.15s ease, border-color 0.15s ease !important;
-}
-
-button:not(.primary):not([variant="primary"]):not(.tab-nav > button):hover {
-    background: rgba(255,255,255,0.07) !important;
-    border-color: var(--c-border-mid) !important;
-}
-
-/* ── AUDIO PLAYER ─────────────────────────────────────────── */
-audio {
-    border-radius: 10px !important;
-    width: 100% !important;
-}
-
-/* ── STATUS TEXTBOX (read-only output) ────────────────────── */
-#status-box textarea,
-.glass-panel textarea[readonly],
-textarea[readonly] {
-    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace !important;
-    font-size: 0.8rem !important;
-    color: var(--c-text-2) !important;
-    letter-spacing: 0.01em !important;
-    background: rgba(0,0,0,0.25) !important;
-}
-
-/* ── FILE UPLOAD ──────────────────────────────────────────── */
-.upload-container,
-.file-preview-holder,
-.gr-file-upload {
-    border: 1.5px dashed rgba(124,58,237,0.28) !important;
-    border-radius: var(--r-md) !important;
-    background: rgba(124,58,237,0.04) !important;
-    transition: border-color 0.2s ease, background 0.2s ease !important;
-}
-
-.upload-container:hover {
-    border-color: rgba(124,58,237,0.5) !important;
-    background: rgba(124,58,237,0.08) !important;
-}
-
-/* ── PROGRESS BAR ─────────────────────────────────────────── */
-.generating,
-.progress-bar {
-    background: linear-gradient(90deg, #7C3AED, #4F46E5, #0891B2, #7C3AED) !important;
-    background-size: 300% 100% !important;
-    animation: aurora-sweep 2.2s ease infinite !important;
-    border-radius: 999px !important;
-}
-
-@keyframes aurora-sweep {
-    0%   { background-position: 100% center; }
-    100% { background-position: -100% center; }
-}
-
-/* ── ACTION ROW ───────────────────────────────────────────── */
-#action-row {
-    margin-top: 1.5rem !important;
-    align-items: center !important;
-}
-
-/* ── CUSTOM SCROLLBAR ─────────────────────────────────────── */
-::-webkit-scrollbar          { width: 5px; height: 5px; }
-::-webkit-scrollbar-track    { background: transparent; }
-::-webkit-scrollbar-thumb    { background: rgba(124,58,237,0.28); border-radius: 999px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(124,58,237,0.5); }
-
-/* ── ACCORDION / GROUP ────────────────────────────────────── */
-details > summary {
-    font-family: 'Plus Jakarta Sans', sans-serif !important;
-    font-weight: 600 !important;
-    font-size: 0.82rem !important;
-    letter-spacing: 0.025em !important;
-    color: var(--c-text-2) !important;
-    cursor: pointer !important;
-    list-style: none !important;
-}
-
-/* ── TOOLTIP ──────────────────────────────────────────────── */
-.gr-tooltip,
-[role="tooltip"] {
-    background: #111827 !important;
-    border: 1px solid var(--c-border-mid) !important;
     border-radius: 8px !important;
+    margin: 2px 0 !important;
+    padding: 10px 14px !important;
     color: var(--c-text-2) !important;
-    font-size: 0.75rem !important;
-    font-family: 'Plus Jakarta Sans', sans-serif !important;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.5) !important;
+    font-weight: 500 !important;
 }
 
-/* ── BLOCK CONTAINER REFINEMENT ───────────────────────────── */
+ul.options li:hover, ul.options li.selected {
+    background: rgba(139,92,246,0.2) !important;
+    color: #DDD6FE !important;
+}
+
+/* ── MODERNIZED PROGRESS BAR ─────────────────────────────── */
+/* Make it a sleek aurora line instead of a box */
+.progress-bar {
+    height: 4px !important;
+    background: linear-gradient(90deg, #8B5CF6, #6366F1, #22D3EE, #8B5CF6) !important;
+    background-size: 200% 100% !important;
+    animation: aurora-move 1.5s linear infinite !important;
+    border-radius: 2px !important;
+    border: none !important;
+    box-shadow: 0 0 15px rgba(139,92,246,0.4) !important;
+}
+
+@keyframes aurora-move {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 200% 50%; }
+}
+
+/* Remove default loading text container if it looks bulky */
+.progress-wrap {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+}
+
+/* ── INPUTS & FORM ELEMENTS ───────────────────────────────── */
+textarea, input[type="text"], input[type="number"] {
+    background: rgba(0,0,0,0.4) !important;
+    border: 1px solid var(--c-border) !important;
+    border-radius: var(--r-md) !important;
+    padding: 12px 16px !important;
+    font-size: 0.95rem !important;
+    color: var(--c-text-1) !important;
+}
+
+textarea:focus, input[type="text"]:focus {
+    border-color: var(--c-violet) !important;
+    box-shadow: 0 0 0 3px rgba(139,92,246,0.15) !important;
+}
+
+/* ── TABS REFINEMENT ──────────────────────────────────────── */
+.tab-nav {
+    background: transparent !important;
+    border-bottom: 2px solid var(--c-border) !important;
+    margin-bottom: 1.5rem !important;
+}
+
+.tab-nav button {
+    font-weight: 700 !important;
+    font-size: 0.85rem !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+    color: var(--c-text-3) !important;
+    padding: 0.75rem 1.5rem !important;
+}
+
+.tab-nav button.selected {
+    color: var(--c-violet) !important;
+    border-bottom: 2px solid var(--c-violet) !important;
+}
+
+/* ── SLIDERS ─────────────────────────────────────────────── */
+input[type="range"] {
+    height: 6px !important;
+}
+input[type="range"]::-webkit-slider-thumb {
+    width: 18px !important;
+    height: 18px !important;
+    background: #FFF !important;
+    border: 3px solid var(--c-violet) !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
+}
+
+/* ── OTHER IMPROVEMENTS ───────────────────────────────────── */
+.block-label {
+    text-transform: uppercase !important;
+    font-size: 11px !important;
+    letter-spacing: 0.06em !important;
+    color: var(--c-text-3) !important;
+    margin-bottom: 8px !important;
+}
+
+button:not(.primary-btn) {
+    border-radius: 12px !important;
+    font-weight: 600 !important;
+}
+
+/* ── BLOCK REFINEMENT ────────────────────────────────────── */
 .block {
     border-radius: var(--r-md) !important;
     border-color: var(--c-border) !important;
