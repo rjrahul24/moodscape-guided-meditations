@@ -225,251 +225,656 @@ def generate_meditation(
         return None, f"Error: {e}"
 
 
+# CSS — Cosmic Minimalism design system
+# Inspired by premium dark-mode apps: Linear, Vercel, Raycast, Arc
+CUSTOM_CSS = """
+/* ── GOOGLE FONTS ─────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ── DESIGN TOKENS ────────────────────────────────────────── */
+:root {
+    --c-bg:          #060B18;
+    --c-surface:     rgba(255,255,255,0.035);
+    --c-surface-2:   rgba(255,255,255,0.06);
+    --c-border:      rgba(255,255,255,0.10);
+    --c-border-mid:  rgba(255,255,255,0.16);
+    --c-violet:      #7C3AED;
+    --c-indigo:      #4F46E5;
+    --c-cyan:        #06B6D4;
+    --c-text-1:      #E8EDF5;    /* primary — bright enough to read comfortably */
+    --c-text-2:      #9AACCB;    /* secondary — readable but clearly subordinate */
+    --c-text-3:      #6B86A8;    /* muted — labels, section headers (≥4.5:1 contrast) */
+    --c-text-4:      #4D6480;    /* placeholder — subtle but still legible */
+    --r-sm:  10px;
+    --r-md:  14px;
+    --r-lg:  20px;
+    --r-xl:  24px;
+}
+
+/* ── BASE ─────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+body { background: var(--c-bg) !important; }
+
+.gradio-container {
+    min-height: 100vh !important;
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif !important;
+    /* Multi-point aurora gradient — very subtle, gives depth */
+    background:
+        radial-gradient(ellipse 90% 55% at 8%  -5%,  rgba(124,58,237,0.13)  0%, transparent 65%),
+        radial-gradient(ellipse 70% 50% at 92% 105%,  rgba(79,70,229,0.11)   0%, transparent 65%),
+        radial-gradient(ellipse 55% 35% at 55%  55%,  rgba(6,182,212,0.035)  0%, transparent 55%),
+        var(--c-bg) !important;
+}
+
+/* ── HEADER ───────────────────────────────────────────────── */
+.app-header {
+    text-align: center;
+    padding: 3.5rem 1rem 2rem;
+    position: relative;
+}
+
+/* Thin gradient divider below header */
+.app-header::after {
+    content: '';
+    display: block;
+    width: 180px;
+    height: 1px;
+    margin: 1.75rem auto 0;
+    background: linear-gradient(90deg,
+        transparent       0%,
+        rgba(124,58,237,0.55) 35%,
+        rgba(79,70,229,0.55)  65%,
+        transparent       100%);
+}
+
+.app-header h1 {
+    font-family: 'Space Grotesk', sans-serif !important;
+    font-size: clamp(2.8rem, 6vw, 4.2rem) !important;
+    font-weight: 700 !important;
+    background: linear-gradient(135deg, #C4B5FD 0%, #818CF8 45%, #67E8F9 100%);
+    -webkit-background-clip: text !important;
+    background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    color: transparent !important;
+    letter-spacing: -0.04em !important;
+    line-height: 1 !important;
+    margin: 0 0 0.9rem !important;
+    padding: 0 !important;
+}
+
+/* Subtitle under the h1 */
+.app-header .prose p, .app-header > * p, .app-header p {
+    font-size: 0.975rem !important;
+    color: var(--c-text-2) !important;
+    font-weight: 400 !important;
+    letter-spacing: 0.015em !important;
+    line-height: 1.65 !important;
+    max-width: 500px;
+    margin: 0 auto !important;
+}
+
+/* ── GLASS CARDS ──────────────────────────────────────────── */
+.glass-panel {
+    background: var(--c-surface) !important;
+    backdrop-filter: blur(28px) saturate(160%) !important;
+    -webkit-backdrop-filter: blur(28px) saturate(160%) !important;
+    border: 1px solid var(--c-border) !important;
+    border-radius: var(--r-xl) !important;
+    padding: 1.75rem !important;
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.065),
+        0 24px 64px rgba(0,0,0,0.45),
+        0 0 0 0.5px rgba(0,0,0,0.2) !important;
+    transition: box-shadow 0.35s ease !important;
+}
+
+.glass-panel:focus-within {
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.08),
+        0 28px 72px rgba(0,0,0,0.5),
+        0 0 40px rgba(124,58,237,0.06) !important;
+}
+
+/* ── INPUT LABELS ─────────────────────────────────────────── */
+label > span:first-child,
+.label-wrap span {
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.03em !important;
+    color: var(--c-text-2) !important;
+}
+
+/* ── MARKDOWN SECTION HEADINGS ────────────────────────────── */
+.prose h3 {
+    font-family: 'Space Grotesk', sans-serif !important;
+    font-size: 0.72rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.09em !important;
+    text-transform: uppercase !important;
+    color: var(--c-text-3) !important;
+    margin: 0.25rem 0 1rem !important;
+    padding-bottom: 0.6rem !important;
+    border-bottom: 1px solid var(--c-border) !important;
+}
+
+.prose h4 {
+    font-family: 'Space Grotesk', sans-serif !important;
+    font-size: 0.68rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.08em !important;
+    text-transform: uppercase !important;
+    color: var(--c-text-3) !important;
+    margin: 1.25rem 0 0.7rem !important;
+}
+
+/* ── TEXT INPUTS & TEXTAREAS ──────────────────────────────── */
+textarea,
+input[type="text"],
+input[type="number"] {
+    background: rgba(6,11,24,0.65) !important;
+    border: 1px solid var(--c-border) !important;
+    border-radius: var(--r-md) !important;
+    color: var(--c-text-1) !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-size: 0.9rem !important;
+    line-height: 1.65 !important;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+}
+
+textarea:focus,
+input[type="text"]:focus,
+input[type="number"]:focus {
+    border-color: rgba(124,58,237,0.45) !important;
+    box-shadow: 0 0 0 3px rgba(124,58,237,0.09) !important;
+    outline: none !important;
+}
+
+textarea::placeholder { color: var(--c-text-4) !important; }
+
+/* ── DROPDOWNS ────────────────────────────────────────────── */
+.wrap.svelte-iyf88w,
+ul.options {
+    background: #0C1221 !important;
+    border: 1px solid var(--c-border-mid) !important;
+    border-radius: var(--r-md) !important;
+    box-shadow: 0 16px 40px rgba(0,0,0,0.6) !important;
+}
+
+ul.options li {
+    color: var(--c-text-2) !important;
+    font-size: 0.875rem !important;
+    transition: background 0.12s ease !important;
+}
+
+ul.options li:hover,
+ul.options li.selected {
+    background: rgba(124,58,237,0.14) !important;
+    color: #C4B5FD !important;
+}
+
+/* ── SLIDERS ──────────────────────────────────────────────── */
+input[type="range"] {
+    accent-color: var(--c-violet) !important;
+    cursor: pointer !important;
+}
+
+/* Slider value number input */
+.output-number input {
+    background: rgba(124,58,237,0.09) !important;
+    border: 1px solid rgba(124,58,237,0.22) !important;
+    border-radius: 7px !important;
+    color: #A78BFA !important;
+    font-weight: 600 !important;
+    font-size: 0.82rem !important;
+}
+
+/* ── RADIO & CHECKBOX ─────────────────────────────────────── */
+input[type="radio"],
+input[type="checkbox"] {
+    accent-color: var(--c-violet) !important;
+    cursor: pointer !important;
+}
+
+/* ── TABS ─────────────────────────────────────────────────── */
+.tabs > .tab-nav {
+    background: rgba(0,0,0,0.28) !important;
+    border-bottom: 1px solid var(--c-border) !important;
+    border-radius: var(--r-lg) var(--r-lg) 0 0 !important;
+    padding: 0.35rem 0.35rem 0 !important;
+    gap: 2px !important;
+}
+
+.tabs > .tab-nav > button {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-size: 0.79rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.03em !important;
+    color: var(--c-text-3) !important;
+    padding: 0.6rem 1.1rem !important;
+    border-radius: var(--r-sm) var(--r-sm) 0 0 !important;
+    border: 1px solid transparent !important;
+    background: transparent !important;
+    cursor: pointer !important;
+    transition: color 0.18s ease, background 0.18s ease !important;
+    margin-bottom: -1px !important;
+    position: relative !important;
+}
+
+.tabs > .tab-nav > button:hover {
+    color: var(--c-text-2) !important;
+    background: rgba(255,255,255,0.04) !important;
+}
+
+.tabs > .tab-nav > button.selected {
+    color: #B4A7F5 !important;
+    background: rgba(124,58,237,0.12) !important;
+    border-color: rgba(124,58,237,0.25) !important;
+    border-bottom: none !important;
+}
+
+/* Tab content pane */
+.tabitem {
+    background: rgba(255,255,255,0.014) !important;
+    border: 1px solid var(--c-border) !important;
+    border-top: none !important;
+    border-radius: 0 0 var(--r-lg) var(--r-lg) !important;
+    padding: 1.35rem !important;
+}
+
+/* ── GENERATE BUTTON ──────────────────────────────────────── */
+.primary-btn,
+button.primary,
+button[variant="primary"] {
+    background: linear-gradient(135deg, #7C3AED 0%, #4F46E5 55%, #0E7490 100%) !important;
+    border: none !important;
+    border-radius: var(--r-md) !important;
+    color: #fff !important;
+    font-family: 'Space Grotesk', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 1rem !important;
+    letter-spacing: 0.04em !important;
+    padding: 0.875rem 2.25rem !important;
+    cursor: pointer !important;
+    width: 100% !important;
+    position: relative !important;
+    overflow: hidden !important;
+    transition: transform 0.25s ease, box-shadow 0.25s ease !important;
+    box-shadow:
+        0 0 0 1px rgba(124,58,237,0.35),
+        0 4px 22px rgba(124,58,237,0.38),
+        inset 0 1px 0 rgba(255,255,255,0.13) !important;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.4) !important;
+}
+
+/* Shimmer sweep on hover */
+.primary-btn::after,
+button.primary::after,
+button[variant="primary"]::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(105deg,
+        transparent 35%,
+        rgba(255,255,255,0.08) 50%,
+        transparent 65%);
+    transform: translateX(-100%);
+    transition: transform 0.55s ease;
+    pointer-events: none;
+}
+
+.primary-btn:hover::after,
+button.primary:hover::after,
+button[variant="primary"]:hover::after {
+    transform: translateX(100%);
+}
+
+.primary-btn:hover,
+button.primary:hover,
+button[variant="primary"]:hover {
+    transform: translateY(-3px) !important;
+    box-shadow:
+        0 0 0 1px rgba(124,58,237,0.45),
+        0 8px 36px rgba(124,58,237,0.52),
+        inset 0 1px 0 rgba(255,255,255,0.18) !important;
+}
+
+.primary-btn:active,
+button.primary:active,
+button[variant="primary"]:active {
+    transform: translateY(-1px) !important;
+}
+
+/* ── SECONDARY BUTTONS ────────────────────────────────────── */
+button:not(.primary):not([variant="primary"]):not(.tab-nav > button) {
+    background: rgba(255,255,255,0.04) !important;
+    border: 1px solid var(--c-border) !important;
+    border-radius: var(--r-sm) !important;
+    color: var(--c-text-2) !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-size: 0.82rem !important;
+    transition: background 0.15s ease, border-color 0.15s ease !important;
+}
+
+button:not(.primary):not([variant="primary"]):not(.tab-nav > button):hover {
+    background: rgba(255,255,255,0.07) !important;
+    border-color: var(--c-border-mid) !important;
+}
+
+/* ── AUDIO PLAYER ─────────────────────────────────────────── */
+audio {
+    border-radius: 10px !important;
+    width: 100% !important;
+}
+
+/* ── STATUS TEXTBOX (read-only output) ────────────────────── */
+#status-box textarea,
+.glass-panel textarea[readonly],
+textarea[readonly] {
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace !important;
+    font-size: 0.8rem !important;
+    color: var(--c-text-2) !important;
+    letter-spacing: 0.01em !important;
+    background: rgba(0,0,0,0.25) !important;
+}
+
+/* ── FILE UPLOAD ──────────────────────────────────────────── */
+.upload-container,
+.file-preview-holder,
+.gr-file-upload {
+    border: 1.5px dashed rgba(124,58,237,0.28) !important;
+    border-radius: var(--r-md) !important;
+    background: rgba(124,58,237,0.04) !important;
+    transition: border-color 0.2s ease, background 0.2s ease !important;
+}
+
+.upload-container:hover {
+    border-color: rgba(124,58,237,0.5) !important;
+    background: rgba(124,58,237,0.08) !important;
+}
+
+/* ── PROGRESS BAR ─────────────────────────────────────────── */
+.generating,
+.progress-bar {
+    background: linear-gradient(90deg, #7C3AED, #4F46E5, #0891B2, #7C3AED) !important;
+    background-size: 300% 100% !important;
+    animation: aurora-sweep 2.2s ease infinite !important;
+    border-radius: 999px !important;
+}
+
+@keyframes aurora-sweep {
+    0%   { background-position: 100% center; }
+    100% { background-position: -100% center; }
+}
+
+/* ── ACTION ROW ───────────────────────────────────────────── */
+#action-row {
+    margin-top: 1.5rem !important;
+    align-items: center !important;
+}
+
+/* ── CUSTOM SCROLLBAR ─────────────────────────────────────── */
+::-webkit-scrollbar          { width: 5px; height: 5px; }
+::-webkit-scrollbar-track    { background: transparent; }
+::-webkit-scrollbar-thumb    { background: rgba(124,58,237,0.28); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(124,58,237,0.5); }
+
+/* ── ACCORDION / GROUP ────────────────────────────────────── */
+details > summary {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-weight: 600 !important;
+    font-size: 0.82rem !important;
+    letter-spacing: 0.025em !important;
+    color: var(--c-text-2) !important;
+    cursor: pointer !important;
+    list-style: none !important;
+}
+
+/* ── TOOLTIP ──────────────────────────────────────────────── */
+.gr-tooltip,
+[role="tooltip"] {
+    background: #111827 !important;
+    border: 1px solid var(--c-border-mid) !important;
+    border-radius: 8px !important;
+    color: var(--c-text-2) !important;
+    font-size: 0.75rem !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5) !important;
+}
+
+/* ── BLOCK CONTAINER REFINEMENT ───────────────────────────── */
+.block {
+    border-radius: var(--r-md) !important;
+    border-color: var(--c-border) !important;
+}
+
+/* Flatten nested blocks inside glass panels — prevents double-border box effect */
+.glass-panel .block,
+.glass-panel .form {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+}
+"""
+
+theme = gr.themes.Base(
+    primary_hue="violet",
+    secondary_hue="indigo",
+    neutral_hue="slate",
+    font=[
+        gr.themes.GoogleFont("Plus Jakarta Sans"),
+        gr.themes.GoogleFont("Space Grotesk"),
+        "ui-sans-serif", "system-ui", "sans-serif",
+    ],
+    font_mono=[gr.themes.GoogleFont("JetBrains Mono"), "ui-monospace", "monospace"],
+).set(
+    body_background_fill="#060B18",
+    body_text_color="#E8EDF5",
+    body_text_color_subdued="#9AACCB",
+    block_background_fill="rgba(255, 255, 255, 0.03)",
+    block_border_color="rgba(255,255,255,0.10)",
+    block_border_width="1px",
+    block_label_text_size="12px",
+    block_label_text_weight="600",
+    block_label_text_color="#9AACCB",
+    block_label_background_fill="transparent",
+    block_title_text_weight="600",
+    block_title_text_size="12px",
+    block_title_text_color="#9AACCB",
+    input_background_fill="rgba(6,11,24,0.55)",
+    input_border_color="rgba(255,255,255,0.10)",
+    input_border_color_focus="rgba(124,58,237,0.5)",
+    input_placeholder_color="#4D6480",
+    button_primary_background_fill="linear-gradient(135deg, #7C3AED 0%, #4F46E5 55%, #0E7490 100%)",
+    button_primary_background_fill_hover="linear-gradient(135deg, #8B5CF6 0%, #6366F1 55%, #0891B2 100%)",
+    button_primary_text_color="white",
+    button_primary_border_color="transparent",
+    button_secondary_background_fill="rgba(255,255,255,0.04)",
+    button_secondary_border_color="rgba(255,255,255,0.07)",
+    button_secondary_text_color="#94A3B8",
+).set(
+    body_background_fill_dark="#060B18",
+    block_background_fill_dark="rgba(255, 255, 255, 0.03)",
+    input_background_fill_dark="rgba(6,11,24,0.55)",
+)
+
 # ── Build the Gradio UI ────────────────────────────────────────────────────
 
 with gr.Blocks(
     title="MoodScape — Guided Meditation Generator",
+    theme=theme,
+    css=CUSTOM_CSS,
 ) as demo:
-    gr.Markdown("# MoodScape — Guided Meditation Audio Generator")
-    gr.Markdown(
-        "Create personalized guided meditation audio with AI-generated "
-        "narration and ambient music. Write your script using `[pause:Xs]` or "
-        "`[N second pause]` markers for timed silences, and `[breath]` for breath pauses."
-    )
+    
+    gr.HTML("""
+        <div class="app-header">
+            <h1>MoodScape</h1>
+            <p>Premium AI-powered guided meditation audio generator.<br>
+            Synthesize professional narration and ambient soundscapes in seconds.</p>
+        </div>
+    """)
 
     with gr.Row():
-        # ── Left column: main inputs ───────────────────────────────────
+        # ── Left column: script and core inputs ────────────────────────────
+        with gr.Column(scale=3, elem_classes="glass-panel"):
+            with gr.Group():
+                generation_mode = gr.Radio(
+                    choices=["Instrumental Only", "Vocals Only", "Instrumental + Vocal"],
+                    value="Instrumental + Vocal",
+                    label="Generation Mode",
+                )
+                script_input = gr.Textbox(
+                    label="Meditation Script",
+                    placeholder=(
+                        "Enter your meditation script here.\n"
+                        "Use [pause:Xs] or [N second pause] for timed pauses, e.g. [pause:5s] or [5 second pause]\n"
+                        "Use [breath] / [inhale] / [exhale] for a 1.2s breath pause.\n"
+                        "Double newlines create 6.5-second pauses automatically."
+                    ),
+                    value=DEFAULT_SCRIPT,
+                    lines=15,
+                    elem_id="script-textbox",
+                )
+            
+            with gr.Row():
+                music_prompt = gr.Textbox(
+                    label="Music Style Prompt",
+                    placeholder="E.g. Evolving pads, gentle rain, minimal soft piano...",
+                    value=DEFAULT_MUSIC_PROMPT,
+                    lines=3,
+                    scale=2
+                )
+                music_duration = gr.Slider(
+                    minimum=1.0,
+                    maximum=30.0,
+                    value=3.0,
+                    step=0.5,
+                    label="Instrumental Duration (min)",
+                    visible=False,
+                    scale=1
+                )
+
+        # ── Right column: Settings & Configuration ────────────────────────
         with gr.Column(scale=2):
-            generation_mode = gr.Radio(
-                choices=["Instrumental Only", "Vocals Only", "Instrumental + Vocal"],
-                value="Instrumental + Vocal",
-                label="Generation Mode",
-            )
-            script_input = gr.Textbox(
-                label="Meditation Script",
-                placeholder=(
-                    "Enter your meditation script here.\n"
-                    "Use [pause:Xs] or [N second pause] for timed pauses, e.g. [pause:5s] or [5 second pause]\n"
-                    "Use [breath] / [inhale] / [exhale] for a 1.2s breath pause.\n"
-                    "Double newlines create 6.5-second pauses automatically."
-                ),
-                value=DEFAULT_SCRIPT,
-                lines=15,
-            )
-            music_prompt = gr.Textbox(
-                label="Music Style Prompt",
-                placeholder="Describe the background music you'd like...",
-                value=DEFAULT_MUSIC_PROMPT,
-                lines=3,
-            )
-            music_duration = gr.Slider(
-                minimum=1.0,
-                maximum=30.0,
-                value=3.0,
-                step=0.5,
-                label="Instrumental Duration (minutes)",
-                info="Only applies to 'Instrumental Only' mode.",
-                visible=False,
-            )
-            reference_audio = gr.Audio(
-                label="Reference Audio (Melody / Acoustic Style — ACE-Step: timbre, MusicGen: melody)",
-                type="filepath",
-                sources=["upload"],
-            )
+            with gr.Tabs(elem_id="settings-tabs"):
+                
+                # Tab 1: Core Voice & Music AI Settings
+                with gr.TabItem("AI Engines", elem_classes="glass-panel"):
+                    gr.Markdown("### Sound Sources")
+                    music_model_dropdown = gr.Dropdown(
+                        choices=["MusicGen", "ACE-Step 1.5", "Lyria RealTime"],
+                        value="MusicGen",
+                        label="Background Music Model",
+                    )
+                    
+                    acestep_quality = gr.Radio(
+                        choices=["Draft (Turbo / 8-step)", "Studio (SFT / 50-step)"],
+                        value="Studio (SFT / 50-step)",
+                        label="Generation Quality",
+                        visible=False,
+                    )
 
-        # ── Right column: settings ─────────────────────────────────────
-        with gr.Column(scale=1):
-            # Background Music Model selector
-            music_model_dropdown = gr.Dropdown(
-                choices=["MusicGen", "ACE-Step 1.5", "Lyria RealTime"],
-                value="MusicGen",
-                label="Background Music Model",
-                info=(
-                    "MusicGen: Meta's established model, reliable ambient generation. "
-                    "ACE-Step 1.5: newer DiT model, 48kHz native, coherent long-form via MLX. "
-                    "Lyria RealTime: Google's cloud API, native 48kHz stereo, no local VRAM (requires GOOGLE_API_KEY in .env)."
-                ),
-            )
+                    tts_engine_radio = gr.Radio(
+                        choices=["Kokoro", "F5-TTS"],
+                        value="Kokoro",
+                        label="TTS Voice Engine",
+                    )
 
-            # ACE-Step Quality Selector (Visible only when ACE-Step is chosen)
-            acestep_quality = gr.Radio(
-                choices=["Draft (Turbo / 8-step)", "Studio (SFT / 50-step)"],
-                value="Studio (SFT / 50-step)",
-                label="Generation Quality",
-                info="Studio (default): highest fidelity. Draft: fast preview, lower detail.",
-                visible=False,
-            )
+                    with gr.Group(visible=True) as kokoro_settings:
+                        kokoro_voice_dropdown = gr.Dropdown(
+                            choices=KOKORO_VOICE_CHOICES,
+                            value="balanced_calm",
+                            label="Voice Model",
+                        )
 
-            # TTS Engine selector
-            tts_engine_radio = gr.Radio(
-                choices=["Kokoro", "F5-TTS"],
-                value="Kokoro",
-                label="TTS Voice Engine",
-                info=(
-                    "Kokoro: 10 curated voices with meditation presets. "
-                    "F5-TTS: zero-shot voice cloning — upload a 10–12s reference clip to use any voice."
-                ),
-            )
+                    with gr.Group(visible=False) as f5_settings:
+                        f5_voice_dropdown = gr.Dropdown(
+                            choices=F5_VOICE_CHOICES if F5_VOICE_CHOICES else ["(no voices)"],
+                            value=F5_VOICE_DEFAULT,
+                            label="Voice Personality",
+                            interactive=bool(F5_VOICE_CHOICES),
+                        )
 
-            # Kokoro settings (visible by default, hidden when F5-TTS is selected)
-            with gr.Accordion("Kokoro Voice Settings", open=False, visible=True) as kokoro_settings:
-                kokoro_voice_dropdown = gr.Dropdown(
-                    choices=KOKORO_VOICE_CHOICES,
-                    value="balanced_calm",
-                    label="Voice",
-                )
+                # Tab 2: Audio Engineering (Ducking, Reverb, etc)
+                with gr.TabItem("Mix Details", elem_classes="glass-panel"):
+                    gr.Markdown("### Acoustic Parameters")
+                    with gr.Row():
+                        speed_slider = gr.Slider(0.65, 1.0, 0.70, step=0.01, label="Speech Speed")
+                        duck_slider = gr.Slider(-30, -5, -20, step=1, label="Ducking (dB)")
+                    
+                    with gr.Row():
+                        reverb_slider = gr.Slider(0.0, 0.5, 0.15, step=0.05, label="Voice Reverb")
+                        reverb_ir_dropdown = gr.Dropdown(
+                            choices=[
+                                ("Warm Studio", "warm_studio"),
+                                ("Wooden Hall", "wooden_hall"),
+                                ("Stone Chapel", "stone_chapel"),
+                            ],
+                            value="warm_studio",
+                            label="Space Type",
+                        )
+                    
+                    with gr.Row():
+                        fade_in_slider = gr.Slider(0, 10, 3, step=0.5, label="Fade In (s)")
+                        fade_out_slider = gr.Slider(0, 15, 6, step=0.5, label="Fade Out (s)")
 
-            # F5-TTS settings (hidden by default, shown when F5-TTS engine is selected)
-            with gr.Accordion("F5-TTS Voice Settings", open=True, visible=False) as f5_settings:
-                f5_voice_dropdown = gr.Dropdown(
-                    choices=F5_VOICE_CHOICES if F5_VOICE_CHOICES else ["(no voices registered)"],
-                    value=F5_VOICE_DEFAULT,
-                    label="Voice Personality",
-                    interactive=bool(F5_VOICE_CHOICES),
-                    info=(
-                        "Select a registered voice personality. "
-                        "To add voices, place matching .wav and .txt pairs in "
-                        "core/f5_tts/assets/reference_audio/ and reference_transcript/."
-                    ),
-                )
+                # Tab 3: Model-Specific Extras (BPM, Key, Advanced)
+                with gr.TabItem("Advanced", elem_classes="glass-panel"):
+                    # ACE-Step Metadata
+                    with gr.Group(visible=False) as acestep_metadata:
+                        gr.Markdown("#### ACE-Step Tuning")
+                        with gr.Row():
+                            acestep_bpm = gr.Slider(40, 100, 50, step=1, label="BPM")
+                            acestep_key = gr.Dropdown(
+                                choices=["Auto", "C Major", "C Minor", "C# Major", "C# Minor", "D Major", "D Minor", "Eb Major", "Eb Minor", "E Major", "E Minor", "F Major", "F Minor", "F# Major", "F# Minor", "G Major", "G Minor", "Ab Major", "Ab Minor", "A Major", "A Minor", "Bb Major", "Bb Minor", "B Major", "B Minor"],
+                                value="Auto",
+                                label="Key",
+                            )
 
-            # ACE-Step Metadata (Collapsed by default)
-            with gr.Accordion("ACE-Step Metadata (BPM / Key)", open=False, visible=False) as acestep_metadata:
-                acestep_bpm = gr.Slider(
-                    minimum=40,
-                    maximum=100,
-                    value=50,
-                    step=1,
-                    label="BPM (Beats Per Minute)",
-                    info="ACE-Step only. 60-80 is ideal for meditation.",
-                )
-                acestep_key = gr.Dropdown(
-                    choices=["Auto", "C Major", "C Minor", "C# Major", "C# Minor", "D Major", "D Minor", "Eb Major", "Eb Minor", "E Major", "E Minor", "F Major", "F Minor", "F# Major", "F# Minor", "G Major", "G Minor", "Ab Major", "Ab Minor", "A Major", "A Minor", "Bb Major", "Bb Minor", "B Major", "B Minor"],
-                    value="Auto",
-                    label="Musical Key",
-                    info="ACE-Step only. Set to 'Auto' to let the model choose.",
-                )
+                    # Lyria Settings
+                    with gr.Group(visible=False) as lyria_settings:
+                        gr.Markdown("#### Lyria RealTime Tuning")
+                        lyria_bpm = gr.Slider(60, 200, 70, step=1, label="BPM")
+                        with gr.Row():
+                            lyria_density = gr.Slider(0, 1.0, 0.1, step=0.05, label="Density")
+                            lyria_brightness = gr.Slider(0, 1.0, 0.15, step=0.05, label="Brightness")
 
-            # Lyria RealTime Settings (Collapsed, hidden by default)
-            with gr.Accordion("Lyria RealTime Settings", open=False, visible=False) as lyria_settings:
-                lyria_bpm = gr.Slider(
-                    minimum=60,
-                    maximum=200,
-                    value=70,
-                    step=1,
-                    label="BPM (Beats Per Minute)",
-                    info="60–80 is ideal for meditation. Higher values create more energetic textures.",
-                )
-                lyria_density = gr.Slider(
-                    minimum=0.0,
-                    maximum=1.0,
-                    value=0.1,
-                    step=0.05,
-                    label="Density",
-                    info="Musical density (0.0 = sparse and minimal, 1.0 = rich and layered). Low values suit meditation.",
-                )
-                lyria_brightness = gr.Slider(
-                    minimum=0.0,
-                    maximum=1.0,
-                    value=0.15,
-                    step=0.05,
-                    label="Brightness",
-                    info="Spectral brightness (0.0 = warm/dark, 1.0 = bright/airy). Keep low for a calming, warm feel.",
-                )
+                    gr.Markdown("#### Audio Export")
+                    with gr.Row():
+                        format_radio = gr.Radio(["wav", "mp3"], value="wav", label="Format")
+                        seed_input = gr.Number(label="Seed", value=0, precision=0)
+                    
+                    with gr.Row():
+                        upsample_checkbox = gr.Checkbox(label="Hi-Fi (48kHz)", value=False)
+                        stems_checkbox = gr.Checkbox(label="Export Stems", value=False)
+                    
+                    stem_separation_checkbox = gr.Checkbox(label="Clean Music (Source Separation)", value=True)
+                    reference_audio = gr.Audio(label="Style/Melody Reference", type="filepath", sources=["upload"])
 
-            # Common settings
-            with gr.Accordion("Audio Settings", open=False):
-                speed_slider = gr.Slider(
-                    minimum=0.65,
-                    maximum=1.0,
-                    value=0.70,
-                    step=0.01,
-                    label="Speaking Speed (0.65-0.75 = meditation ideal)",
-                )
-                duck_slider = gr.Slider(
-                    minimum=-30,
-                    maximum=-5,
-                    value=-20,
-                    step=1,
-                    label="Music Ducking During Speech (dB)",
-                )
-                reverb_slider = gr.Slider(
-                    minimum=0.0,
-                    maximum=0.5,
-                    value=0.15,
-                    step=0.05,
-                    label="Voice Reverb",
-                )
-                reverb_ir_dropdown = gr.Dropdown(
-                    choices=[
-                        ("Warm Studio (intimate, short decay)", "warm_studio"),
-                        ("Wooden Hall (natural warmth, medium space)", "wooden_hall"),
-                        ("Stone Chapel (ethereal, long decay)", "stone_chapel"),
-                    ],
-                    value="warm_studio",
-                    label="Reverb Space",
-                )
-                fade_in_slider = gr.Slider(
-                    minimum=0,
-                    maximum=10,
-                    value=3,
-                    step=0.5,
-                    label="Fade In (seconds)",
-                )
-                fade_out_slider = gr.Slider(
-                    minimum=0,
-                    maximum=15,
-                    value=6,
-                    step=0.5,
-                    label="Fade Out (seconds)",
-                )
+    # Action Section
+    with gr.Row(elem_id="action-row"):
+        with gr.Column(scale=2):
+            generate_btn = gr.Button("Generate Meditation", variant="primary", size="lg", elem_classes="primary-btn")
+        with gr.Column(scale=3):
+            audio_output = gr.Audio(label="Generated Audio", type="filepath", elem_classes="glass-panel")
+    
+    status_text = gr.Textbox(label="Status", interactive=False, elem_classes="glass-panel")
 
+    # ── Visibility Callbacks ───────────────────────────────────────────────
 
-            # Advanced settings (collapsed by default)
-            with gr.Accordion("Advanced Settings", open=False):
-                stem_separation_checkbox = gr.Checkbox(
-                    label="AI Source Separation (remove drums/vocals from music)",
-                    value=True,
-                    info=(
-                        "Runs HT Demucs to strip any unwanted drums or vocal artefacts "
-                        "from generated music. Recommended for pure ambient output."
-                    ),
-                )
-                seed_input = gr.Number(
-                    label="Random Seed (0 = auto)",
-                    value=0,
-                    precision=0,
-                )
-                stems_checkbox = gr.Checkbox(
-                    label="Export separate voice/music stems",
-                    value=False,
-                )
-                upsample_checkbox = gr.Checkbox(
-                    label="48 kHz output (higher fidelity, slower export)",
-                    value=False,
-                )
-
-            format_radio = gr.Radio(
-                choices=["wav", "mp3"],
-                value="wav",
-                label="Output Format",
-            )
-
-    # Toggle visibility of generation mode specific settings
     def toggle_mode_settings(mode, current_music_model, current_tts_engine):
         is_inst = mode == "Instrumental Only"
         is_voc = mode == "Vocals Only"
-
         show_acestep = (current_music_model == "ACE-Step 1.5") and not is_voc
         show_lyria = (current_music_model == "Lyria RealTime") and not is_voc
         show_kokoro = (current_tts_engine == "Kokoro") and not is_inst
         show_f5 = (current_tts_engine == "F5-TTS") and not is_inst
-
         return (
             gr.update(visible=not is_inst),   # script_input
             gr.update(visible=not is_voc),    # music_prompt
             gr.update(visible=is_inst),       # music_duration
-            gr.update(visible=not is_voc),    # music_model_dropdown
             gr.update(visible=show_kokoro),   # kokoro_settings
             gr.update(visible=not is_inst),   # speed_slider
             gr.update(visible=not is_voc),    # duck_slider
@@ -484,19 +889,14 @@ with gr.Blocks(
     generation_mode.change(
         fn=toggle_mode_settings,
         inputs=[generation_mode, music_model_dropdown, tts_engine_radio],
-        outputs=[script_input, music_prompt, music_duration, music_model_dropdown, kokoro_settings, speed_slider, duck_slider, reverb_slider, reference_audio, acestep_quality, acestep_metadata, lyria_settings, f5_settings],
+        outputs=[script_input, music_prompt, music_duration, kokoro_settings, speed_slider, duck_slider, reverb_slider, reference_audio, acestep_quality, acestep_metadata, lyria_settings, f5_settings],
     )
 
-    # Toggle engine-specific settings accordions for ACE-Step and Lyria
     def toggle_music_engine_ui(model, mode):
         is_acestep = model == "ACE-Step 1.5"
         is_lyria = model == "Lyria RealTime"
         is_voc = mode == "Vocals Only"
-        return (
-            gr.update(visible=is_acestep and not is_voc),  # acestep_quality
-            gr.update(visible=is_acestep and not is_voc),  # acestep_metadata
-            gr.update(visible=is_lyria and not is_voc),    # lyria_settings
-        )
+        return gr.update(visible=is_acestep and not is_voc), gr.update(visible=is_acestep and not is_voc), gr.update(visible=is_lyria and not is_voc)
 
     music_model_dropdown.change(
         fn=toggle_music_engine_ui,
@@ -504,7 +904,6 @@ with gr.Blocks(
         outputs=[acestep_quality, acestep_metadata, lyria_settings],
     )
 
-    # Toggle kokoro/f5 settings accordions and adjust speed when TTS engine changes
     def toggle_tts_engine_ui(tts_engine, mode):
         is_inst = mode == "Instrumental Only"
         show_kokoro = (tts_engine == "Kokoro") and not is_inst
@@ -527,13 +926,6 @@ with gr.Blocks(
         inputs=[tts_engine_radio, generation_mode],
         outputs=[kokoro_settings, f5_settings, speed_slider],
     )
-
-    generate_btn = gr.Button("Generate Meditation", variant="primary", size="lg")
-
-    with gr.Row():
-        audio_output = gr.Audio(label="Generated Meditation", type="filepath")
-
-    status_text = gr.Textbox(label="Status", interactive=False)
 
     generate_btn.click(
         fn=generate_meditation,
@@ -570,4 +962,4 @@ with gr.Blocks(
     )
 
 if __name__ == "__main__":
-    demo.launch(share=False, theme=gr.themes.Soft())
+    demo.launch(share=False)
