@@ -1,7 +1,8 @@
 """F5-TTS preprocessing — character-aware chunking for F5-TTS's 30s context window.
 
-F5-TTS infers ~10–12 seconds of audio per 300 characters at meditative speed (0.75).
-The 300-character limit keeps every chunk safely within the model's context window.
+F5-TTS infers ~8–10 seconds of audio per 300 characters at meditative speed (0.80).
+The 300-character limit keeps every chunk safely within the model's context window
+with good headroom for quality.
 
 Key difference from kokoro_tts/preprocessor.py:
 - No IPA phoneme injection (F5-TTS does its own G2P from raw text)
@@ -11,7 +12,7 @@ Key difference from kokoro_tts/preprocessor.py:
 
 import re
 
-MAX_CHUNK_CHARS = 400
+MAX_CHUNK_CHARS = 300
 _PARAGRAPH_PAUSE_SEC = 6.5
 
 
@@ -132,7 +133,7 @@ def prepare_segments(script: str) -> list[dict]:
     """Full preprocessing pipeline for F5-TTS.
 
     Parses the script into pause/speech segments, then splits each speech
-    block into ≤300-character chunks to stay within F5-TTS's 30s context window.
+    block into ≤MAX_CHUNK_CHARS-character chunks to stay within F5-TTS's 30s context window.
 
     Returns the same segment dict format as kokoro_tts/preprocessor.py so the
     pipeline's synthesize() call is engine-agnostic.

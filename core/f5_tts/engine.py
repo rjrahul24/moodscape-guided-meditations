@@ -14,7 +14,7 @@ the slug is invalid or no voices are registered at all.
 Key settings:
     nfe_step=32           — production quality; use 16 for fast iteration
     sway_sampling_coef=-1 — enables sway sampling for smoother meditative prosody
-    speed=0.75            — meditation-ideal pace; Kokoro default is 0.70
+    speed=0.80            — meditation-ideal pace; Kokoro default is 0.70
 
 Device: MPS on Apple Silicon, CPU fallback elsewhere.
 """
@@ -62,12 +62,16 @@ def _trim_trailing_silence(audio: np.ndarray, sr: int) -> np.ndarray:
     return audio[:cut]
 
 
+_VAD_GAIN_FLOOR = 0.15  # non-speech segments attenuated to 15% (preserves natural ambience)
+
+
 def _apply_silero_vad(audio: np.ndarray, sr: int) -> np.ndarray:
     """Apply Silero VAD to generate a smooth probability-based gain envelope.
 
     Instead of hard energy-threshold cutting, this uses Silero-VAD's probability
-    scores to create a gain mask. This preserves natural breath and decay while
-    aggressively suppressing background noise in non-speech segments.
+    scores to create a gain mask. Non-speech segments are attenuated to
+    _VAD_GAIN_FLOOR (15%) rather than zeroed, preserving natural breath,
+    resonance, and room tone that are desirable in meditation audio.
     """
     try:
         import torch
@@ -82,12 +86,13 @@ def _apply_silero_vad(audio: np.ndarray, sr: int) -> np.ndarray:
 
         # Silero VAD expects 16kHz for its internal processing
         audio_torch = torch.from_numpy(audio.astype(np.float32))
-        
+
         # Get timestamps for speech segments
         speech_timestamps = get_speech_timestamps(audio_torch, model, sampling_rate=sr)
-        
-        # Create a smooth gain mask (initialized to 0)
-        mask = np.zeros_like(audio)
+
+        # Create a smooth gain mask (initialized to gain floor, not zero,
+        # to preserve natural ambience in non-speech segments)
+        mask = np.full_like(audio, _VAD_GAIN_FLOOR)
         fade_samples = int(0.05 * sr)  # 50ms fade for smooth transitions
 
         for ts in speech_timestamps:
@@ -130,6 +135,7 @@ def _write_chain_ref(arr: np.ndarray, sr: int) -> str:
     return tmp.name
 
 
+_DEFAULT_SPEED = 0.80  # canonical F5-TTS meditation pace (~100-120 WPM)
 _SWAY_COEF = -1.0   # enables sway sampling for smoother prosody
 _CFG_STRENGTH = 2.0  # paper-validated optimal for stable generation
 _ROOM_TONE_LEVEL = 1e-3  # ~-60 dBFS ambient floor for pause segments
@@ -408,7 +414,7 @@ class F5Engine(SpeechEngine):
         self,
         segments: list[dict],
         voice=None,
-        speed: float = 0.90,
+        speed: float = _DEFAULT_SPEED,
         progress_cb=None,
         **kwargs,
     ) -> tuple[np.ndarray, np.ndarray]:

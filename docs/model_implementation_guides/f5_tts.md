@@ -139,11 +139,11 @@ This runs once per voice phase load (not per chunk), adding zero per-chunk overh
 
 ## 6. Preprocessing
 
-F5-TTS preprocessing ([preprocessor.py](../../core/f5_tts/preprocessor.py)) performs **character-count chunking** at a 400-character limit.
+F5-TTS preprocessing ([preprocessor.py](../../core/f5_tts/preprocessor.py)) performs **character-count chunking** at a 300-character limit.
 
 ### Why Character-Count Chunking?
 
-F5-TTS has a hard ~30-second context window per `infer()` call. At a meditative pace of 0.75 speed, 400 characters = ~10-15 seconds of audio, safely within the window.
+F5-TTS has a hard ~30-second context window per `infer()` call. At a meditative pace of 0.80 speed, 300 characters = ~8-10 seconds of audio, safely within the window.
 
 ### What Preprocessing Does NOT Include
 
@@ -199,14 +199,14 @@ Before passing text to F5's `infer()`:
 | `nfe_step` | 32 | Production quality. Use 16 for fast iteration. |
 | `cfg_strength` | 2.0 | Paper-validated optimal for stable generation |
 | `sway_sampling_coef` | -1.0 | Enables sway sampling for smoother meditative prosody |
-| `speed` | 0.75 (default) | Duration predictor generates correct mel frame count |
+| `speed` | 0.80 (default) | Duration predictor generates correct mel frame count |
 | `remove_silence` | False | Engine handles silence trimming explicitly |
 
 ### Post-Inference Processing
 
 1. **Trailing silence trimming**: Remove samples below -45 dBFS, keep 50ms decay tail
 2. **WPM normalization**: Measure each chunk's words-per-minute, time-stretch outliers to within +/-15% of session median via librosa
-3. **Silero VAD**: Probability-based gain envelope preserves natural breath/decay while suppressing non-speech noise
+3. **Silero VAD**: Probability-based gain envelope with 15% gain floor (`_VAD_GAIN_FLOOR=0.15`) — attenuates non-speech segments to 15% instead of zeroing them, preserving natural breath, resonance, and room tone
 4. **Assembly**: 0.8s room tone gap + 300ms equal-power cosine crossfade between speech chunks; direct concatenation at pause boundaries
 
 ### Room Tone
@@ -288,7 +288,7 @@ F5Engine is instantiated locally per `generate()` call. After synthesis: `tts.un
 |---|---|---|
 | `nfe_step` | 32 | Production quality. Use 16 for fast script iteration. |
 | `sway_sampling_coef` | -1.0 | Smoother, more natural prosody. Disable (set to 0) only for timing artefacts. |
-| `speed` | 0.75 | Default meditation pace. |
+| `speed` | 0.80 | Default meditation pace. |
 | Device | MPS | Apple Silicon. CPU fallback for non-Apple hardware. |
 | Precision | fp16 | `ema_model.to(torch.float16)` -- prevents distortion artefacts seen in bf16. |
 | First-run | Slow | Model weights (~1.5 GB) downloaded from HuggingFace on first use. |
