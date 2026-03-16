@@ -189,7 +189,7 @@ silence between notes, dry reverb, high clarity, introspective
 |--------|-----------|---------|
 | `load_model()` | `(model_type="sft") -> None` | Initializes DiT + LLM on MLX |
 | `unload_model()` | `() -> None` | Shuts down services, frees memory |
-| `generate()` | `(prompt, total_duration_sec, ...) -> np.ndarray` | Mono float32 at 24 kHz |
+| `generate()` | `(prompt, total_duration_sec, ...) -> np.ndarray` | Mono float32 at 48 kHz |
 
 ### Audio Post-Processing
 
@@ -200,15 +200,12 @@ ACE-Step output (48 kHz stereo tensor)
     │
     ├── Stereo → Mono: tensor.mean(dim=0)
     │
-    ├── Resample 48 kHz → 24 kHz: torchaudio.functional.resample()
-    │       (rolloff=0.9475 provides proper Nyquist filtering)
-    │
     ├── Peak normalize to -1 dBFS (consistent output level)
     │
-    └── Output: float32 numpy array at 24 kHz
+    └── Output: float32 numpy array at 48 kHz (native rate preserved)
 ```
 
-All spectral shaping is handled by the downstream Pedalboard FX chain (`make_acestep_music_chain()`) at 44.1 kHz.
+All spectral shaping is handled by the downstream Pedalboard FX chain (`make_acestep_music_chain()`) at 48 kHz.
 
 ### Three-Phase Long-Form Pipeline (>90s)
 
@@ -221,7 +218,7 @@ Generate the initial 60s anchor via `text2music`. This sets the harmonic DNA, ti
 For each subsequent segment, use the `cover` task with `audio_cover_strength` modulation:
 - Segment 2: strength=0.85 (close to anchor)
 - Segment 3: strength=0.80
-- Segment 4+: strength=0.75 (floor 0.70)
+- Segment 4+: strength=0.75 (floor 0.75)
 
 The cover task preserves the source's harmonic skeleton while allowing controlled tonal evolution. All intermediate audio stays at native 48 kHz stereo.
 
@@ -297,7 +294,7 @@ music_engine.unload_model()
 
 ### Pre-Mix Loudness
 
-ACE-Step output is normalized to **-20 LUFS** before mixing, matching MusicGen's reference level.
+ACE-Step output is normalized to **-14 LUFS** before mixing (matching the final streaming standard). MusicGen uses -20 LUFS; Lyria uses -16 LUFS.
 
 ---
 
@@ -359,8 +356,8 @@ VOCAL_LANGUAGE = "unknown"
 
 # Audio format
 NATIVE_SAMPLE_RATE = 48000
-TARGET_SAMPLE_RATE = 24000
-OUTPUT_FORMAT = "mono float32 numpy"
+TARGET_SAMPLE_RATE = 48000
+OUTPUT_FORMAT = "mono float32 numpy at 48 kHz"
 
 # Long-form pipeline
 GENESIS_LENGTH = 60.0         # Initial anchor segment

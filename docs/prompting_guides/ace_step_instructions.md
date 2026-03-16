@@ -71,7 +71,7 @@ The **"Generation Quality"** radio button appears in the Gradio UI when ACE-Step
 
 | UI Label | Internal value | Steps | Use case |
 |----------|---------------|-------|----------|
-| **Studio (SFT / 60-step)** | `sft` | 50 | Production — highest fidelity. Default. |
+| **Studio (SFT / 50-step)** | `sft` | 50 | Production — highest fidelity. Default. |
 | **Draft (Turbo / 8-step)** | `turbo` | 8 | Fast preview — auditions prompt ideas without committing to a full generation |
 
 > **Recommendation:** Always use **Studio** for final output. Use Draft only to quickly verify prompt direction.
@@ -87,7 +87,7 @@ The engine automatically selects a strategy based on target duration:
 
 For the three-phase pipeline:
 - **Phase 1 (Genesis):** 60s anchor segment via `text2music`. Sets the harmonic DNA and timbre palette.
-- **Phase 2 (Continuation):** Subsequent 60s segments via `cover` task, with `audio_cover_strength` decaying from 0.85 → 0.70. The cover task inherits harmonic structure while allowing tonal evolution.
+- **Phase 2 (Continuation):** Subsequent 60s segments via `cover` task, with `audio_cover_strength` decaying from 0.85 → 0.75 (floor). The cover task inherits harmonic structure while allowing tonal evolution.
 - **Phase 3 (Boundary Smoothing):** 5-second repaint windows at each segment seam to eliminate audible joins.
 
 **Your prompt governs the entire track** — the same enhanced caption is used for all phases. A prompt that clearly establishes a tonal world (rather than listing multiple contrasting moods) produces the most coherent long-form output.
@@ -100,16 +100,17 @@ After generation, the audio passes through two sequential chains:
 ```
 48 kHz stereo tensor
   → Stereo-to-mono (channel average)
-  → Resample 48 kHz → 24 kHz (Kaiser-windowed sinc, rolloff=0.9475)
   → Peak normalize to -1 dBFS
   → Safety clip to [-1, 1]
+  → Output: 48 kHz mono float32 (native rate preserved)
 ```
 
 **2. ACE-Step music FX chain** (`make_acestep_music_chain()` in `core/audio_processor.py`):
 ```
+NoiseGate(-50 dB, 2:1, 1ms, 100ms)     ← catches diffusion residual noise in quiet passages
 HighpassFilter(60 Hz)                    ← removes diffusion noise rumble below 60 Hz
 LowShelfFilter(200 Hz, +2.0 dB)         ← enveloping warmth (conservative at -14 LUFS premix)
-PeakFilter(4000 Hz, -1.5 dB, Q=0.8)    ← softens upper-mids to sit behind narration
+PeakFilter(4000 Hz, -1.5 dB, Q=0.8)    ← softens upper-mids / diffusion artifacts, sits behind narration
 HighShelfFilter(10000 Hz, -1.0 dB)      ← smooths the digital edge
 Compressor(-20 dB, 2.5:1, 80ms, 800ms) ← tighter macro-control, meditative release
 Limiter(-0.5 dBFS)
@@ -117,7 +118,7 @@ Limiter(-0.5 dBFS)
 
 **3. Master chain** applied at export:
 ```
-HighpassFilter(35 Hz) → Gain(-3 dB) → Compressor(2:1 glue) → Limiter(-1.0 dBFS)
+HighpassFilter(30 Hz) → Compressor(-24 dB, 1.5:1, 30ms/300ms) → Gain(+1 dB) → Limiter(-1.5 dBFS)
 ```
 
 **What this means for prompts:**
@@ -214,7 +215,7 @@ These instruments and textures produce excellent meditation ambient material via
 | `slow evolving` | Gradual tonal shifts over the full duration |
 | `spacious` | Wide sense of space and air around the sound |
 | `deep` | Emphasizes lower-frequency resonance |
-| `warm` | Lower-mid warmth — works with the +1.5 dB shelf |
+| `warm` | Lower-mid warmth — works with the +2.0 dB shelf |
 | `ethereal` | Light, floating, slightly otherworldly quality |
 | `sustained` | Long note holds, minimal attack |
 | `minimal` | Sparse elements, silence between sounds |
@@ -389,6 +390,27 @@ tibetan singing bowls, resonant crystal tones, sacred atmosphere, harmonic overt
 warm analog synth pads, gentle singing bowls, soft piano chords, slow and evolving
 ```
 *Recommended BPM: 50 | Key: Auto*
+
+---
+
+## Recommended Gradio UI Settings for Optimal Meditation Output
+
+When **ACE-Step 1.5** is selected in the Background Music Model dropdown, use these settings for highest-quality meditation music:
+
+| Setting | Recommended Value | Notes |
+|---------|-------------------|-------|
+| **Generation Quality** | Studio (SFT / 50-step) | Always use Studio for final output. Draft is for quick prompt auditions only. |
+| **BPM** | 50 | Optimal for ambient meditation. Keep ≤ 65 for deep meditation; 40–50 for theta/sleep. |
+| **Musical Key** | Auto | Let the LM planner choose. Use specific keys only for intentional tonal targeting. |
+| **Speaking Speed** | 0.70 | Slow, meditative pace. Range 0.65–0.80 for meditation. |
+| **Music Ducking** | -20 dB | Sufficient separation for speech intelligibility without losing music presence. |
+| **Voice Reverb** | 0.15 | Subtle room presence. Increase to 0.25 for more spacious feel. |
+| **Reverb Space** | warm_studio | Best for intimate meditation. Use wooden_hall for more spacious sessions. |
+| **Fade In** | 3 seconds | Gentle entry. |
+| **Fade Out** | 6 seconds | Extended dissolve for meditation closure. |
+| **AI Source Separation** | Enabled | Removes residual drum/vocal artifacts from the diffusion output. |
+| **48 kHz Output** | Enabled (auto) | Preserves ACE-Step's native sample rate — do not disable. |
+| **Output Format** | WAV | Lossless. Use MP3 only for distribution. |
 
 ---
 

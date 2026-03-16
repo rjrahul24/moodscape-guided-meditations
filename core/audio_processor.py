@@ -10,6 +10,7 @@ from pedalboard import (
     HighpassFilter,
     HighShelfFilter,
     LowShelfFilter,
+    NoiseGate,
     PeakFilter,
     Limiter,
     Pedalboard,
@@ -81,22 +82,32 @@ def make_acestep_music_chain() -> Pedalboard:
     """FX chain tailored for ACE-Step 1.5 clean VAE output for meditation use.
 
     Tuned for the clean postprocess chain (no tanh/kernel pre-filtering) and
-    the -14 LUFS pre-mix target (Task 5):
-      1. Sub-bass HPF at 60 Hz — removes diffusion noise rumble (30–60 Hz band)
-      2. Low-shelf warmth at 200 Hz (+2.0 dB) — enveloping warmth; conservative
-         increment over the former +1.5 dB to avoid low-mid muddiness at the
-         hotter -14 LUFS premix level
-      3. Upper-mid softening at 4 kHz (-1.5 dB) — keeps music behind narration
-      4. Gentle HF shelf at 10 kHz (-1.0 dB) — smooths the digital edge
-      5. Glue compressor — threshold -20 dB / 2.5:1 / 80ms attack / 800ms release.
+    the -14 LUFS pre-mix target:
+      1. Noise gate — gentle expander (-50 dB threshold, 2:1 ratio) catches
+         diffusion residual noise that the compressor would otherwise amplify
+         during quiet ambient passages.
+      2. Sub-bass HPF at 60 Hz — removes diffusion noise rumble (30–60 Hz band)
+      3. Low-shelf warmth at 200 Hz (+2.0 dB) — enveloping warmth; conservative
+         increment to avoid low-mid muddiness at the hotter -14 LUFS premix level
+      4. Upper-mid softening at 4 kHz (-1.5 dB, Q=0.8) — keeps music behind
+         narration and tames diffusion decoder artifacts in the 3–5 kHz band
+      5. Gentle HF shelf at 10 kHz (-1.0 dB) — smooths the digital edge
+      6. Glue compressor — threshold -20 dB / 2.5:1 / 80ms attack / 800ms release.
          Lower threshold (-20 dB) ensures engagement on quieter ambient passages;
          2.5:1 ratio gives tighter macro-dynamic control without squashing pads;
-         800ms release is slower and more meditative than the former 500ms.
-      6. Limiter at -0.5 dBFS
+         800ms release is slower and more meditative.
+      7. Limiter at -0.5 dBFS
     """
     return Pedalboard([
+        NoiseGate(
+            threshold_db=-50.0,
+            ratio=2.0,
+            attack_ms=1.0,
+            release_ms=100.0,
+        ),
         HighpassFilter(cutoff_frequency_hz=60.0),
         LowShelfFilter(cutoff_frequency_hz=200, gain_db=2.0),
+        PeakFilter(cutoff_frequency_hz=4000, gain_db=-1.5, q=0.8),
         HighShelfFilter(cutoff_frequency_hz=10000.0, gain_db=-1.0),
         Compressor(
             threshold_db=-20.0,

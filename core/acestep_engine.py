@@ -55,9 +55,9 @@ class AceStepEngine:
     """Generates ambient background music via ACE-Step 1.5.
 
     Uses the full-quality ``acestep-v15-sft`` DiT config and the
-    ``acestep-5Hz-lm-1.7B`` language model for Chain-of-Thought planning.
-    Forces instrumental mode with no vocals.  Output is converted from
-    48 kHz stereo to 24 kHz mono to honour the pipeline contract.
+    ``acestep-5Hz-lm-4B`` language model (falls back to 1.7B) for
+    Chain-of-Thought planning.  Forces instrumental mode with no vocals.
+    Output is 48 kHz mono (stereo downmixed to mono).
 
     Device strategy:
     - DiT handler: ``device="auto"`` resolves to ``"mps"`` on Apple Silicon.

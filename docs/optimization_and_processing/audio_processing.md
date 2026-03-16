@@ -64,8 +64,10 @@ Limiter(-1.0 dB)
 
 ### ACE-Step 1.5 (`make_acestep_music_chain`)
 ```python
+NoiseGate(-50 dB, 2:1, 1ms/100ms)         # Catches diffusion residual noise
 HighpassFilter(60 Hz)                      # Sub-bass removal
 LowShelfFilter(200 Hz, +2.0 dB)           # Warmth
+PeakFilter(4000 Hz, -1.5 dB, Q=0.8)      # Upper-mid softening / diffusion artifact taming
 HighShelfFilter(10000 Hz, -1.0 dB)        # Gentle HF smoothing
 Compressor(-20 dB, 2.5:1, 80ms/800ms)    # Glue compression
 Limiter(-0.5 dB)
@@ -171,5 +173,6 @@ F5-TTS (Vocos vocoder) does not require spectral gating — the vocoder output i
 | **Silence ratio** | RMS windowing (50ms) | 15–60% (meditation pacing) |
 | **Spectral rolloff** | librosa 85th-percentile rolloff | Median rolloff ≤ 8000 Hz |
 | **Onset strength** | librosa onset envelope | Peak/median ratio < 5.0 |
+| **Spectral flatness** | scipy Welch PSD (4–12 kHz band) | Geometric/arithmetic mean ratio ≤ 0.3 |
 
 For per-segment regeneration decisions (music engines), `compute_composite_score()` combines all checks into a single float ∈ [0, 1] for A/B selection across retry candidates.

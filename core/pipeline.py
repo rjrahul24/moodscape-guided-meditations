@@ -481,7 +481,7 @@ class MeditationPipeline:
                 _progress(progress_cb, 0.77, "Applying music effects...")
                 from core.audio_processor import apply_fx as apply_audio_fx
                 # Pre-mix loudness targets per engine:
-                #   Lyria:    -22 LUFS — slightly quieter, avoids dominating the mix
+                #   Lyria:    -16 LUFS — slightly quieter, avoids dominating the mix
                 #   ACE-Step: -14 LUFS — matches final streaming standard; ensures strong,
                 #             audible presence during vocal pauses before the -17 dB
                 #             music_volume_db offset and ducking are applied in mix()

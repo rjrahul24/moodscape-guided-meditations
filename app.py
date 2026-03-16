@@ -172,7 +172,7 @@ def generate_meditation(
 
     # Map quality label to engine key (Task 5)
     # "Draft (Turbo / 8-step)" -> "turbo"
-    # "Studio (SFT / 60-step)" -> "sft"
+    # "Studio (SFT / 50-step)" -> "sft"
     acestep_model_type = "turbo" if "Turbo" in acestep_quality else "sft"
 
     # Map TTS engine label to key
@@ -293,8 +293,8 @@ with gr.Blocks(
 
             # ACE-Step Quality Selector (Visible only when ACE-Step is chosen)
             acestep_quality = gr.Radio(
-                choices=["Draft (Turbo / 8-step)", "Studio (SFT / 60-step)"],
-                value="Studio (SFT / 60-step)",
+                choices=["Draft (Turbo / 8-step)", "Studio (SFT / 50-step)"],
+                value="Studio (SFT / 50-step)",
                 label="Generation Quality",
                 info="Studio (default): highest fidelity. Draft: fast preview, lower detail.",
                 visible=False,
@@ -504,17 +504,28 @@ with gr.Blocks(
         outputs=[acestep_quality, acestep_metadata, lyria_settings],
     )
 
-    # Toggle kokoro/f5 settings accordions when TTS engine radio changes
+    # Toggle kokoro/f5 settings accordions and adjust speed when TTS engine changes
     def toggle_tts_engine_ui(tts_engine, mode):
         is_inst = mode == "Instrumental Only"
         show_kokoro = (tts_engine == "Kokoro") and not is_inst
         show_f5 = (tts_engine == "F5-TTS") and not is_inst
-        return gr.update(visible=show_kokoro), gr.update(visible=show_f5)
+        # Set engine-optimal speed default
+        if tts_engine == "F5-TTS":
+            speed_val = 0.80
+            speed_label = "Speaking Speed (0.75-0.85 = F5 meditation ideal)"
+        else:
+            speed_val = 0.70
+            speed_label = "Speaking Speed (0.65-0.75 = meditation ideal)"
+        return (
+            gr.update(visible=show_kokoro),
+            gr.update(visible=show_f5),
+            gr.update(value=speed_val, label=speed_label),
+        )
 
     tts_engine_radio.change(
         fn=toggle_tts_engine_ui,
         inputs=[tts_engine_radio, generation_mode],
-        outputs=[kokoro_settings, f5_settings],
+        outputs=[kokoro_settings, f5_settings, speed_slider],
     )
 
     generate_btn = gr.Button("Generate Meditation", variant="primary", size="lg")

@@ -199,6 +199,51 @@ def check_onset_strength(
     }
 
 
+def check_spectral_flatness(
+    audio: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+    low_hz: float = 4000.0,
+    high_hz: float = 12000.0,
+    max_flatness: float = 0.3,
+) -> dict:
+    """Detect noise-like content in the upper frequency band (4–12 kHz).
+
+    Spectral flatness is the ratio of geometric mean to arithmetic mean of
+    the power spectrum.  Values close to 1.0 indicate white-noise-like
+    content; tonal signals produce values close to 0.  For meditation audio
+    the 4–12 kHz band should be tonal (pads, bowls, harmonics) not noisy.
+
+    A flatness > *max_flatness* suggests diffusion residual noise or
+    synthesis artifacts in that band.
+    """
+    from scipy.signal import welch
+
+    mono = audio[0] if audio.ndim == 2 else audio
+    freqs, psd = welch(mono, fs=sample_rate, nperseg=min(4096, len(mono)))
+
+    band_mask = (freqs >= low_hz) & (freqs <= high_hz)
+    if not band_mask.any():
+        return {"spectral_flatness": 0.0, "max_flatness": max_flatness, "passed": True}
+
+    band_psd = psd[band_mask]
+    # Avoid log(0) by clamping
+    band_psd = np.maximum(band_psd, 1e-20)
+
+    # Geometric mean via log domain for numerical stability
+    log_mean = float(np.mean(np.log(band_psd)))
+    geo_mean = np.exp(log_mean)
+    arith_mean = float(np.mean(band_psd))
+
+    flatness = geo_mean / arith_mean if arith_mean > 1e-20 else 0.0
+    passed = flatness <= max_flatness
+
+    return {
+        "spectral_flatness": round(float(flatness), 4),
+        "max_flatness": max_flatness,
+        "passed": passed,
+    }
+
+
 def compute_composite_score(
     audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
@@ -206,21 +251,22 @@ def compute_composite_score(
     """Compute a composite quality score (higher is better) for A/B selection.
 
     Combines sub-scores from spectral balance, rolloff, onset strength,
-    clipping, and LUFS proximity.  Returns a float in approximately [0, 1].
+    clipping, LUFS proximity, and spectral flatness (noise detection).
+    Returns a float in approximately [0, 1].
 
     Used by music engines to compare regeneration candidates and pick the
     best one rather than just keeping the last successful attempt.
     """
     score = 0.0
 
-    # Spectral warmth dominance (0.25)
+    # Spectral warmth dominance (0.20)
     bal = check_spectral_balance(audio, sample_rate)
     total_energy = bal["warmth_energy"] + bal["presence_energy"]
     if total_energy > 0:
         warmth_ratio = bal["warmth_energy"] / total_energy
-        score += 0.25 * min(warmth_ratio / 0.6, 1.0)  # 60%+ warmth → full marks
+        score += 0.20 * min(warmth_ratio / 0.6, 1.0)  # 60%+ warmth → full marks
     else:
-        score += 0.125  # neutral if silent
+        score += 0.10  # neutral if silent
 
     # Spectral rolloff within range (0.20)
     rolloff = check_spectral_rolloff(audio, sample_rate)
@@ -231,13 +277,13 @@ def compute_composite_score(
         overshoot = rolloff["median_rolloff_hz"] / rolloff["max_rolloff_hz"]
         score += 0.20 * max(0.0, 1.0 - (overshoot - 1.0))
 
-    # Onset smoothness (0.20)
+    # Onset smoothness (0.15)
     onset = check_onset_strength(audio, sample_rate)
     if onset["peak_onset_ratio"] < onset["threshold"]:
-        score += 0.20
+        score += 0.15
     else:
         ratio = onset["peak_onset_ratio"] / onset["threshold"]
-        score += 0.20 * max(0.0, 1.0 - (ratio - 1.0) / 2.0)
+        score += 0.15 * max(0.0, 1.0 - (ratio - 1.0) / 2.0)
 
     # Clipping-free (0.20)
     clip = check_clipping(audio)
@@ -246,13 +292,22 @@ def compute_composite_score(
     else:
         score += 0.20 * max(0.0, 1.0 - clip["clipped_ratio"] * 1000)
 
-    # LUFS proximity to -16 target (0.15)
+    # LUFS proximity to -16 target (0.10)
     lufs = check_lufs(audio, sample_rate)
     if lufs["lufs"] is not None:
         deviation = abs(lufs["lufs"] - lufs["target"])
-        score += 0.15 * max(0.0, 1.0 - deviation / 10.0)
+        score += 0.10 * max(0.0, 1.0 - deviation / 10.0)
     else:
         score += 0.0
+
+    # Spectral flatness — noise detection in 4–12 kHz band (0.15)
+    flatness = check_spectral_flatness(audio, sample_rate)
+    if flatness["passed"]:
+        score += 0.15
+    else:
+        # Linear penalty: flatness 0.3 → full marks, flatness 1.0 → zero
+        overshoot = flatness["spectral_flatness"] / flatness["max_flatness"]
+        score += 0.15 * max(0.0, 1.0 - (overshoot - 1.0) / 2.33)
 
     return round(score, 4)
 
@@ -274,12 +329,14 @@ def run_qa_checks(
         "silence_ratio": check_silence_ratio(audio, sample_rate),
         "spectral_rolloff": check_spectral_rolloff(audio, sample_rate),
         "onset_strength": check_onset_strength(audio, sample_rate),
+        "spectral_flatness": check_spectral_flatness(audio, sample_rate),
     }
 
     if log_results:
         logger.info("QA — LUFS: %s", results["lufs"])
         logger.info("QA — Spectral balance: %s", results["spectral_balance"])
         logger.info("QA — Spectral rolloff: %s", results["spectral_rolloff"])
+        logger.info("QA — Spectral flatness: %s", results["spectral_flatness"])
         logger.info("QA — Onset strength: %s", results["onset_strength"])
         logger.info("QA — Silence ratio: %s", results["silence_ratio"])
         if results["silence"]:
@@ -294,5 +351,8 @@ def run_qa_checks(
         if not results["onset_strength"]["passed"]:
             logger.warning("QA — Transient spike detected (peak/median ratio=%.1f) — possible clicks/percussion",
                            results["onset_strength"]["peak_onset_ratio"])
+        if not results["spectral_flatness"]["passed"]:
+            logger.warning("QA — High spectral flatness (%.3f) in 4–12 kHz — possible diffusion noise/static",
+                           results["spectral_flatness"]["spectral_flatness"])
 
     return results
