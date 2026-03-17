@@ -21,9 +21,8 @@ All audio is upsampled to a *mix sample rate* before Pedalboard FX and mixing. T
 - **ACE-Step / Lyria path**: mix at **48 kHz** (preserves native fidelity of the music engine).
 - **MusicGen path**: mix at **44.1 kHz** (MusicGen's 32 kHz is upsampled via Kaiser-windowed sinc).
 - The mix sample rate is also the export rate (configurable in the UI via "48 kHz Output" checkbox).
-- TTS audio (24 kHz) is upsampled to the mix rate:
-  - Kokoro: `torchaudio.functional.resample` (rolloff=0.9475, lowpass_filter_width=64)
-  - F5-TTS: `librosa.resample(res_type="soxr_vhq")` — highest accuracy mode, minimises zero-crossing errors
+- TTS audio (24 kHz) is upsampled to the mix rate using high-accuracy resampling for all engines:
+  - All TTS engines: `librosa.resample(res_type="soxr_vhq")` — highest accuracy mode, minimises zero-crossing errors
 - **Rule**: never downsample then re-upsample. Always upsample from the lower-rate source.
 
 ## 2. Dynamic Audio Mixing Processing
@@ -88,13 +87,11 @@ Limiter(-0.5 dB)
 def make_master_chain() -> Pedalboard:
     return Pedalboard([
         HighpassFilter(30 Hz),              # Subsonic removal
-        Compressor(-24 dB, 1.5:1, 30ms/300ms),  # Gentle glue compression
-        Gain(+1.0 dB),                      # Makeup gain
         Limiter(-1.5 dB),                   # True-peak safe for lossy codecs
     ])
 ```
 
-The master chain is applied per-chunk in `export_audio()` via streaming to avoid memory spikes on long sessions.
+The master chain is a lightweight safety net applied per-chunk in `export_audio()` via streaming to avoid memory spikes on long sessions. Compression and gain have been removed — dynamics are handled entirely by the per-engine voice FX chains upstream.
 
 ## 5. Equal-Power Crossfades
 
@@ -156,7 +153,7 @@ F5-TTS preprocessing does **not** include these steps — it feeds raw prose dir
 
 ## 9. Spectral Gating Noise Reduction
 
-After Kokoro chunk assembly and before the voice FX chain, audio passes through **stationary spectral gating** (`reduce_synthesis_noise()` in `core/kokoro_tts/postprocessor.py`). This uses the `noisereduce` library with conservative parameters (`prop_decrease=0.6`, `n_std_thresh=1.5`) to reduce ISTFTNet vocoder hiss by ~6 dB without damaging soft consonants.
+After Kokoro chunk assembly and before the voice FX chain, audio passes through **stationary spectral gating** (`reduce_synthesis_noise()` in `core/kokoro_tts/postprocessor.py`). This uses the `noisereduce` library with conservative parameters (`prop_decrease=0.6`, `n_std_thresh=2.0`, `freq_mask_smooth_hz=500`) to reduce ISTFTNet vocoder hiss by ~6 dB without damaging soft consonants.
 
 F5-TTS (Vocos vocoder) does not require spectral gating — the vocoder output is already clean.
 

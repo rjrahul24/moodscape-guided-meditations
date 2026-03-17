@@ -82,7 +82,7 @@ class MeditationPipeline:
         script: str,
         music_prompt: str,
         voice: str = "golden_hour",
-        speed: float = 0.78,
+        speed: float = 0.90,
         duck_amount_db: float = -21.0,
         reverb_amount: float = 0.15,
         fade_in_sec: float = 3.0,
@@ -247,37 +247,37 @@ class MeditationPipeline:
                 if not vocal_ok:
                     print(f"[Pipeline] {status_message}")
 
-                # ── Phase A: Mastering Engine Init ──────────────────────────────
-                # Both engines' restore_vocals() stubs are bypassed — output from
-                # Kokoro (ISTFTNet) and F5-TTS (Vocos) is pre-clean.
-                # mastering_engine is still needed for Phase B (master_vocals).
-                _progress(progress_cb, 0.38, "Preparing vocal mastering chain...")
+                # ── Mastering Engine Init (F5-TTS only) ─────────────────────────
+                # Kokoro uses a unified voice chain (build_voice_chain) applied in
+                # Step 7, replacing the old two-chain master_vocals + voice_chain.
+                # F5-TTS still uses its own mastering engine.
+                mastering_engine = None
                 if tts_engine == "f5":
+                    _progress(progress_cb, 0.38, "Preparing vocal mastering chain...")
                     from core.f5_tts.postprocessor import F5MasteringEngine
                     mastering_engine = F5MasteringEngine(sample_rate=SAMPLE_RATE)
-                else:
-                    from core.kokoro_tts.postprocessor import KokoroMasteringEngine
-                    mastering_engine = KokoroMasteringEngine(sample_rate=SAMPLE_RATE)
 
                 logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
 
                 # Upsample Voice to the mix sample rate:
                 #   Lyria / ACE-Step path → 48 kHz (preserves native music resolution)
                 #   MusicGen → 44.1 kHz (studio standard)
+                # Always use high_accuracy=True (soxr_vhq) — mathematically zero
+                # aliasing artifacts, avoids subtle metallic shimmer on non-integer
+                # ratio conversions (24 kHz → 44.1 kHz).
                 if mix_sr == 48000:
                     from core.audio_processor import upsample_audio
                     _progress(progress_cb, 0.39, "Upsampling TTS audio to 48kHz (High Fidelity sinc)...")
-                    # Use high_accuracy=True for F5 TTS to ensure mathematically zero artifacts
                     voice_audio = upsample_audio(
-                        voice_audio, from_sr=SAMPLE_RATE, to_sr=48000, 
-                        high_accuracy=(tts_engine == "f5")
+                        voice_audio, from_sr=SAMPLE_RATE, to_sr=48000,
+                        high_accuracy=True,
                     )
                     # 48000 / 24000 = 2 exactly — clean integer repeat
                     voice_activity = np.repeat(voice_activity, 2)
                 else:
-                    from core.audio_processor import resample_to_44100
-                    _progress(progress_cb, 0.39, "Upsampling TTS audio to 44.1kHz standard...")
-                    voice_audio = resample_to_44100(voice_audio, SAMPLE_RATE)
+                    from core.audio_processor import resample_highly_accurate
+                    _progress(progress_cb, 0.39, "Upsampling TTS audio to 44.1kHz (soxr_vhq)...")
+                    voice_audio = resample_highly_accurate(voice_audio, SAMPLE_RATE, TARGET_SR)
                     voice_activity = np.repeat(voice_activity, TARGET_SR // SAMPLE_RATE)
                 pad_diff = len(voice_audio) - len(voice_activity)
                 if pad_diff > 0:
@@ -285,9 +285,10 @@ class MeditationPipeline:
                 else:
                      voice_activity = voice_activity[:len(voice_audio)]
 
-                # ── Phase B: Mastering EQ / De-Ess / Limiting ────────────────────
-                _progress(progress_cb, 0.39, "Mastering vocal stem (EQ/De-Ess)...")
-                voice_audio = mastering_engine.master_vocals(voice_audio, sr=mix_sr)
+                # F5-TTS Phase B mastering (Kokoro skips — unified voice chain in Step 7)
+                if mastering_engine is not None:
+                    _progress(progress_cb, 0.39, "Mastering vocal stem (EQ/De-Ess)...")
+                    voice_audio = mastering_engine.master_vocals(voice_audio, sr=mix_sr)
             else:
                 voice_audio = np.zeros(0, dtype=np.float32)
                 voice_activity = np.zeros(0, dtype=bool)

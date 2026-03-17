@@ -181,7 +181,7 @@ pipeline_british = KPipeline(lang_code='b')
 generator = pipeline(
     text,                        # str: the input text
     voice='af_heart',            # str or torch.Tensor: voice ID or blended tensor
-    speed=0.85,                  # float: 0.65–1.0 for meditation (lower = slower)
+    speed=0.90,                  # float: 0.65–1.0 for meditation (lower = slower)
     split_pattern=r'\n+',        # regex: how to chunk long text
     # Other useful patterns:
     # r'(?<=[.!?])\s+'           # split only at sentence-end punctuation
@@ -286,7 +286,7 @@ blend_earth = load_voice('af_heart') * 0.70 + load_voice('am_adam') * 0.30
 blend_water = load_voice('af_nicole') * 0.50 + load_voice('af_sky') * 0.50
 
 # Use a blended tensor directly (bypasses string lookup):
-generator = pipeline(text, voice=blend_golden, speed=0.80)
+generator = pipeline(text, voice=blend_golden, speed=0.90)
 ```
 
 ---
@@ -298,12 +298,13 @@ generator = pipeline(text, voice=blend_golden, speed=0.80)
 | Use Case | Speed Value |
 |----------|-------------|
 | Normal speech | 1.0 |
-| Calm meditation pace (recommended default) | **0.85** |
-| Deep relaxation / sleep | 0.75–0.80 |
+| Calm meditation pace (recommended default) | **0.90** |
+| Ideal meditation range | **0.85–0.95** |
+| Deep relaxation / sleep | 0.80–0.85 |
 | Very slow breathing guides | **0.70 (minimum recommended)** |
 | Hard minimum (below = artifacts) | **0.65** |
 
-Research doc 1 recommends 0.7×–0.85× as the effective meditation range. Research doc 3 confirms 0.7–0.9 for meditative pace. Do not go below 0.65.
+Research doc 1 recommends 0.85×–0.95× as the effective meditation range. Research doc 3 confirms 0.7–0.9 for meditative pace. Do not go below 0.65.
 
 ### Punctuation as Prosody Control
 
@@ -435,7 +436,7 @@ Research doc 1 recommends a feature to hit an exact track length by slightly adj
 def calculate_adjusted_speed(
     script_segments: list[dict],
     target_duration_sec: float,
-    base_speed: float = 0.85,
+    base_speed: float = 0.90,
     sample_rate: int = 24000,
 ) -> float:
     """
@@ -483,6 +484,7 @@ def calculate_adjusted_speed(
 MoodScape uses a multi-stage postprocessing pipeline tailored to Kokoro's ISTFTNet vocoder characteristics. All processing lives in `core/kokoro_tts/postprocessor.py`:
 
 #### Stage 1 — Per-Chunk Cleanup (`process_chunk()`)
+- DC offset removal (`audio -= np.mean(audio)`)
 - Hard-clip guard (clamp to [-1, 1])
 - Trailing silence trim (RMS windowing at -45 dBFS, 20ms windows)
 - Spectral flatness detection for repetition-loop artifacts (Wiener entropy > 0.85)
@@ -497,27 +499,20 @@ MoodScape uses a multi-stage postprocessing pipeline tailored to Kokoro's ISTFTN
 #### Stage 2b — Spectral Gating Noise Reduction (`reduce_synthesis_noise()`)
 - Lightweight stationary spectral gating via `noisereduce` library
 - Replaces the disabled neural denoiser (resemble-enhance) which is unstable on Apple Silicon
-- Conservative parameters: `prop_decrease=0.6`, `n_std_thresh=1.5`
+- Conservative parameters: `prop_decrease=0.6`, `n_std_thresh=2.0`, `freq_mask_smooth_hz=500`
 - Reduces ISTFTNet vocoder hiss by ~6 dB without damaging soft consonants
 
-#### Stage 3 — Voice FX Chain (`build_voice_chain()`, applied at mix sample rate)
-- NoiseGate (-42 dB, 20:1) — mutes inter-chunk silence, preserves soft phonemes
-- HighpassFilter (90 Hz) — removes sub-bass rumble and plosives
-- Compressor (2.5:1, -18 dB threshold, 2ms/80ms) — gentle glue
-- HighShelfFilter (-5.5 dB @ 6.5 kHz) — de-harsh vocoder artifacts
-- LowpassFilter (8 kHz) — removes metallic TTS hallucinations
-- Reverb (room 0.15, damping 0.6, wet 0.08) — subtle studio presence
-- Limiter (-1 dBFS)
-
-#### Stage 3b — Master EQ Chain (`build_master_chain()`, applied at 44.1 kHz)
-- HighpassFilter (80 Hz) — DC offset and rumble
-- LowShelfFilter (+2 dB @ 200 Hz) — warmth / proximity effect
-- PeakFilter (-1.5 dB @ 400 Hz, Q=1.0) — mud cut
-- PeakFilter (+1.5 dB @ 3.5 kHz, Q=0.8) — presence
-- PeakFilter (+1.2 dB @ 2.5 kHz, Q=1.2) — consonant intelligibility
-- De-esser: +4 dB → Compressor(3:1, -20 dB) → -4 dB @ 7 kHz — sibilance control
-- LowpassFilter (9.5 kHz) — masks Kokoro's 12 kHz Nyquist brick-wall
-- Limiter (-0.5 dBFS)
+#### Stage 3 — Unified Voice FX Chain (`build_voice_chain()`, single-pass at mix sample rate)
+1. NoiseGate (-42 dB) — cleanup, mutes inter-chunk silence
+2. HighpassFilter (80 Hz) — removes sub-bass rumble and plosives
+3. LowShelfFilter (+2 dB @ 200 Hz) — warmth / proximity effect
+4. PeakFilter (-2 dB @ 350 Hz, Q=1.0) — mud cut
+5. Compressor (2:1, -18 dB threshold, 2ms/80ms) — dynamics control
+6. PeakFilter (+1.0 dB @ 3 kHz, Q=0.6) — presence
+7. HighShelfFilter (-3.0 dB @ 7.5 kHz) — de-harsh vocoder artifacts
+8. Convolution reverb — space (IR: warm_studio / wooden_hall / stone_chapel)
+9. LowpassFilter (9.5 kHz) — Nyquist masking (after reverb to catch reverb HF)
+10. Limiter (-1 dBFS) — protection
 
 ### Quality Assurance (`core/qa_monitor.py`)
 Automated checks run after the master chain:
@@ -546,9 +541,9 @@ The Kokoro TTS implementation is a self-contained package at `core/kokoro_tts/`:
 |------|---------|
 | `core/kokoro_tts/engine.py` | `KokoroEngine` — model loading, dual-pipeline (US/British), synthesis with per-chunk artifact trimming, inter-sentence pausing, spectral gating noise reduction |
 | `core/kokoro_tts/preprocessor.py` | Script parsing (`[pause:Xs]`, `[breath]`, `\n\n`), text expansion (digits/abbreviations), IPA phoneme injection (30+ Sanskrit/yoga terms), prosody punctuation enhancement, token-aware chunking (100-150 target, 400 ceiling) |
-| `core/kokoro_tts/postprocessor.py` | Per-chunk cleanup (artifact trim, RMS norm), crossfade assembly (22ms cos²), segment fades, spectral gating noise reduction, voice FX chain, master EQ chain, `KokoroMasteringEngine` |
+| `core/kokoro_tts/postprocessor.py` | Per-chunk cleanup (artifact trim, RMS norm), crossfade assembly (22ms cos²), segment fades, spectral gating noise reduction, unified voice FX chain (`build_voice_chain()`) |
 | `core/kokoro_tts/voice_manager.py` | Voice tensor loading from HuggingFace, weighted blending, 5 meditation presets (`balanced_calm`, `deep_rest`, `soft_whisper`, `golden_hour`, `earth_root`), British voice detection |
-| `core/pipeline.py` | End-to-end orchestration: script → TTS → upsampling → voice FX → music gen → mixing → master → export |
+| `core/pipeline.py` | End-to-end orchestration: script → TTS → upsampling (soxr_vhq) → voice FX → music gen → mixing → master → export |
 | `core/qa_monitor.py` | Quality validation: clipping, LUFS, silence gaps, spectral balance, silence ratio |
 
 ---

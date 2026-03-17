@@ -594,7 +594,7 @@ with gr.Blocks(
                 with gr.TabItem("Mix Details", elem_classes="glass-panel"):
                     gr.Markdown("### Acoustic Parameters")
                     with gr.Row():
-                        speed_slider = gr.Slider(0.65, 1.0, 0.70, step=0.01, label="Speech Speed")
+                        speed_slider = gr.Slider(0.65, 1.0, 0.90, step=0.01, label="Speech Speed")
                         duck_slider = gr.Slider(-30, -5, -20, step=1, label="Ducking (dB)")
                     
                     with gr.Row():
@@ -706,8 +706,8 @@ with gr.Blocks(
             speed_val = 0.80
             speed_label = "Speaking Speed (0.75-0.85 = F5 meditation ideal)"
         else:
-            speed_val = 0.70
-            speed_label = "Speaking Speed (0.65-0.75 = meditation ideal)"
+            speed_val = 0.90
+            speed_label = "Speaking Speed (0.85-0.95 = meditation ideal)"
         return (
             gr.update(visible=show_kokoro),
             gr.update(visible=show_f5),

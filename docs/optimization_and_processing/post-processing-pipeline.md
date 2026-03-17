@@ -19,7 +19,7 @@ A high-fidelity vocal and music post-processing "Mastering Chain" for MoodScape.
 
 ---
 
-## 3. Two-Phase Signal Chain Architecture
+## 3. Signal Chain Architecture
 
 ### Kokoro TTS Path
 
@@ -29,6 +29,7 @@ Kokoro TTS (24 kHz, CPU)
   ▼
 ┌──────────────────────────────────────┐
 │ Per-chunk cleanup (postprocessor)    │
+│   • DC offset removal                │
 │   • Hard-clip guard [-1, 1]          │
 │   • Trailing silence trim (-45 dBFS) │
 │   • Spectral flatness check (loops)  │
@@ -51,20 +52,25 @@ Kokoro TTS (24 kHz, CPU)
 └──────────────────────────────────────┘
   │
   ▼
-Upsample → mix sample rate (44.1 kHz or 48 kHz)
+Upsample → mix sample rate (soxr_vhq for all TTS engines)
   │
   ▼
 ┌──────────────────────────────────────┐
-│ Phase B: KokoroMasteringEngine       │
-│   1. Highpass 80 Hz                  │
-│   2. LowShelf +2 dB @ 200 Hz        │
-│   3. PeakFilter -1.5 dB @ 400 Hz    │
-│   4. PeakFilter +1.5 dB @ 3500 Hz   │
-│   5. PeakFilter +1.2 dB @ 2500 Hz   │
-│   6. De-Esser (7 kHz: +4→compress   │
-│      →-4 dB, boost-compress-cut)    │
-│   7. Lowpass 9.5 kHz (Nyquist mask) │
-│   8. Limiter -0.5 dB                │
+│ Unified Voice FX: build_voice_chain()│
+│   1. NoiseGate (-42 dB)             │
+│   2. Highpass 80 Hz                  │
+│   3. LowShelf +2 dB @ 200 Hz        │
+│   4. PeakFilter -2 dB @ 350 Hz      │
+│      (Q=1.0, mud cut)              │
+│   5. Compressor (2:1, -18 dB)       │
+│   6. PeakFilter +1.0 dB @ 3 kHz     │
+│      (Q=0.6, presence)              │
+│   7. HighShelf -3.0 dB @ 7.5 kHz    │
+│      (de-harsh)                     │
+│   8. Convolution reverb (space)      │
+│   9. Lowpass 9.5 kHz (Nyquist mask, │
+│      after reverb)                  │
+│  10. Limiter -1 dBFS                 │
 └──────────────────────────────────────┘
 ```
 
@@ -116,10 +122,6 @@ Upsample → mix sample rate (soxr_vhq)
 ### Shared Path (Both Engines)
 
 ```
-Voice FX Chain (at mix sample rate)
-  • Convolution reverb (IR: warm_studio / wooden_hall / stone_chapel, 6-12% wet)
-  • Limiter -1.0 dB
-
 Music FX Chain (engine-specific EQ — see audio_processing.md §3)
 
 Vocal Pocket Carving (applied to music before mixing)
@@ -135,7 +137,7 @@ Mixer
 QA checks (7 metrics — see §9)
 
 Master Chain
-  • HPF 30 Hz → Compressor (-24 dB, 1.5:1, 30ms/300ms) → Gain (+1 dB) → Limiter (-1.5 dB)
+  • HPF 30 Hz → Limiter (-1.5 dB)
   Applied per-chunk in export_audio() to avoid memory spikes
 
 Export: 44.1 kHz or 48 kHz / 24-bit WAV | Target: -19 LUFS integrated
@@ -146,11 +148,10 @@ Export: 44.1 kHz or 48 kHz / 24-bit WAV | Target: -19 LUFS integrated
 ## 4. Why This Order?
 
 - **Spectral gating** (Kokoro only) runs on dry 24 kHz audio — noise profile is most stable before any FX.
-- **Phase B mastering** runs at the mix rate (44.1/48 kHz) so EQ filters operate well below Nyquist.
-- **Voice FX chain** (convolution reverb) follows Phase B — reverb applied to the already-mastered signal.
+- **Unified voice FX chain** (`build_voice_chain()`) runs at the mix rate (44.1/48 kHz) so EQ filters operate well below Nyquist. Convolution reverb is integrated into this chain, with the LPF placed after reverb to catch reverb HF content.
 - **Vocal pocket carving** happens on the music track, not the voice, to preserve the voice chain integrity.
 - **Sidechain ducking** runs offline (full envelope pre-computed with lookahead shift) for precise timing.
-- **Master chain** runs per-chunk in the streaming export — prevents memory spikes on long sessions.
+- **Master chain** (HPF + limiter) runs per-chunk in the streaming export — prevents memory spikes on long sessions.
 
 ---
 
@@ -172,15 +173,13 @@ Export: 44.1 kHz or 48 kHz / 24-bit WAV | Target: -19 LUFS integrated
 
 ## 6. De-Essing Details
 
-### Kokoro: Boost-Compress-Cut (inside Phase B)
+### Kokoro: High-Shelf Sibilance Control (inside `build_voice_chain()`)
 ```
-PeakFilter(7 kHz, +4 dB, Q=2.0)
-Compressor(-20 dB, 3:1, 1ms/50ms)
-PeakFilter(7 kHz, -4 dB, Q=2.0)
+HighShelfFilter(7.5 kHz, -3.0 dB)
 ```
-Only triggers when sibilance exceeds the threshold. ±4 dB (reduced from ±6 dB) avoids over-attenuation of natural consonants.
+A gentle broadband HF rolloff avoids over-attenuation of natural consonants while the chain's 9.5 kHz LPF provides the final HF ceiling.
 
-### F5-TTS: Split-Band De-Esser (before Phase B)
+### F5-TTS: Split-Band De-Esser (before voice FX chain)
 Isolates 4–8 kHz sibilant band via 4th-order Butterworth bandpass, compresses aggressively (-18 dB threshold, 4:1 ratio, 0.5ms attack, 10ms release), recombines with non-sibilant signal.
 
 ---
@@ -203,7 +202,7 @@ Selectable in the UI under "Reverb Space". Applied via Pedalboard `Convolution` 
 
 | File | Role |
 |---|---|
-| `core/kokoro_tts/postprocessor.py` | `KokoroMasteringEngine` — per-chunk cleanup, crossfade, spectral gating, Kokoro Phase B EQ, voice FX chain |
+| `core/kokoro_tts/postprocessor.py` | Per-chunk cleanup, crossfade assembly, spectral gating, unified voice FX chain (`build_voice_chain()`) |
 | `core/f5_tts/postprocessor.py` | `F5MasteringEngine` — split-band de-esser, crossfade assembly, F5 Phase B EQ |
 | `core/breath_sounds.py` | Shared breath sample loader (cached, 75ms fade-in/out) |
 | `core/audio_processor.py` | Music FX chains (MusicGen/ACE-Step/Lyria), vocal pocket chain, master chain |
@@ -236,9 +235,9 @@ After the master chain, `qa_monitor.run_qa_checks()` runs 7 automated checks:
 ## 10. Verification Checklist
 
 - [x] `[breath]` / `[inhale]` / `[exhale]` tags inject actual breath audio samples
-- [x] Kokoro: spectral gating (noisereduce, stationary, prop_decrease=0.6) reduces ISTFTNet hiss ~6 dB
+- [x] Kokoro: spectral gating (noisereduce, stationary, prop_decrease=0.6, n_std_thresh=2.0, freq_mask_smooth_hz=500) reduces ISTFTNet hiss ~6 dB
 - [x] F5-TTS (Vocos): no spectral gating needed — clean vocoder output
-- [x] Phase B EQ and limiting at mix sample rate (44.1 or 48 kHz), well below Nyquist
+- [x] Voice FX chain EQ and limiting at mix sample rate (44.1 or 48 kHz), well below Nyquist
 - [x] Kokoro: 9.5 kHz lowpass masks 12 kHz Nyquist brick-wall
 - [x] F5-TTS: 13 kHz lowpass preserves Vocos native air bandwidth
 - [x] Sub-bass below 80 Hz removed from voice (HighpassFilter)

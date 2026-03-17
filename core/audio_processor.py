@@ -6,7 +6,6 @@ import numpy as np
 from pedalboard import (
     Compressor,
     Convolution,
-    Gain,
     HighpassFilter,
     HighShelfFilter,
     LowShelfFilter,
@@ -182,24 +181,16 @@ def make_vocal_pocket_chain() -> Pedalboard:
 
 
 def make_master_chain() -> Pedalboard:
-    """Final mastering chain: subsonic HPF → glue compression → gain → peak limiter.
-    
-    Tuned for gentle 'glue' and peak control rather than loudness maximization:
-      1. HPF at 30 Hz: Remove subsonic MusicGen rubble.
-      2. Compressor (-24 dB threshold, 1.5:1 ratio): Subtle glue to bind voice 
-         and music together. 30ms attack preserves transients.
-      3. Gain (+1 dB): Makeup gain for the compressor.
-      4. Limiter at -1.5 dBFS: Ensures safe true peak levels for lossy codecs.
+    """Final mastering chain: subsonic HPF → peak limiter.
+
+    Intentionally minimal — voice audio already has proper dynamics control
+    from its engine-specific chain (Kokoro or F5). Adding another compressor
+    here would cascade with the voice chain's compressor, crushing transients
+    and creating an unnatural envelope. The HPF catches any DC/subsonic from
+    the voice+music mix, and the limiter is the final safety net.
     """
     return Pedalboard([
         HighpassFilter(cutoff_frequency_hz=30.0),
-        Compressor(
-            threshold_db=-24.0,
-            ratio=1.5,
-            attack_ms=30.0,
-            release_ms=300.0,
-        ),
-        Gain(gain_db=1.0),
         Limiter(threshold_db=-1.5, release_ms=200.0),
     ])
 

@@ -3,6 +3,7 @@
 Three processing stages tailored to Kokoro-82M's specific output characteristics:
 
   Stage 1 — Per-chunk cleanup (called on each raw audio slice from KPipeline):
+    - DC offset removal (subtract mean)
     - Hard-clip guard (clamp to [-1, 1])
     - Trailing silence trim (RMS windowing)
     - Repetition-loop detection (spectral flatness / Wiener entropy)
@@ -13,11 +14,10 @@ Three processing stages tailored to Kokoro-82M's specific output characteristics
     - 25ms pre-roll silence + 100ms fade-in (masks cold-start prosody drift)
     - 50ms fade-out at segment boundary
 
-  Stage 3 — Pedalboard FX chains (Kokoro-specific signal processing):
-    - Phase A: Neural denoising (resemble-enhance, pre-reverb at 24 kHz)
-    - Voice chain: noise gate → highpass → compression → HF de-harsh → reverb → limiter
-    - Phase B: Mastering EQ at 44.1 kHz (warmth, mud cut, presence, de-esser,
-      10.5 kHz lowpass for Kokoro's 12 kHz Nyquist masking, limiter)
+  Stage 3 — Unified voice chain (single-pass Pedalboard FX):
+    Professional signal flow: cleanup → EQ → dynamics → space → protection
+    - NoiseGate → HPF → warmth shelf → mud cut → compressor → presence →
+      HF de-harsh → convolution reverb → Nyquist LPF → limiter
 """
 
 import logging
@@ -101,7 +101,9 @@ def trim_tts_artifacts(audio: np.ndarray, sr: int = SAMPLE_RATE) -> np.ndarray:
     if len(audio) == 0:
         return audio
 
-    audio = np.clip(audio.astype(np.float32), -1.0, 1.0)
+    audio = audio.astype(np.float32)
+    audio -= np.mean(audio)  # Remove DC offset before clipping — prevents clicks at chunk boundaries
+    audio = np.clip(audio, -1.0, 1.0)
     original_len = len(audio)
 
     # Trailing silence trim
@@ -238,7 +240,7 @@ def reduce_synthesis_noise(
     audio: np.ndarray,
     sr: int = SAMPLE_RATE,
     prop_decrease: float = 0.6,
-    n_std_thresh: float = 1.5,
+    n_std_thresh: float = 2.0,
 ) -> np.ndarray:
     """Remove low-level synthesis hiss via stationary spectral gating.
 
@@ -247,9 +249,10 @@ def reduce_synthesis_noise(
     stationary mode — assumes a consistent noise profile across the signal,
     which matches Kokoro's ISTFTNet vocoder hiss characteristics.
 
-    Conservative defaults (prop_decrease=0.6, n_std_thresh=1.5) preserve
+    Conservative defaults (prop_decrease=0.6, n_std_thresh=2.0) preserve
     soft consonants (/h/, /f/, breathy phonemes) while still reducing the
-    noise floor by ~6 dB.
+    noise floor by ~4–6 dB. The freq_mask_smooth_hz=500 parameter smooths
+    the spectral gate to prevent sharp on/off ringing ("musical noise").
 
     Args:
         audio:         1-D float32 audio at sr.
@@ -269,6 +272,7 @@ def reduce_synthesis_noise(
             stationary=True,
             prop_decrease=prop_decrease,
             n_std_thresh_stationary=n_std_thresh,
+            freq_mask_smooth_hz=500,
         )
         return denoised.astype(np.float32)
     except Exception as e:
@@ -281,21 +285,28 @@ def reduce_synthesis_noise(
 # =====================================================================
 
 def build_voice_chain(reverb_amount: float = 0.08, ir_name: str = "warm_studio") -> Pedalboard:
-    """Kokoro-tailored voice FX chain: noise gate → highpass → compression → convolution reverb → limit.
+    """Unified Kokoro voice chain — single-pass processing with professional signal flow.
 
-    Tuned for Kokoro's ISTFTNet vocoder characteristics:
-    - Noise gate at -42 dB: mutes inter-chunk silence without gating soft
-      phonemes (breathy /h/, /f/, unvoiced trailing stops)
-    - Highpass at 90 Hz: removes sub-bass rumble and plosive energy
-    - PeakFilter -2 dB at 300 Hz: cuts Kokoro ISTFTNet's nasal/boxy resonance
-      in the 250–400 Hz band without affecting warmth (LowShelf handles that)
-    - Compressor 2.5:1 at -18 dB: glues the track without pumping; lower ratio
-      preserves consonant transients for clearer pronunciation
-    - High-shelf -5.5 dB at 6.5 kHz: more aggressive de-harshening of Kokoro's
-      "radio static" vocoder artifact (6–9 kHz), applied pre-reverb
-    - Lowpass at 8 kHz: harder digital ceiling removes metallic TTS hallucinations
-    - Convolution reverb: real IR for natural room presence (replaces algorithmic)
-    - Limiter: brickwall at -1 dBFS
+    Replaces the previous two-chain architecture (master_vocals + voice FX) which
+    caused over-processing: double HF shelving (-5 dB cumulative at 7-8 kHz),
+    double 300 Hz cuts (-3.5 dB), and four cascading dynamic processors.
+
+    Signal flow (cleanup → EQ → dynamics → space → protection):
+      1. NoiseGate -42 dB: mutes inter-chunk silence without gating soft
+         phonemes (breathy /h/, /f/, unvoiced trailing stops)
+      2. HPF 80 Hz: removes sub-bass rumble and plosive energy
+      3. LowShelf +2 dB @ 200 Hz: warmth / proximity effect
+      4. Peak -2 dB @ 350 Hz (Q=1.0): single mud cut for ISTFTNet boxy
+         resonance (replaces dual cuts at 300 Hz and 400 Hz)
+      5. Compressor 2:1 @ -18 dB: gentle glue; single compressor instead
+         of cascading compressor + limiter + compressor
+      6. Peak +1.0 dB @ 3 kHz (Q=0.6): broad presence for intelligibility
+      7. HiShelf -3.0 dB @ 7.5 kHz: single de-harsh shelf for vocoder
+         artifacts (replaces dual shelves at 7 kHz + 8 kHz = -5 dB)
+      8. Convolution reverb: real IR for natural room presence
+      9. LPF 9.5 kHz: Nyquist masking AFTER reverb (so reverb tails are
+         filtered too — previous chain applied this BEFORE reverb)
+     10. Limiter -1 dBFS: single peak limiter (was three limiters)
     """
     from core.audio_processor import IR_CATALOG, DEFAULT_IR
 
@@ -303,102 +314,26 @@ def build_voice_chain(reverb_amount: float = 0.08, ir_name: str = "warm_studio")
     ir_path = IR_CATALOG.get(ir_name, IR_CATALOG[DEFAULT_IR])["path"]
 
     return Pedalboard([
+        # ── Cleanup ──
         NoiseGate(threshold_db=-42, ratio=20.0, attack_ms=2.0, release_ms=80),
-        HighpassFilter(cutoff_frequency_hz=90.0),
-        PeakFilter(cutoff_frequency_hz=300, gain_db=-2.0, q=1.5),  # anti-boxiness: ISTFTNet 250–400 Hz nasal resonance
-        Compressor(threshold_db=-18.0, ratio=2.5, attack_ms=2.0, release_ms=80.0),
-        HighShelfFilter(cutoff_frequency_hz=6500, gain_db=-5.5),
-        LowpassFilter(cutoff_frequency_hz=8000.0),
+        HighpassFilter(cutoff_frequency_hz=80.0),
+        # ── Tone shaping ──
+        LowShelfFilter(cutoff_frequency_hz=200, gain_db=2.0),
+        PeakFilter(cutoff_frequency_hz=350, gain_db=-2.0, q=1.0),
+        # ── Dynamics ──
+        Compressor(threshold_db=-18.0, ratio=2.0, attack_ms=2.0, release_ms=80.0),
+        # ── Presence & de-harsh ──
+        PeakFilter(cutoff_frequency_hz=3000, gain_db=1.0, q=0.6),
+        HighShelfFilter(cutoff_frequency_hz=7500, gain_db=-3.0),
+        # ── Space ──
         Convolution(
             impulse_response_filename=ir_path,
             mix=reverb_amount,
         ),
+        # ── Protection ──
+        LowpassFilter(cutoff_frequency_hz=9500),
         Limiter(threshold_db=-1.0),
     ])
-
-
-def build_master_chain(sr: int = 44100) -> Pedalboard:
-    """Phase B mastering chain tailored to Kokoro's 24 kHz → 44.1 kHz output.
-
-    Signal chain:
-      1. Highpass 80 Hz — remove DC offset & sub-bass rumble
-      2. Warmth +2 dB @ 200 Hz low-shelf — "proximity effect" warmth
-      3. Surgical -1.5 dB @ 400 Hz, +1.5 dB @ 3.5 kHz, +1.2 dB @ 2.5 kHz —
-         mud cut, presence, and consonant intelligibility boost
-      4. De-Esser: boost → compress → cut at 7 kHz — tame sibilance
-         ±4 dB (reduced from ±6 to avoid triggering on every sibilant)
-      5. Lowpass 9.5 kHz — psychoacoustic "super-resolution" smoothing:
-         Kokoro TTS runs at 24 kHz native (Nyquist: 12 kHz), upsampled to
-         44.1 kHz. This creates a smooth, analog-sounding rolloff in the
-         10.5–12 kHz region, masking the abrupt digital brick-wall at the
-         12 kHz Nyquist boundary. Sibilance (7 kHz) is already handled
-         by the de-esser above.
-      6. Limiter -0.5 dB — prevent overs on final output
-    """
-    return Pedalboard([
-        HighpassFilter(cutoff_frequency_hz=80),
-        LowShelfFilter(cutoff_frequency_hz=200, gain_db=2.0),
-        PeakFilter(cutoff_frequency_hz=400, gain_db=-1.5, q=1.0),
-        PeakFilter(cutoff_frequency_hz=3500, gain_db=1.5, q=0.8),
-        PeakFilter(cutoff_frequency_hz=2500, gain_db=1.2, q=1.2),
-        PeakFilter(cutoff_frequency_hz=7000, gain_db=4.0, q=2.0),
-        Compressor(threshold_db=-20, ratio=3.0, attack_ms=1, release_ms=50),
-        PeakFilter(cutoff_frequency_hz=7000, gain_db=-4.0, q=2.0),
-        LowpassFilter(cutoff_frequency_hz=9500),
-        Limiter(threshold_db=-0.5),
-    ])
-
-
-class KokoroMasteringEngine:
-    """Two-phase mastering engine tailored to Kokoro TTS output.
-
-    Phase A — restore_vocals(): AI neural denoising at native 24 kHz (pre-reverb)
-    Phase B — master_vocals(): EQ / de-ess / limiting at 44.1 kHz (post-mix)
-    """
-
-    def __init__(self, device: str = "mps", sample_rate: int = SAMPLE_RATE):
-        self.device = device
-        self.sample_rate = sample_rate
-        self.enhancer_fn = None
-        self._master_chain: Pedalboard | None = None
-        self._master_chain_sr: int | None = None
-
-    def restore_vocals(self, audio: np.ndarray, sr: int | None = None) -> np.ndarray:
-        """Phase A: AI denoising via resemble-enhance. Run on dry audio BEFORE reverb."""
-        import torch
-
-        if sr is None:
-            sr = self.sample_rate
-
-        if self.enhancer_fn is None:
-            return audio
-
-        try:
-            tensor_wav = torch.tensor(audio, dtype=torch.float32)
-            with torch.no_grad():
-                restored, _ = self.enhancer_fn(
-                    tensor_wav, sr, device=self.device,
-                    nfe=32, solver="euler", lambd=0.5, tau=0.5,
-                )
-            return restored.cpu().numpy().astype(np.float32)
-        except Exception as e:
-            logger.error("resemble-enhance failed: %s — falling back to unprocessed audio", e)
-            return audio
-
-    def master_vocals(self, audio: np.ndarray, sr: int = 44100) -> np.ndarray:
-        """Phase B: Kokoro-tailored mastering EQ, de-ess, and limit the final mix.
-
-        Should be called AFTER resampling to 44.1 kHz. Uses Kokoro-specific
-        10.5 kHz lowpass to mask the 12 kHz Nyquist brick-wall.
-        """
-        if self._master_chain is None or self._master_chain_sr != sr:
-            self._master_chain = build_master_chain(sr)
-            self._master_chain_sr = sr
-
-        audio_2d = audio.astype(np.float32).reshape(1, -1)
-        processed = self._master_chain(audio_2d, sr)
-        result = processed.squeeze(0)
-        return np.clip(result, -1.0, 1.0).astype(np.float32)
 
 
 def apply_fx(

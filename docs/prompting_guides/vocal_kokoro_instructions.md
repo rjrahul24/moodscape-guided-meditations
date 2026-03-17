@@ -124,7 +124,7 @@ Only comma-separated pairs of American English voices work reliably. Do not atte
 
 ## Speaking Speed
 
-The `speed` slider in the UI ranges from **0.5 to 1.0**, with a default of **0.80**.
+The `speed` slider in the UI ranges from **0.5 to 1.0**, with a default of **0.90**.
 
 The app internally clamps speed to a **minimum of 0.65** regardless of the slider value:
 
@@ -137,9 +137,9 @@ Below 0.65, Kokoro produces distorted, robotic-sounding output. The safe meditat
 | Use Case | Speed Value |
 |---|---|
 | Fast/clear narration | 1.0 |
-| Normal meditation pace | 0.85 |
-| **App default (recommended)** | **0.80** |
-| Deep relaxation / sleep | 0.75–0.80 |
+| Ideal meditation range | 0.85–0.95 |
+| **App default (recommended)** | **0.90** |
+| Deep relaxation / sleep | 0.80–0.85 |
 | Slowest safe value | **0.65 (hard floor)** |
 | Below this → audio artifacts | < 0.65 |
 
@@ -309,7 +309,7 @@ If you do not use IPA injection, common Sanskrit terms that Kokoro typically mis
 | Very long sentences (>30 words) | May hit token limits, unnatural delivery | Break into shorter sentences |
 | Putting stage directions in the script | Kokoro reads them aloud | Remove all stage directions; put only spoken text in the script |
 | Relying on line breaks for pauses | Single `\n` has no pause effect; only `\n\n` (blank line) adds 1.5s | Use explicit `[pause:Xs]` markers for precise control |
-| Going below speed 0.65 | Distorted, robotic audio | Use 0.70–0.85 range; the app clamps at 0.65 |
+| Going below speed 0.65 | Distorted, robotic audio | Use 0.85–0.95 range; the app clamps at 0.65 |
 | Numbers and symbols | Kokoro may or may not expand them correctly | Spell out: "four" not "4", "fifty percent" not "50%", "minus" not "−" |
 
 ---
@@ -348,7 +348,7 @@ Thank you for taking this time for yourself. [pause:3s]
 
 **What this script produces (approximately):**
 - Total duration depends on the speaking speed setting
-- At default speed 0.80, this script is approximately 3–4 minutes of audio
+- At default speed 0.90, this script is approximately 3–4 minutes of audio
 - Each `[pause:Xs]` creates exact silence of that duration at 24 kHz
 - Automatic 0.8s gaps appear between sentences within each paragraph
 
@@ -366,7 +366,7 @@ The TTS engine outputs:
 
 ## Duration Estimation
 
-A rough rule of thumb at default speed 0.80:
+A rough rule of thumb at default speed 0.90:
 - **~130–160 words of speech** ≈ 1 minute of audio (before adding pauses)
 - Add all explicit pause durations (in seconds) to the speech duration
 - A typical 10-minute meditation needs approximately 900–1200 words of speech plus 3–4 minutes of pauses distributed throughout
