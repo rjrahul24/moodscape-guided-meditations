@@ -25,16 +25,15 @@ Each speech block split into ≤300-character chunks at sentence boundaries
       ▼ core/f5_tts/engine.py — F5Engine.synthesize()
 For each "speech" chunk:
   - Normalise text (collapse whitespace, lowercase ALL_CAPS, add trailing "...")
-  - Select reference audio (static or chained from previous chunk)
-  - Call F5TTS infer() with speed, nfe_step=32, cfg_strength=2.0
+  - Select reference audio (always the static reference for consistent voice)
+  - Call F5TTS infer() with speed, nfe_step=32, cfg_strength=1.0, seed
   - Trim trailing silence, build activity mask
 For each "pause" segment:
   - Insert room tone (low-level ambient noise, ~-60 dBFS)
 For each "breath" segment:
   - Insert real breath sample blended with room tone
       │
-      ▼ WPM normalisation — stretch outlier chunks to ±15% of session median
-      ▼ Silero VAD — smooth gain envelope preserving natural breath/decay
+      ▼ Silero VAD — crop trailing non-speech, attenuate interior gaps to 15%
       ▼ Assembly — 0.8s room tone gap + 300ms crossfade between speech chunks
       │
       ▼ Concatenate all chunks → voice_audio (float32, 24 kHz, mono)
@@ -77,7 +76,7 @@ Alternate format (also accepted):
 [exhale]       ← 1.2s exhale sound
 ```
 
-These insert real breath audio samples, blended with room tone. They also maintain the chained reference (prosodic continuity is preserved through breathing pauses).
+These insert real breath audio samples, blended with room tone.
 
 ### Paragraph Breaks
 
@@ -241,7 +240,6 @@ ffmpeg -i input.mp3 -ar 24000 -ac 1 -sample_fmt s16 voice_name.wav
 
 You do not need to worry about:
 - **RMS normalisation** — reference audio is automatically normalised to -20 dBFS
-- **Trailing silence** — 1.0s of low-level noise is appended to prevent phrase leakage
 - **Whisper transcription** — if the transcript is empty, F5 auto-transcribes with Whisper
 - **Clipping** — F5 clips the reference to ≤12 seconds internally
 
@@ -303,7 +301,7 @@ Find a comfortable position and close your eyes. [pause:5s]
 Thank you for joining. Carry this peace with you into the rest of your day. [pause:3s]
 ```
 
-The `[voice:closing]` marker switches to the "closing" phase's reference audio for all subsequent speech chunks. This resets the chained reference to the new phase's static reference.
+The `[voice:closing]` marker switches to the "closing" phase's reference audio for all subsequent speech chunks.
 
 ---
 
@@ -356,7 +354,7 @@ Breathe in slowly through your nose. [pause:4s] Feel the cool air entering your 
 | Very short standalone sentences (1–2 words) | Unreliable audio quality | Attach to adjacent sentence |
 | Fast-paced reference audio | Output will be fast despite low speed setting | Re-record reference at meditation pace |
 | Reference transcript mismatch | Metallic artefacts, pitch drift, stutter | Ensure transcript is verbatim |
-| Very long unbroken paragraphs | Many consecutive chunks with voice drift | Break with explicit pauses every 2–3 sentences |
+| Very long unbroken paragraphs | Many consecutive chunks without pauses | Break with explicit pauses every 2–3 sentences |
 
 ---
 

@@ -2,7 +2,7 @@
 
 F5-TTS uses the Vocos vocoder, which produces a cleaner signal than Kokoro's
 ISTFTNet. No neural denoising or spectral gating is needed. The mastering
-chain raises the lowpass ceiling to 13 kHz to preserve Vocos's broader native
+chain raises the lowpass ceiling to 10.5 kHz to preserve Vocos's broader native
 bandwidth (vs. Kokoro's 9.5 kHz cap which masks its 12 kHz Nyquist artefact).
 """
 
@@ -119,7 +119,7 @@ class F5MasteringEngine:
     def master_vocals(self, audio: np.ndarray, sr: int = 44100) -> np.ndarray:
         """Phase B: EQ, de-ess, and limit at the mix sample rate.
 
-        Signal chain (tuned for Vocos — lowpass raised to 13 kHz to preserve
+        Signal chain (tuned for Vocos — lowpass raised to 10.5 kHz to preserve
         broader native bandwidth, no algorithmic reverb since convolution
         reverb is applied downstream in build_f5_voice_chain):
 
@@ -128,14 +128,13 @@ class F5MasteringEngine:
 
         Signal chain (tuned for F5-TTS / Vocos meditation narration):
 
-            NoiseGate(-50 dB, 1.5:1)       — safety gate for clean noise floor
+            NoiseGate(-45 dB, 2:1)         — catch diffusion residual noise
             HighpassFilter(80 Hz)          — remove sub-bass rumble
             PeakFilter(300 Hz, -2 dB)      — anti-boxiness (cut low-mid mud)
             LowShelfFilter(200 Hz, +2 dB)  — add warmth
             PeakFilter(3.2 kHz, +1.5 dB)   — presence / intelligibility
-            HighShelfFilter(10 kHz, +1.5)  — air shelf for clarity
-            HighShelfFilter(8 kHz, -1.0)   — tame brightness without killing air
-            LowpassFilter(13 kHz)          — remove ultrasonic content
+            HighShelfFilter(8 kHz, -1.0)   — tame brightness / diffusion hiss
+            LowpassFilter(10.5 kHz)        — remove diffusion artifacts above useful bandwidth
             Compressor(-20 dB, 2.5:1)      — gentle, transparent leveling
             Limiter(-1.5 dB)               — safe, transparent ceiling
 
@@ -143,14 +142,13 @@ class F5MasteringEngine:
         """
         if self._master_chain is None or self._master_chain_sr != sr:
             self._master_chain = Pedalboard([
-                NoiseGate(threshold_db=-50, ratio=1.5, attack_ms=5, release_ms=250),
+                NoiseGate(threshold_db=-45, ratio=2.0, attack_ms=5, release_ms=250),
                 HighpassFilter(cutoff_frequency_hz=80),
                 PeakFilter(cutoff_frequency_hz=300, gain_db=-2.0, q=1.5),
                 LowShelfFilter(cutoff_frequency_hz=200, gain_db=2.0),
                 PeakFilter(cutoff_frequency_hz=3200, gain_db=1.5, q=0.8),
-                HighShelfFilter(cutoff_frequency_hz=10000, gain_db=1.5),
                 HighShelfFilter(cutoff_frequency_hz=8000, gain_db=-1.0),
-                LowpassFilter(cutoff_frequency_hz=13000),
+                LowpassFilter(cutoff_frequency_hz=10500),
                 Compressor(threshold_db=-20, ratio=2.5, attack_ms=15, release_ms=100),
                 Limiter(threshold_db=-1.5, release_ms=80),
             ])
@@ -172,7 +170,7 @@ def build_f5_voice_chain(reverb_amount: float = 0.15, ir_name: str = "warm_studi
     reverb (real IR for natural room presence) and a safety limiter — nothing
     else. Deliberately omits the noise gate, 8 kHz lowpass, and high-shelf
     present in Kokoro's build_voice_chain, which are tuned for ISTFTNet
-    artifacts and would damage Vocos's 13 kHz native bandwidth.
+    artifacts and would damage Vocos's 10.5 kHz native bandwidth.
     """
     from core.audio_processor import IR_CATALOG, DEFAULT_IR
 

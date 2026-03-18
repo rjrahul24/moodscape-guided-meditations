@@ -55,7 +55,7 @@ def test_params():
     # Check CFG strength
     cfg_strength = mock_model.last_infer_kwargs.get("cfg_strength")
     print(f"CFG Strength used in infer: {cfg_strength}")
-    assert cfg_strength == 2.0, f"Incorrect CFG strength: {cfg_strength}"
+    assert cfg_strength == 1.0, f"Incorrect CFG strength: {cfg_strength}"
     
     # Check remove_silence
     remove_silence = mock_model.last_infer_kwargs.get("remove_silence")

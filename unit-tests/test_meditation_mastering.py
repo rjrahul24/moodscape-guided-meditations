@@ -39,11 +39,11 @@ def test_mastering():
     print(f"Presence (3200Hz) gain: {peak_presence.gain_db}")
     assert abs(peak_presence.gain_db - 1.5) < 0.001
 
-    # Verify Air Shelf (10kHz)
-    shelf_air = next(e for e in chain if isinstance(e, HighShelfFilter))
-    print(f"Air shelf (10kHz) gain: {shelf_air.gain_db}")
-    assert shelf_air.cutoff_frequency_hz == 10000
-    assert abs(shelf_air.gain_db - 1.5) < 0.001
+    # Verify Brightness Control Shelf (8kHz)
+    shelf_bright = next(e for e in chain if isinstance(e, HighShelfFilter))
+    print(f"Brightness shelf (8kHz) gain: {shelf_bright.gain_db}")
+    assert shelf_bright.cutoff_frequency_hz == 8000
+    assert abs(shelf_bright.gain_db + 1.0) < 0.001
     
     # Verify Compressor settings (-20 dB: gentle leveling for meditation)
     compressor = next(e for e in chain if isinstance(e, Compressor))
