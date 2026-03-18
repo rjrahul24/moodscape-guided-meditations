@@ -77,9 +77,14 @@ def _apply_silero_vad(audio: np.ndarray, sr: int) -> np.ndarray:
       2. **Attenuate** — apply a smooth gain envelope that reduces interior
          non-speech segments to _VAD_GAIN_FLOOR (15%), preserving natural
          breath and resonance between phrases.
+
+    Note: Silero VAD only supports 8000 Hz and multiples of 16000 Hz.  When
+    the pipeline runs at 24000 Hz we resample to 16000 Hz for VAD inference,
+    then scale the returned sample indices back to the original rate.
     """
     try:
         import torch
+        import torchaudio
         # Only loads the model once per session via torch.hub's cache
         model, utils = torch.hub.load(
             repo_or_dir='snakers4/silero-vad',
@@ -89,8 +94,19 @@ def _apply_silero_vad(audio: np.ndarray, sr: int) -> np.ndarray:
         )
         (get_speech_timestamps, _, _, _, _) = utils
 
-        audio_torch = torch.from_numpy(audio.astype(np.float32))
-        speech_timestamps = get_speech_timestamps(audio_torch, model, sampling_rate=sr)
+        # Silero VAD requires 8000 or 16000 Hz (or multiples of 16000).
+        # Resample to 16000 Hz for VAD, then scale timestamps back to `sr`.
+        vad_sr = 16000
+        audio_torch = torch.from_numpy(audio.astype(np.float32)).unsqueeze(0)  # (1, T)
+        audio_16k = torchaudio.functional.resample(audio_torch, sr, vad_sr).squeeze(0)  # (T')
+        scale = sr / vad_sr  # factor to convert 16 kHz indices → original sr
+
+        speech_timestamps = get_speech_timestamps(audio_16k, model, sampling_rate=vad_sr)
+        # Scale indices back to the original sample rate
+        speech_timestamps = [
+            {"start": int(ts["start"] * scale), "end": int(ts["end"] * scale)}
+            for ts in speech_timestamps
+        ]
 
         if not speech_timestamps:
             # No speech detected — return as-is (shouldn't happen for speech chunks)
@@ -122,10 +138,10 @@ def _apply_silero_vad(audio: np.ndarray, sr: int) -> np.ndarray:
 
 
 
-_DEFAULT_SPEED = 0.80  # canonical F5-TTS meditation pace (~100-120 WPM)
+_DEFAULT_SPEED = 1.0  # natural speed — use slow reference audio for meditation pace
+_DEFAULT_TARGET_WPM = 110  # meditation pace (~110 WPM); set None to disable fix_duration
 _SWAY_COEF = -1.0   # enables sway sampling for smoother prosody
 _CFG_STRENGTH = 1.0  # lowered from 2.0 — reduces high-frequency diffusion artifacts
-_ROOM_TONE_LEVEL = 1e-3  # ~-60 dBFS ambient floor for pause segments
 
 # Reference audio conditioning targets
 _REF_TARGET_DBFS = -20.0  # RMS normalisation target for reference audio
@@ -275,9 +291,14 @@ class F5Engine(SpeechEngine):
             # Condition the processed reference: RMS-normalise and append
             # trailing silence to prevent phrase leakage into generated output.
             conditioned_path = _condition_reference_audio(proc_audio_path, SAMPLE_RATE)
+            # Measure reference audio duration for fix_duration calculation
+            import soundfile as _sf
+            _ref_info = _sf.info(conditioned_path)
+            ref_duration_sec = _ref_info.duration
             self._phase_assets[phase_name] = {
                 "audio": conditioned_path,
-                "text": proc_ref_text
+                "text": proc_ref_text,
+                "duration_sec": ref_duration_sec,
             }
             logger.info("Phase '%s' processed. Transcript: %r", phase_name, proc_ref_text[:80])
 
@@ -301,6 +322,7 @@ class F5Engine(SpeechEngine):
         speed: float = _DEFAULT_SPEED,
         progress_cb=None,
         seed: int | None = None,
+        target_wpm: int | None = _DEFAULT_TARGET_WPM,
         **kwargs,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Synthesize speech from parsed script segments using voice cloning.
@@ -315,11 +337,16 @@ class F5Engine(SpeechEngine):
                          Each dict has "type" ("speech"/"pause") and either "text"
                          or "duration_sec".
             voice:       Unused (ABC compliance only). Voice is fixed at init.
-            speed:       Speaking speed scalar (0.5–1.0). 1.0 is default/natural.
+            speed:       Speaking speed scalar (0.7–1.2). Used as fallback when
+                         target_wpm is None.
             progress_cb: Optional callback(current_index, total_segments).
             seed:        Base seed for deterministic generation. Each chunk uses
                          seed + chunk_index so output is reproducible yet each
                          chunk starts from distinct noise.
+            target_wpm:  Target words-per-minute for pacing. When set, overrides
+                         the speed parameter by calculating fix_duration per chunk
+                         based on word count. 110 WPM = meditation pace. Set to
+                         None to fall back to speed-based duration estimation.
             **kwargs:    Absorbs additional engine-specific kwargs passed by the
                          pipeline.
 
@@ -354,13 +381,6 @@ class F5Engine(SpeechEngine):
                     gen_text,
                 )
 
-                # Trailing ellipsis cues F5's duration predictor to generate a
-                # natural decay tail on the last syllable rather than cutting
-                # off abruptly. Has no effect on sentences that already trail
-                # with '?', '!', or '…'.
-                if not gen_text.endswith(('?', '!', '...')):
-                    gen_text = gen_text.rstrip('.,') + '...'
-
                 # Select correct reference phase
                 phase = seg.get("voice") or "default"
                 if phase not in self._phase_assets:
@@ -371,30 +391,38 @@ class F5Engine(SpeechEngine):
 
                 assets = self._phase_assets[phase]
 
-                # Always use the static reference — F5-TTS is a zero-shot
-                # cloner that derives pacing from the acoustic condition.
-                # Using a fixed reference ensures consistent pacing across
-                # all chunks without compounding drift.
                 # Per-chunk seed: base_seed + speech_index gives each chunk
                 # distinct but reproducible diffusion noise.
                 chunk_seed = seed + speech_idx
+
+                # Calculate fix_duration for WPM-based pacing.
+                # fix_duration tells F5-TTS the TOTAL mel frame count (ref + gen).
+                # After generation, the reference portion is clipped off, leaving
+                # exactly target_speech_sec of generated audio.
+                infer_kwargs: dict = dict(
+                    ref_file=assets["audio"],
+                    ref_text=assets["text"],
+                    gen_text=gen_text,
+                    speed=speed,
+                    nfe_step=_NFE_STEPS,
+                    cfg_strength=_CFG_STRENGTH,
+                    sway_sampling_coef=_SWAY_COEF,
+                    remove_silence=False,
+                    seed=chunk_seed,
+                )
+                if target_wpm is not None and target_wpm > 0:
+                    word_count = len(gen_text.split())
+                    target_speech_sec = word_count / target_wpm * 60.0
+                    ref_dur = assets.get("duration_sec", 10.0)
+                    infer_kwargs["fix_duration"] = ref_dur + target_speech_sec
+
                 with warnings.catch_warnings():
                     warnings.filterwarnings(
                         "ignore",
                         message="An output with one or more elements was resized",
                         category=UserWarning,
                     )
-                    wav, _sr, _ = self._model.infer(
-                        ref_file=assets["audio"],
-                        ref_text=assets["text"],
-                        gen_text=gen_text,
-                        speed=speed,
-                        nfe_step=_NFE_STEPS,
-                        cfg_strength=_CFG_STRENGTH,
-                        sway_sampling_coef=_SWAY_COEF,
-                        remove_silence=False,
-                        seed=chunk_seed,
-                    )
+                    wav, _sr, _ = self._model.infer(**infer_kwargs)
                 speech_idx += 1
                 # f5-tts ≥1.1 returns a numpy array; older builds return a tensor
                 if hasattr(wav, "cpu"):
@@ -408,8 +436,7 @@ class F5Engine(SpeechEngine):
 
             elif seg["type"] == "pause":
                 n = int(seg["duration_sec"] * SAMPLE_RATE)
-                rng = np.random.default_rng(seed + 10000 + idx)
-                silence = (rng.standard_normal(n) * _ROOM_TONE_LEVEL).astype(np.float32)
+                silence = np.zeros(n, dtype=np.float32)
                 silence_act = np.zeros(n, dtype=bool)
                 chunks.append((silence, silence_act, "pause", None))
 
@@ -417,11 +444,6 @@ class F5Engine(SpeechEngine):
                 from core.breath_sounds import load_breath
 
                 breath_audio = load_breath(seg["subtype"], target_sr=SAMPLE_RATE)
-                rng = np.random.default_rng(seed + 20000 + idx)
-                room = (rng.standard_normal(len(breath_audio)) * _ROOM_TONE_LEVEL).astype(
-                    np.float32
-                )
-                breath_audio = breath_audio + room
                 breath_act = np.zeros(len(breath_audio), dtype=bool)
                 chunks.append((breath_audio, breath_act, "breath", None))
 
@@ -447,7 +469,7 @@ class F5Engine(SpeechEngine):
         # at the 400-char limit — they are sentences within ONE paragraph.
         # Explicit pause segments from the preprocessor handle paragraph breaks.
         FADE_N = int(0.300 * SAMPLE_RATE)  # 300 ms equal-power cosine crossfade between speech chunks
-        GAP_N = int(0.8 * SAMPLE_RATE)     # 0.8s gap between consecutive speech chunks (same paragraph)
+        GAP_N = int(0.4 * SAMPLE_RATE)     # 0.4s gap between consecutive speech chunks (same paragraph)
 
         result_audio = chunks[0][0].copy().astype(np.float32)
         result_act = chunks[0][1].copy()
@@ -458,8 +480,7 @@ class F5Engine(SpeechEngine):
             cur_audio = cur_audio.astype(np.float32)
 
             if prev_type == "speech" and cur_type == "speech":
-                gap_rng = np.random.default_rng(seed + 30000 + i)
-                gap_tone = (gap_rng.standard_normal(GAP_N) * _ROOM_TONE_LEVEL).astype(np.float32)
+                gap_tone = np.zeros(GAP_N, dtype=np.float32)
                 gap_act = np.zeros(GAP_N, dtype=bool)
                 
                 result_audio = np.concatenate([result_audio, gap_tone])

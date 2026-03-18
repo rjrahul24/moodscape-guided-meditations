@@ -39,19 +39,14 @@ class TestScriptParser(unittest.TestCase):
     def test_parse_consecutive_pauses(self):
         script = "Breathe. [pause:2s] [pause:3s]\n\nRelax."
         segments = parse_script(script)
-        # Consecutive pauses should be merged.
-        # [pause:2s] + [pause:3s] + [pause:6.5s] = 11.5s
-        
-        # Actually let's check exact behavior:
-        # text "Breathe."
-        # pause 2.0
-        # pause 3.0 -> merged -> 5.0
-        # \n\n is 6.5 -> merged -> 11.5
-        # text "Relax."
+        # Two consecutive explicit pauses merge: [pause:2s] + [pause:3s] → 5.0s.
+        # The following \n\n paragraph break is discarded because an explicit pause
+        # already occupies that position (paragraph breaks are lower priority).
+        # text "Breathe." | pause 5.0s | text "Relax."
         self.assertEqual(len(segments), 3)
         self.assertEqual(segments[0]["text"], "Breathe.")
         self.assertEqual(segments[1]["type"], "pause")
-        self.assertEqual(segments[1]["duration_sec"], 11.5)
+        self.assertEqual(segments[1]["duration_sec"], 5.0)
         self.assertEqual(segments[2]["text"], "Relax.")
 
 if __name__ == '__main__':

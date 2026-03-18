@@ -206,9 +206,17 @@ class KokoroEngine(SpeechEngine):
                     audio_chunks.append(speech_audio)
                     activity_chunks.append(np.ones(len(speech_audio), dtype=bool))
 
-                    # Pause after every sentence except the final sentence of the final segment
+                    # Pause after every sentence except:
+                    # - the final sentence of the final segment, and
+                    # - the final sentence of a speech segment immediately followed by an
+                    #   explicit pause segment (the explicit pause provides the silence).
                     is_last_sentence = s_idx == len(sentences) - 1
-                    if not is_last_sentence or idx < total - 1:
+                    next_is_pause = (
+                        is_last_sentence
+                        and idx + 1 < total
+                        and segments[idx + 1]["type"] == "pause"
+                    )
+                    if not is_last_sentence or (idx < total - 1 and not next_is_pause):
                         pause_sec = (
                             ELLIPSIS_PAUSE_SEC
                             if sentence.rstrip().endswith(("...", "\u2026"))

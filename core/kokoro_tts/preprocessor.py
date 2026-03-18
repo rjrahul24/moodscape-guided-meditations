@@ -72,7 +72,9 @@ def parse_script(script: str) -> list[dict]:
     if not script or not script.strip():
         return []
 
-    script = re.sub(r'\n\n+', f' [pause:{_PARAGRAPH_PAUSE_SEC}s] ', script)
+    # Use a distinct internal marker for paragraph breaks so they can be
+    # distinguished from user-authored [pause:Xs] tags when merging adjacent pauses.
+    script = re.sub(r'\n\n+', f' [para-pause:{_PARAGRAPH_PAUSE_SEC}s] ', script)
 
     # Normalize natural-language pause aliases → [pause:Xs]
     # Handles: [2 second pause], [0.5 second pause], [30 sec pause], [5s pause]
@@ -90,28 +92,55 @@ def parse_script(script: str) -> list[dict]:
         flags=re.IGNORECASE,
     )
 
-    # Split on pause markers and breath markers.
-    # Group 1: pause duration, Group 2: breath subtype.
-    pattern = r'\[pause:(\d+(?:\.\d+)?)s\]|\[breath:(breath|inhale|exhale)\]'
+    # Split on explicit pause markers, paragraph-break pause markers, and breath markers.
+    # Groups: (explicit_dur, para_dur, breath_subtype)
+    pattern = (
+        r'\[pause:(\d+(?:\.\d+)?)s\]'
+        r'|\[para-pause:(\d+(?:\.\d+)?)s\]'
+        r'|\[breath:(breath|inhale|exhale)\]'
+    )
     parts = re.split(pattern, script)
 
     segments = []
-    # re.split with 2 groups gives [text, dur, breath, text, dur, breath, ...]
-    for i in range(0, len(parts), 3):
+    # re.split with 3 groups gives [text, expl_dur, para_dur, breath, text, ...]
+    for i in range(0, len(parts), 4):
         text = parts[i].strip()
         if text:
             segments.append({"type": "speech", "text": text})
 
+        # Explicit [pause:Xs] — user-authored, exact duration must be honoured.
         if i + 1 < len(parts) and parts[i + 1] is not None:
             duration = float(parts[i + 1])
             if duration > 0:
                 if segments and segments[-1]["type"] == "pause":
-                    segments[-1]["duration_sec"] += duration
+                    last = segments[-1]
+                    if last.get("source") == "paragraph":
+                        # Explicit pause overrides a preceding paragraph break — replace.
+                        last["duration_sec"] = duration
+                        last["source"] = "explicit"
+                    else:
+                        # Two consecutive explicit pauses — merge them.
+                        last["duration_sec"] += duration
                 else:
-                    segments.append({"type": "pause", "duration_sec": duration})
+                    segments.append({"type": "pause", "duration_sec": duration, "source": "explicit"})
 
+        # Paragraph-break [para-pause:Xs] — generated from \n\n, lower priority.
         if i + 2 < len(parts) and parts[i + 2] is not None:
-            segments.append({"type": "breath", "subtype": parts[i + 2]})
+            duration = float(parts[i + 2])
+            if duration > 0:
+                if segments and segments[-1]["type"] == "pause":
+                    last = segments[-1]
+                    if last.get("source") == "explicit":
+                        # Explicit pause already present — paragraph break is redundant, skip.
+                        pass
+                    else:
+                        # Two paragraph breaks back-to-back — merge them.
+                        last["duration_sec"] += duration
+                else:
+                    segments.append({"type": "pause", "duration_sec": duration, "source": "paragraph"})
+
+        if i + 3 < len(parts) and parts[i + 3] is not None:
+            segments.append({"type": "breath", "subtype": parts[i + 3]})
 
     return segments
 

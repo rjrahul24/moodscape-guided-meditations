@@ -133,8 +133,8 @@ class F5MasteringEngine:
             PeakFilter(300 Hz, -2 dB)      — anti-boxiness (cut low-mid mud)
             LowShelfFilter(200 Hz, +2 dB)  — add warmth
             PeakFilter(3.2 kHz, +1.5 dB)   — presence / intelligibility
-            HighShelfFilter(8 kHz, -1.0)   — tame brightness / diffusion hiss
-            LowpassFilter(10.5 kHz)        — remove diffusion artifacts above useful bandwidth
+            HighShelfFilter(8 kHz, -4.0)   — tame brightness / diffusion hiss (QA: spectral flatness)
+            LowpassFilter(9 kHz)           — hard cut above Vocos useful bandwidth (~9 kHz)
             Compressor(-20 dB, 2.5:1)      — gentle, transparent leveling
             Limiter(-1.5 dB)               — safe, transparent ceiling
 
@@ -147,8 +147,8 @@ class F5MasteringEngine:
                 PeakFilter(cutoff_frequency_hz=300, gain_db=-2.0, q=1.5),
                 LowShelfFilter(cutoff_frequency_hz=200, gain_db=2.0),
                 PeakFilter(cutoff_frequency_hz=3200, gain_db=1.5, q=0.8),
-                HighShelfFilter(cutoff_frequency_hz=8000, gain_db=-1.0),
-                LowpassFilter(cutoff_frequency_hz=10500),
+                HighShelfFilter(cutoff_frequency_hz=8000, gain_db=-4.0),
+                LowpassFilter(cutoff_frequency_hz=9000),
                 Compressor(threshold_db=-20, ratio=2.5, attack_ms=15, release_ms=100),
                 Limiter(threshold_db=-1.5, release_ms=80),
             ])

@@ -24,17 +24,17 @@ Each speech block split into ≤300-character chunks at sentence boundaries
       │
       ▼ core/f5_tts/engine.py — F5Engine.synthesize()
 For each "speech" chunk:
-  - Normalise text (collapse whitespace, lowercase ALL_CAPS, add trailing "...")
+  - Normalise text (collapse whitespace, lowercase ALL_CAPS)
   - Select reference audio (always the static reference for consistent voice)
   - Call F5TTS infer() with speed, nfe_step=32, cfg_strength=1.0, seed
   - Trim trailing silence, build activity mask
 For each "pause" segment:
-  - Insert room tone (low-level ambient noise, ~-60 dBFS)
+  - Insert digital silence
 For each "breath" segment:
-  - Insert real breath sample blended with room tone
+  - Insert real breath sample
       │
       ▼ Silero VAD — crop trailing non-speech, attenuate interior gaps to 15%
-      ▼ Assembly — 0.8s room tone gap + 300ms crossfade between speech chunks
+      ▼ Assembly — 0.4s silent gap + 300ms crossfade between speech chunks
       │
       ▼ Concatenate all chunks → voice_audio (float32, 24 kHz, mono)
          + voice_activity mask (True where voice is speaking)
@@ -55,9 +55,9 @@ For each "breath" segment:
 Where `X` is an integer or decimal number. Examples:
 
 ```
-[pause:3s]       ← 3 seconds of room tone
-[pause:2.5s]     ← 2.5 seconds of room tone
-[pause:10s]      ← 10 seconds of room tone
+[pause:3s]       ← 3 seconds of silence
+[pause:2.5s]     ← 2.5 seconds of silence
+[pause:10s]      ← 10 seconds of silence
 [pause:0.5s]     ← half-second (minimum useful value)
 ```
 
@@ -76,11 +76,11 @@ Alternate format (also accepted):
 [exhale]       ← 1.2s exhale sound
 ```
 
-These insert real breath audio samples, blended with room tone.
+These insert real breath audio samples.
 
 ### Paragraph Breaks
 
-A double newline (`\n\n`) is automatically converted to a `[pause:6.5s]` marker — a long paragraph-level pause. Single newlines are treated as a space within the same speech segment.
+A double newline (`\n\n`) is automatically converted to a `[pause:3.0s]` marker — a paragraph-level pause. Single newlines are treated as a space within the same speech segment.
 
 **Exception:** If one side of a `\n\n` boundary contains only a pause marker (e.g. `[pause:5s]` on its own line), the paragraph break is treated as formatting and no extra pause is added.
 
@@ -111,11 +111,10 @@ Back-to-back pauses are merged, keeping only the **longest** duration:
 | IPA injection | Supported (`[word](/ˈaɪpə/)`) | Not supported — do not use |
 | Text expansion | Auto (digits, abbreviations) | Not applied — write natural prose |
 | Chunk limit | 150 tokens | 300 characters |
-| Paragraph pause | 2.5 seconds | 6.5 seconds |
-| Inter-sentence gap | 0.8s (1.2s after `...`) | 0.8s room tone + 300ms crossfade |
+| Paragraph pause | 2.5 seconds | 3.0 seconds |
+| Inter-sentence gap | 0.8s (1.2s after `...`) | 0.4s silent gap + 300ms crossfade |
 | Breath sounds | Not supported | `[breath]`, `[inhale]`, `[exhale]` |
-| Speed default | 0.70 | 0.80 |
-| Auto trailing `...` | No | Yes (appended if sentence doesn't end with `?`, `!`, or `...`) |
+| Speed default | 0.70 | 1.0 |
 
 **Important:** Do not use IPA phoneme injection syntax with F5-TTS. It will not be parsed and will be spoken as literal text.
 
@@ -171,20 +170,24 @@ The slug is derived from the filename (e.g. `your_voice_name.wav` → slug `your
 
 ## Speaking Speed
 
-The `speed` slider in the UI ranges from **0.65 to 1.0**. When F5-TTS is selected, it automatically defaults to **0.80**.
+### Pacing (WPM) — Primary Pacing Control
 
-F5's speed parameter controls the duration predictor's mel frame count — lower values produce slower, more deliberate speech. Unlike Kokoro, F5 does not have a hard distortion floor, but below 0.70 the duration predictor's variance increases (less consistent pacing across chunks).
+The **Pacing (WPM)** slider in the F5-TTS settings controls output speed precisely using F5's `fix_duration` mechanism. Instead of relying on the reference audio to set pace (which is unreliable with short 10s clips), the engine calculates exact output duration per chunk based on word count and target WPM.
 
-| Use Case | Speed Value |
+| Use Case | WPM |
 |---|---|
-| Fast/clear narration | 1.0 |
-| Normal speaking pace | 0.90 |
-| Gentle meditation pace | 0.85 |
-| **F5 default (recommended)** | **0.80** |
-| Deep relaxation / sleep | 0.75 |
-| Very slow, spacious delivery | 0.70 |
+| Very slow, spacious delivery | 80 – 90 |
+| **Meditation pace (default)** | **110** |
+| Gentle narration | 120 – 130 |
+| Normal speaking pace | 140 – 150 |
 
-**Critical:** The reference audio pace also influences output pace. If your reference was recorded at a fast conversational speed, the model will tend to generate faster speech even at lower speed values. Record your reference audio at the same deliberate, unhurried meditation pace you want in the output.
+The reference audio now controls **voice quality and expression only** — not pacing. This means you can use a short, expressive reference clip without worrying about whether its speaking rate will transfer to the output.
+
+### Speed Slider — Secondary Fine-Tuning
+
+The `speed` slider (range 0.70–1.20, default 1.0) is a secondary control. When WPM pacing is active, the speed parameter has minimal effect because `fix_duration` overrides F5's internal duration estimation. It can be used for fine-tuning if WPM alone doesn't produce the desired feel.
+
+**Critical:** The WPM slider is the recommended way to control pacing. Lowering the speed parameter below 0.85 flattens pitch contours and expression.
 
 ---
 
@@ -253,7 +256,8 @@ These are the recommended settings for top quality meditation audio generation w
 |---|---|---|
 | **TTS Voice Engine** | F5-TTS | Zero-shot voice cloning |
 | **Voice Personality** | (select your voice) | Choose from registered voices |
-| **Speaking Speed** | 0.80 | Auto-set when F5 is selected. Adjust 0.75–0.85 for preference. |
+| **Pacing (WPM)** | 110 | Meditation pace. 90 = very slow, 130 = gentle narration. |
+| **Speaking Speed** | 1.0 | Secondary fine-tuning. Leave at 1.0 when using WPM pacing. |
 | **Voice Reverb** | 0.15 | Subtle room presence. Increase to 0.25 for spacious feel. |
 | **Reverb Space** | Warm Studio | Intimate, short decay — best for meditation. Use Wooden Hall for longer sessions. |
 | **Music Ducking** | -20 dB | Music drops 20 dB during speech. Use -25 dB if music is overpowering voice. |
@@ -303,6 +307,28 @@ Thank you for joining. Carry this peace with you into the rest of your day. [pau
 
 The `[voice:closing]` marker switches to the "closing" phase's reference audio for all subsequent speech chunks.
 
+### Breaking Monotony with Phases
+
+Because F5-TTS uses the same reference clip for every chunk, long meditations can sound repetitive (same intonation curve repeated). Multi-phase voices solve this by giving the model different acoustic targets.
+
+**Recommended phase types:**
+
+| Phase | Character | Recording tip |
+|---|---|---|
+| `default` (or `opening`) | Welcoming, warm, inviting | Normal meditation pace, gentle smile |
+| `body` | Grounding, steady, present | Slightly deeper register, even pacing |
+| `whisper` | Intimate, soft, close | Closer to mic, quieter delivery (not breathy) |
+| `closing` | Uplifting, grateful, warm | Slightly brighter tone, gentle energy |
+
+Record each phase as a separate 10–12s WAV clip with the same speaker. Define them in `voices.toml`:
+```toml
+[female_meditative_warm]
+default = { audio = "female_meditative_warm.wav", transcript = "female_meditative_warm.txt" }
+body = { audio = "female_meditative_warm_body.wav", transcript = "female_meditative_warm_body.txt" }
+whisper = { audio = "female_meditative_warm_whisper.wav", transcript = "female_meditative_warm_whisper.txt" }
+closing = { audio = "female_meditative_warm_closing.wav", transcript = "female_meditative_warm_closing.txt" }
+```
+
 ---
 
 ## Sentence Length & Structure Guidelines
@@ -335,7 +361,7 @@ Breathe in slowly through your nose. [pause:4s] Feel the cool air entering your 
 | After a body awareness cue | `[pause:3s]` – `[pause:5s]` |
 | After a visualisation sentence | `[pause:5s]` – `[pause:7s]` |
 | Deep stillness / spacious silence | `[pause:8s]` – `[pause:10s]` |
-| Between major sections | Use paragraph break (auto 6.5s) or `[pause:6s]` – `[pause:8s]` |
+| Between major sections | Use paragraph break (auto 3.0s) or `[pause:6s]` – `[pause:8s]` |
 | Opening / setting the space | `[pause:3s]` – `[pause:5s]` |
 | Closing / return to awareness | `[pause:3s]` – `[pause:5s]` |
 
@@ -352,7 +378,7 @@ Breathe in slowly through your nose. [pause:4s] Feel the cool air entering your 
 | Stage directions in script | Spoken aloud by F5 | Remove all non-spoken text |
 | Single newline for pause | Treated as a space, no pause effect | Use `[pause:Xs]` or double newline |
 | Very short standalone sentences (1–2 words) | Unreliable audio quality | Attach to adjacent sentence |
-| Fast-paced reference audio | Output will be fast despite low speed setting | Re-record reference at meditation pace |
+| Fast-paced reference audio | Output will be fast even at speed 1.0 | Re-record reference at meditation pace (~100–120 WPM) |
 | Reference transcript mismatch | Metallic artefacts, pitch drift, stutter | Ensure transcript is verbatim |
 | Very long unbroken paragraphs | Many consecutive chunks without pauses | Break with explicit pauses every 2–3 sentences |
 
@@ -401,11 +427,11 @@ Thank you for taking this time for yourself. [pause:3s]
 ```
 
 **What this script produces (approximately):**
-- At speed 0.80, approximately 3–4 minutes of audio
-- Each `[pause:Xs]` creates room tone of that exact duration
+- At speed 1.0 with a slow reference, approximately 3–4 minutes of audio
+- Each `[pause:Xs]` creates silence of that exact duration
 - `[breath]` markers insert real breath audio samples (1.2s each)
-- Automatic 0.8s room tone gaps + 300ms crossfades between speech chunks within the same paragraph
-- Paragraph breaks (blank lines) add 6.5s pauses
+- Automatic 0.4s silent gaps + 300ms crossfades between speech chunks within the same paragraph
+- Paragraph breaks (blank lines) add 3.0s pauses
 
 ---
 
@@ -422,7 +448,7 @@ The F5-TTS engine outputs:
 
 ## Duration Estimation
 
-At default speed 0.80, F5-TTS generates approximately 8–10 seconds of audio per 300 characters of text.
+At the default 110 WPM pacing, F5-TTS generates approximately 8–10 seconds of audio per 300 characters of text (roughly 50–60 words).
 
 Rough rules of thumb:
 - **~100–130 words of speech** ≈ 1 minute of audio (before adding pauses)

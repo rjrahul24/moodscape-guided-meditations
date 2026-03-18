@@ -69,7 +69,7 @@ Script text → TTS (Kokoro/F5) → Music (MusicGen/ACE-Step/Lyria) → Audio FX
 
 **TTS engines** (`core/kokoro_tts/`, `core/f5_tts/`):
 - Kokoro: Forced to CPU on Apple Silicon (MPS causes bus errors). Uses `trf=True` for transformer G2P.
-- F5-TTS: Zero-shot voice cloning with Silero VAD (15% gain floor). Voice assets in `core/f5_tts/assets/`. Default speed 0.80 (auto-set in UI). 300-char chunk limit.
+- F5-TTS: Zero-shot voice cloning with Silero VAD (15% gain floor). Voice assets in `core/f5_tts/assets/`. WPM-based pacing via `fix_duration` (default 110 WPM). 300-char chunk limit. Multi-phase voices via `voices.toml`.
 
 **Music engines** (`core/music_engine.py`, `core/acestep_engine.py`, `core/lyria/`):
 - ACE-Step: Must use `compile_model=True` to avoid timeouts. Uses MLX backend on Apple Silicon.

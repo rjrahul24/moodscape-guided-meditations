@@ -13,7 +13,7 @@ Key difference from kokoro_tts/preprocessor.py:
 import re
 
 MAX_CHUNK_CHARS = 300
-_PARAGRAPH_PAUSE_SEC = 6.5
+_PARAGRAPH_PAUSE_SEC = 3.0
 
 
 def parse_script(script: str) -> list[dict]:

@@ -13,7 +13,7 @@ F5-TTS is the second TTS engine available in MoodScape, offering zero-shot voice
 | Native sample rate | 24 000 Hz (matches Kokoro / pipeline contract) |
 | Device | MPS (Apple Silicon) with CPU fallback |
 | Voice input | Reference audio + verbatim transcript (via VoiceRegistry) |
-| Key inference params | `nfe_step=32`, `sway_sampling_coef=-1.0`, `cfg_strength=2.0` |
+| Key inference params | `nfe_step=32`, `sway_sampling_coef=-1.0`, `cfg_strength=1.0` |
 
 **Why F5-TTS?**
 
@@ -29,8 +29,8 @@ F5-TTS is the second TTS engine available in MoodScape, offering zero-shot voice
 ```
 core/f5_tts/
 ├── __init__.py              -- package marker
-├── engine.py                -- F5Engine(SpeechEngine): synthesis, chaining, VAD, WPM normalization
-├── preprocessor.py          -- character-aware script chunker (400-char limit)
+├── engine.py                -- F5Engine(SpeechEngine): synthesis, VAD, assembly
+├── preprocessor.py          -- character-aware script chunker (300-char limit)
 ├── postprocessor.py         -- F5MasteringEngine, split-band de-esser, voice FX chain
 ├── voice_registry.py        -- voice asset discovery and multi-phase resolution
 └── assets/
@@ -161,57 +161,57 @@ F5-TTS performs its own G2P from raw prose. Write natural meditation prose.
 | `[pause:Xs]` | X seconds |
 | `[N second pause]` | N seconds |
 | `[breath]` / `[inhale]` / `[exhale]` | 1.2 seconds (real breath samples) |
-| Double newline | 6.5 seconds |
+| Double newline | 3.0 seconds |
 
 ---
 
 ## 7. Synthesis Engine
 
-### Chained Reference System
+### Static Reference System
 
-Instead of using the same static reference for every chunk, F5Engine maintains a **quasi-autoregressive** chain:
-
-- Each speech chunk (after the first) seeds the model from the **tail of the previous chunk's audio**
-- This provides acoustic context for natural pitch and energy continuity across sentences
-- The static reference is restored after:
-  - **Long pauses (>= 3.0s)** -- section boundaries warrant a fresh voice anchor
-  - **Voice phase changes** -- different reference audio for the new phase
-  - **Every 6 consecutive speech chunks** -- prevents voice drift on long sessions
-- Short pauses (< 3.0s) and breath segments **maintain** the chain for prosodic continuity
-
-Constants:
-- `_CHAIN_RESET_EVERY = 6` -- reset to static ref every N consecutive speech chunks
-- `_CHAIN_RESET_PAUSE_SEC = 3.0` -- only long pauses trigger reset
-- `_CHAIN_MAX_REF_SEC = 5.0` -- maximum seconds of previous chunk tail to use
-- `_CHAIN_MAX_REF_FRAC = 0.50` -- cap chain ref at 50% of previous chunk length
+Every speech chunk uses the same static reference audio. This ensures consistent voice identity across all chunks without compounding drift. Multi-phase voices allow switching to different reference clips mid-script via `[voice:phase_name]` markers.
 
 ### Text Normalization
 
 Before passing text to F5's `infer()`:
 - Collapse whitespace and newlines
 - Lower-case ALL_CAPS words (prevents letter-by-letter G2P spelling)
-- Append trailing ellipsis (cues natural decay tail rather than abrupt cutoff)
 
 ### Inference Parameters
 
 | Parameter | Value | Notes |
 |---|---|---|
 | `nfe_step` | 32 | Production quality. Use 16 for fast iteration. |
-| `cfg_strength` | 2.0 | Paper-validated optimal for stable generation |
+| `cfg_strength` | 1.0 | Lowered from 2.0 — reduces high-frequency diffusion artefacts |
 | `sway_sampling_coef` | -1.0 | Enables sway sampling for smoother meditative prosody |
-| `speed` | 0.80 (default) | Duration predictor generates correct mel frame count |
+| `speed` | 1.0 (default) | Secondary control; mostly unused when `fix_duration` is active |
+| `fix_duration` | Calculated | Per-chunk: `ref_duration + (word_count / target_wpm * 60)` |
+| `target_wpm` | 110 (default) | Meditation pace. Controls `fix_duration` per chunk. |
 | `remove_silence` | False | Engine handles silence trimming explicitly |
+
+### WPM-Based Pacing (fix_duration)
+
+F5-TTS's internal duration formula (`ref_audio_len / ref_text_len * gen_text_len / speed`) is unreliable for short reference clips — small variations in reference text vs. audio duration shift pacing significantly.
+
+The engine instead uses F5's `fix_duration` parameter to specify exact output duration per chunk:
+
+```python
+word_count = len(gen_text.split())
+target_speech_sec = word_count / target_wpm * 60.0
+fix_duration = ref_audio_duration_sec + target_speech_sec
+```
+
+This decouples pacing from reference audio — the reference controls **voice quality and expression only**, while WPM controls **pacing precisely**. The reference audio duration is measured during `load_model()` and stored in `_phase_assets`.
 
 ### Post-Inference Processing
 
 1. **Trailing silence trimming**: Remove samples below -45 dBFS, keep 50ms decay tail
-2. **WPM normalization**: Measure each chunk's words-per-minute, time-stretch outliers to within +/-15% of session median via librosa
-3. **Silero VAD**: Probability-based gain envelope with 15% gain floor (`_VAD_GAIN_FLOOR=0.15`) — attenuates non-speech segments to 15% instead of zeroing them, preserving natural breath, resonance, and room tone
-4. **Assembly**: 0.8s room tone gap + 300ms equal-power cosine crossfade between speech chunks; direct concatenation at pause boundaries
+2. **Silero VAD**: Two-pass — crop trailing non-speech (100ms safety tail), attenuate interior gaps to 15% gain floor (`_VAD_GAIN_FLOOR=0.15`)
+3. **Assembly**: 0.4s silent gap + 300ms equal-power cosine crossfade between speech chunks; direct concatenation at pause boundaries
 
-### Room Tone
+### Pauses and Silence
 
-Pauses and breath segments use low-level noise (1e-3 amplitude, ~-60 dBFS) instead of digital silence. This prevents the unnatural "dead air" artefact and keeps reverb tails active through pauses.
+Pauses and inter-chunk gaps use digital silence (`np.zeros`). Downstream convolution reverb provides natural tails on voice segments.
 
 ---
 
@@ -288,7 +288,8 @@ F5Engine is instantiated locally per `generate()` call. After synthesis: `tts.un
 |---|---|---|
 | `nfe_step` | 32 | Production quality. Use 16 for fast script iteration. |
 | `sway_sampling_coef` | -1.0 | Smoother, more natural prosody. Disable (set to 0) only for timing artefacts. |
-| `speed` | 0.80 | Default meditation pace. |
+| `target_wpm` | 110 | Meditation pace; drives `fix_duration` per chunk. |
+| `speed` | 1.0 | Secondary fine-tuning (mostly unused with WPM pacing). |
 | Device | MPS | Apple Silicon. CPU fallback for non-Apple hardware. |
 | Precision | fp16 | `ema_model.to(torch.float16)` -- prevents distortion artefacts seen in bf16. |
 | First-run | Slow | Model weights (~1.5 GB) downloaded from HuggingFace on first use. |
@@ -300,7 +301,7 @@ F5Engine is instantiated locally per `generate()` call. After synthesis: `tts.un
 | Short (1-2 sentences, ~150 chars) | ~3-6s | ~2-3s |
 | Medium (3-4 sentences, ~400 chars) | ~6-12s | ~4-6s |
 
-Long scripts are chunked into <=400-character segments; generation time scales linearly with chunk count.
+Long scripts are chunked into <=300-character segments; generation time scales linearly with chunk count.
 
 ---
 
@@ -308,8 +309,8 @@ Long scripts are chunked into <=400-character segments; generation time scales l
 
 1. **No Sanskrit / yoga term phoneme injection** -- Kokoro's preprocessor injects IPA for terms like "chakra". F5-TTS does its own G2P; these terms are pronounced per the model's training data.
 
-2. **No deterministic seed support** -- F5-TTS does not expose a seed parameter. The `seed=` kwarg from the pipeline is silently ignored. Generation is not reproducible across runs.
+2. **30-second context ceiling** -- F5-TTS has a hard inference limit of ~30s per call. The 300-character chunking keeps segments safely under this. If truncation occurs, add punctuation to the script.
 
-3. **30-second context ceiling** -- F5-TTS has a hard inference limit of ~30s per call. The 400-character chunking keeps segments safely under this. If truncation occurs, add punctuation to the script.
+3. **Voice consistency over very long scripts** -- Zero-shot cloning is stochastic. The static reference system maintains consistency, but the same intonation curve repeats on every chunk. Use multi-phase voices to introduce natural variation across sections.
 
-4. **Voice consistency over very long scripts** -- Zero-shot cloning is stochastic. The chained reference system and periodic reset maintain consistency, but subtle drift may occur on very long meditations (>30 minutes).
+4. **Expression depends on reference audio** -- At speed 1.0, F5-TTS faithfully reproduces the expression from the reference. A monotone reference produces monotone output. Record reference clips with natural, expressive meditation delivery.

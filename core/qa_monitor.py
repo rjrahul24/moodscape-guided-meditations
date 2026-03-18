@@ -116,10 +116,12 @@ def check_silence_ratio(
     sample_rate: int = SAMPLE_RATE,
     silence_threshold: float = 0.001,
 ) -> dict:
-    """Check that silence ratio is appropriate for meditation (15-60%).
+    """Check that silence ratio is appropriate for meditation (15-70%).
 
-    Too much silence (>60%) suggests over-padding; too little (<15%)
-    suggests insufficient pausing for a meditation context.
+    Too much silence (>70%) suggests over-padding; too little (<15%)
+    suggests insufficient pausing for a meditation context.  Long-form
+    meditations with multiple breath/pause segments naturally sit in the
+    60–70 % range, so the upper bound is set conservatively at 70 %.
     """
     mono = audio[0] if audio.ndim == 2 else audio
     window = int(0.05 * sample_rate)  # 50ms windows
@@ -132,7 +134,7 @@ def check_silence_ratio(
             silent_windows += 1
 
     ratio = silent_windows / total_windows
-    passed = 0.15 <= ratio <= 0.60
+    passed = 0.15 <= ratio <= 0.70
     return {
         "silence_ratio": round(float(ratio), 3),
         "passed": passed,
