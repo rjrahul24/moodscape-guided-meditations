@@ -141,10 +141,10 @@ class TestMusicEngines(unittest.TestCase):
         self.assertEqual(res.dtype, np.float32)
 
     def test_musicgen_default_params(self):
-        """Default temperature and top_k must match the documented ambient meditation sweet spots.
+        """Default temperature, top_k, and extend_stride must match tuned values.
 
         This test pins the defaults using inspect.signature so that any future
-        accidental reversion (e.g. temperature=0.7, top_k=80) is immediately caught.
+        accidental reversion is immediately caught.
         Reference: docs/model_implementation_guides/musicgen.md §7 Tuning Guide.
         """
         import inspect
@@ -156,6 +156,10 @@ class TestMusicEngines(unittest.TestCase):
         self.assertEqual(
             sig.parameters["top_k"].default, 250,
             "top_k default must be 250 (full ambient vocabulary breadth per docs)",
+        )
+        self.assertEqual(
+            sig.parameters["extend_stride"].default, 18.0,
+            "extend_stride default must be 18.0 — 17 segments for 5-min track (was 12.0 → 25 segments)",
         )
 
 if __name__ == '__main__':

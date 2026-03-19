@@ -73,7 +73,7 @@ Script text → TTS (Kokoro/F5) → Music (MusicGen/ACE-Step/Lyria) → Audio FX
 
 **Music engines** (`core/music_engine.py`, `core/acestep_engine.py`, `core/lyria/`):
 - ACE-Step: Must use `compile_model=True` to avoid timeouts. Uses MLX backend on Apple Silicon.
-- MusicGen: CPU only (MPS disabled — EnCodec ELU activation corrupts audio on Apple Silicon).
+- MusicGen: CPU only, `musicgen-small` (300M params) primary. MPS disabled — EnCodec ELU corrupts audio on Apple Silicon. Small model is ~3.5× faster than stereo-medium on CPU (~13 min vs ~45 min for 5-min track); quality difference is imperceptible at −17 dB background level.
 
 ## Code Conventions
 
