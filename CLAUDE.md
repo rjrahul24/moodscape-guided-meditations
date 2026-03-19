@@ -73,7 +73,7 @@ Script text → TTS (Kokoro/F5) → Music (MusicGen/ACE-Step/Lyria) → Audio FX
 
 **Music engines** (`core/music_engine.py`, `core/acestep_engine.py`, `core/lyria/`):
 - ACE-Step: Must use `compile_model=True` to avoid timeouts. Uses MLX backend on Apple Silicon.
-- MusicGen: CPU fallback if MPS unstable.
+- MusicGen: CPU only (MPS disabled — EnCodec ELU activation corrupts audio on Apple Silicon).
 
 ## Code Conventions
 

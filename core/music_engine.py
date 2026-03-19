@@ -1,7 +1,7 @@
 """MusicGen wrapper — stereo-medium with sliding window continuation + story mode.
 
 Model: facebook/musicgen-stereo-medium (1.5B params), fallback to musicgen-small
-Device: MPS (Apple Silicon GPU) with automatic CPU fallback
+Device: CPU only (MPS disabled — AudioCraft EnCodec ELU corruption on Apple Silicon)
 Strategy: 30s initial segment, then sliding window with 5s context overlap.
           Optional story mode: supply prompt_stages to evolve the text prompt
           across the timeline, matching meditation phase transitions.
@@ -35,13 +35,17 @@ FALLBACK_MODEL_ID = "facebook/musicgen-small"
 class MusicEngine:
     """Generates ambient background music via MusicGen sliding window continuation.
 
-    Uses musicgen-stereo-medium (1.5B params) on MPS (Apple Silicon GPU) for
-    fast inference, with automatic CPU fallback if MPS is unstable. Generates
-    a 30s initial segment, then extends with continuation calls using 5s of
-    audio context per step. Stereo output is downmixed to mono at the boundary
-    to preserve the pipeline's mono contract.
+    Uses musicgen-stereo-medium (1.5B params) on CPU. MPS is disabled because
+    AudioCraft's EnCodec decoder uses F.elu extensively, and Apple Silicon's MPS
+    backend has a known tensor corruption bug in ELU that produces audible static
+    ("broken radio" artifacts) even with contiguity patches. CPU inference is
+    slower (~0.5x realtime) but produces artifact-free audio every time.
 
-    Performance: MPS + CFG 4.0 for stable, prompt-adherent ambient output.
+    Generates a 30s initial segment, then extends with continuation calls using
+    5s of audio context per step. Stereo output is downmixed to mono at the
+    boundary to preserve the pipeline's mono contract.
+
+    Performance: CPU + CFG 4.5 for stable, prompt-adherent ambient output.
     """
 
     def __init__(self, use_mbd: bool = False):
@@ -59,13 +63,14 @@ class MusicEngine:
 
     @staticmethod
     def _pick_device() -> str:
-        """Choose the fastest available device.
+        """Always returns CPU for MusicGen inference.
 
-        Prefers MPS (Apple Silicon GPU) for ~4-5x faster inference.
-        Falls back to CPU if MPS is not available.
+        AudioCraft's EnCodec decoder uses F.elu extensively, and Apple
+        Silicon's MPS backend has a known tensor corruption bug in ELU that
+        produces audible static even with contiguity patches applied. CPU
+        inference is slower (~0.5x realtime for stereo-medium) but produces
+        mathematically identical, artifact-free audio every time.
         """
-        if torch.backends.mps.is_available():
-            return "mps"
         return "cpu"
 
     @staticmethod
@@ -97,59 +102,33 @@ class MusicEngine:
 
         torch.multinomial = _safe_multinomial
 
-    def _patch_mps_elu(self):
-        """Monkeypatch PyTorch ELU to ensure contiguous inputs on MPS.
-        
-        Fixes a known bug in PyTorch where `F.elu` produces garbled static
-        on Apple Silicon if the input tensor is non-contiguous. EnCodec
-        relies heavily on ELU, causing random static bursts without this.
-        """
-        import torch.nn.functional as F
-        
-        if not hasattr(F, "_orig_elu"):
-            F._orig_elu = F.elu
-            
-            def safe_elu(input, alpha=1.0, inplace=False):
-                if input.device.type == "mps" and not input.is_contiguous():
-                    input = input.contiguous()
-                return F._orig_elu(input, alpha, inplace)
-            
-            F.elu = safe_elu
-
     # ------------------------------------------------------------------
     # Model lifecycle
     # ------------------------------------------------------------------
 
     def load_model(self):
-        """Load MusicGen on the best available device (MPS → CPU fallback)."""
+        """Load MusicGen on CPU."""
         import warnings
 
         from audiocraft.models import MusicGen
 
-        self.device = self._pick_device()
+        self.device = "cpu"
         self._patch_multinomial()
-        if self.device == "mps":
-            self._patch_mps_elu()
 
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=FutureWarning, message=".*weight_norm.*")
             warnings.filterwarnings("ignore", category=UserWarning, message=".*MPS autocast.*")
 
-            candidates = [MODEL_ID, FALLBACK_MODEL_ID]
-            for name in candidates:
-                # Try preferred device first, fall back to CPU
-                devices_to_try = [self.device] if self.device == "cpu" else [self.device, "cpu"]
-                for dev in devices_to_try:
-                    try:
-                        logger.info("[MusicEngine] Loading %s on %s...", name, dev)
-                        self.model = MusicGen.get_pretrained(name, device=dev)
-                        self.model_name = name
-                        self.device = dev
-                        logger.info("[MusicEngine] Loaded %s on %s", name, dev)
-                        return
-                    except Exception as e:
-                        logger.warning("[MusicEngine] %s on %s failed: %s", name, dev, e)
-                        print(f"[MusicEngine] {name} on {dev} failed: {e}")
+            for name in [MODEL_ID, FALLBACK_MODEL_ID]:
+                try:
+                    logger.info("[MusicEngine] Loading %s on cpu...", name)
+                    self.model = MusicGen.get_pretrained(name, device="cpu")
+                    self.model_name = name
+                    logger.info("[MusicEngine] Loaded %s on cpu", name)
+                    return
+                except Exception as e:
+                    logger.warning("[MusicEngine] %s failed: %s", name, e)
+                    print(f"[MusicEngine] {name} failed: {e}")
 
             raise RuntimeError("No MusicGen model could be loaded.")
 
@@ -199,8 +178,8 @@ class MusicEngine:
         prompt_stages: list[tuple[str, float]] | None = None,
         melody_audio: np.ndarray | None = None,
         melody_sample_rate: int | None = None,
-        temperature: float = 0.7,
-        top_k: int = 80,
+        temperature: float = 0.87,   # Ambient sweet spot: 0.85–0.90 per docs
+        top_k: int = 250,            # Wider vocabulary needed for evolving pads
         top_p: float = 0.0,
         cfg_coef: float = 4.5,
         extend_stride: float = 12.0,
@@ -234,8 +213,12 @@ class MusicEngine:
                 continuation segments use standard audio context.
             melody_sample_rate: Sample rate of melody_audio (required when
                 melody_audio is provided).
-            temperature: Sampling temperature (lower = more stable).
-            top_k: Top-k token selection (lower = more focused).
+            temperature: Sampling temperature. 0.87 is the documented sweet spot
+                for ambient meditation pads (0.85–0.90 range), balancing stability
+                with enough variation for slow-evolving textures.
+            top_k: Token sampling breadth. 250 keeps the full ambient vocabulary
+                available. Low values (< 100) prevent slow-evolving pads and cause
+                repetitive loops or random noise on long generations.
             top_p: Top-p (nucleus) sampling (keep 0.0 for k-only).
             cfg_coef: Classifier-free guidance strength.
             extend_stride: Seconds of new audio per segment (sets context window).
@@ -481,12 +464,20 @@ class MusicEngine:
         hop_size: int = 512,
         flux_threshold_multiplier: float = 4.5,
     ) -> bool:
-        """Return True if audio passes the hallucination check (no sudden transients).
+        """Return True if audio passes quality checks (non-silent, no sudden transients).
 
         Computes per-frame spectral flux (L1 norm of the difference between
-        consecutive magnitude spectra). If any single frame's flux exceeds
-        4.5x the median flux of the segment, it indicates a sudden percussive
-        event — the segment is flagged for rejection and regeneration.
+        consecutive magnitude spectra).  Two failure modes are detected:
+
+        1. **Silent segment** — median flux < 1e-8 means the output is pure
+           silence or an inaudible hum.  These are *rejected* (return False) so
+           the retry loop regenerates the segment rather than feeding silence as
+           the context for the next continuation window (which would cascade
+           blank audio through the remainder of the track).
+
+        2. **Transient spike** — if any single frame's flux exceeds
+           ``flux_threshold_multiplier`` × the median flux, a sudden percussive
+           event was detected and the segment is also rejected.
 
         Args:
             audio:                   1D or (1, N) float tensor at NATIVE_SAMPLE_RATE.
@@ -496,7 +487,7 @@ class MusicEngine:
 
         Returns:
             True  = segment is clean (accept).
-            False = transient spike detected (reject and regenerate).
+            False = silent or transient spike detected (reject and regenerate).
         """
         waveform = audio.squeeze()
         if waveform.ndim > 1:
@@ -519,7 +510,10 @@ class MusicEngine:
 
         median_flux = flux.median()
         if median_flux < 1e-8:
-            return True  # Silent segment — accept
+            # Reject silent segments — feeding silence as continuation context
+            # cascades blank audio through every subsequent window.
+            logger.warning("[MusicEngine] Silent segment detected. Regenerating.")
+            return False
 
         peak_flux = flux.max()
         ratio = float(peak_flux / median_flux)

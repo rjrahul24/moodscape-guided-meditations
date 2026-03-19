@@ -25,14 +25,14 @@ The official AudioCraft library targets **NVIDIA CUDA GPUs**. However, MusicGen 
 
 | Path | Status | Notes |
 |------|--------|-------|
-| **CPU inference** | ✅ Works reliably | Slower, but fully functional. ~3–5× real-time for `musicgen-medium`. |
-| **MPS (Metal Performance Shaders)** | ⚠️ Partially supported | Tensor type issues at runtime; not stable in main AudioCraft as of early 2026. |
+| **CPU inference** | ✅ Works reliably | Slower, but fully functional. ~0.5× realtime for `musicgen-stereo-medium`. |
+| **MPS (Metal Performance Shaders)** | ❌ Disabled | AudioCraft's EnCodec ELU activation corrupts audio tensors on Apple Silicon, producing "broken radio" static. Code enforces CPU. |
 | **MLX port** | ✅ Works (small/medium/large) | Community port; `musicgen-melody` not yet supported. |
 
 ### Recommended Approach for M1 Max 32 GB
 Use **CPU inference** with the official `audiocraft` library. With 32 GB unified memory, the M1 Max can comfortably load `musicgen-medium` (~3.2 GB model) and generate in reasonable time. For a 10-minute meditation track, expect approximately **4–8 minutes** of generation time on CPU.
 
-**Do not attempt MPS** — it causes silent failures or tensor type mismatches in the current AudioCraft codebase. CPU inference is deterministic and stable.
+**Do not attempt MPS** — AudioCraft's EnCodec decoder uses F.elu extensively, and Apple Silicon's MPS backend has a known tensor corruption bug in ELU that produces audible static ("broken radio" artifacts) even with contiguity patches. The code in `core/music_engine.py` now enforces CPU-only inference. CPU is deterministic and produces artifact-free audio.
 
 ### Device Detection Code
 ```python
@@ -98,16 +98,17 @@ python -c "from audiocraft.models import MusicGen; print('AudioCraft OK')"
 
 ### Recommendation for This Project
 
-**Primary model: `facebook/musicgen-medium`**
+**Primary model: `facebook/musicgen-stereo-medium`** (actual implementation in `core/music_engine.py`)
 
 Rationale:
 - Produces rich, evolving ambient textures — significantly better than `small` for long sustained pads
-- Fits comfortably within M1 Max's 32 GB unified memory
-- Generation time is acceptable for a local tool (~5–10 minutes per 10-minute track)
+- Stereo output generated internally, downmixed to mono at the pipeline boundary
+- Fits comfortably within M1 Max's 36 GB unified memory (~10 GB with stereo decoding)
+- Generation time is acceptable for a local tool (~5–10 minutes per 10-minute track on CPU)
 - **Avoid `musicgen-melody`** for pure ambient meditation: it was trained to follow melodic structures, which causes it to introduce unwanted musical movement and beat patterns in ambient/drone contexts
 
 **Fallback: `facebook/musicgen-small`**
-- Use if the user explicitly wants faster generation or is testing
+- Used automatically if stereo-medium fails to load
 
 **Optional upgrade: `facebook/musicgen-large`**
 - Enable via user setting if they're willing to wait 15–20 minutes for a 10-minute track

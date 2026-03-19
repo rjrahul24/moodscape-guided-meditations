@@ -10,7 +10,7 @@ Generative AI audio models operate at different native rates:
 |--------|-------------|-------|
 | Kokoro TTS | 24 kHz | CPU-only on Apple Silicon |
 | F5-TTS | 24 kHz | MPS (Apple Silicon GPU) |
-| MusicGen | 32 kHz | CPU / MPS via AudioCraft |
+| MusicGen | 32 kHz | CPU only (MPS disabled — EnCodec ELU bug) |
 | ACE-Step 1.5 | **48 kHz** stereo | MLX backend |
 | Lyria RealTime | 48 kHz stereo | Cloud WebSocket API |
 
