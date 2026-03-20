@@ -584,7 +584,7 @@ Blend presets are resolved by `core/kokoro_tts/voice_manager.py` into weighted t
 | Use `librosa` time-stretch for pacing | Degrades voice quality | Use Kokoro's `speed` parameter |
 | Go below `speed=0.65` | Artifacts and distorted prosody | Clamp to `max(speed, 0.65)` |
 | Export MP3 during synthesis | Click artifacts in silences | WAV first, MP3 only at final export |
-| Load both TTS and MusicGen simultaneously | OOM on 8–16 GB GPU | Sequential loading with `unload_model()` |
+| Load both TTS and HeartMuLa simultaneously | OOM on 8–16 GB GPU | Sequential loading with `unload_model()` |
 | Ignore `PYTORCH_ENABLE_MPS_FALLBACK=1` | MPS crashes on some ops | Always set before any torch import |
 
 ---

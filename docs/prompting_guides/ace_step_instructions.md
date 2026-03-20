@@ -169,7 +169,7 @@ Key is passed to the LM planner as a metadata constraint — **do not include ke
 ### Reference Audio
 
 When a reference audio file is uploaded:
-- For ACE-Step: guides **timbre and acoustic style** (the "colour" of the sound — room character, instrument family warmth). It does **not** guide melody or chord progression the way MusicGen's melody conditioning does.
+- For ACE-Step: guides **timbre and acoustic style** (the "colour" of the sound — room character, instrument family warmth). It does **not** guide melody or chord progression the way HeartMuLa's melody conditioning does.
 - Provided as a temp `.wav` file path to the `reference_audio` parameter of `GenerationParams`.
 - The influence is subtle — the LM planner still drives structure; the reference audio shapes the timbral space.
 

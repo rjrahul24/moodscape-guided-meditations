@@ -27,5 +27,5 @@ Press `Ctrl+C` in the terminal to stop the app.
 
 ## Notes
 
-- Kokoro TTS and MusicGen are loaded sequentially to minimize memory usage.
+- Kokoro TTS and HeartMuLa are loaded sequentially to minimize memory usage.
 - The app requires `espeak-ng` to be installed at the system level (see README for installation instructions).

@@ -10,7 +10,7 @@ Generative AI audio models operate at different native rates:
 |--------|-------------|-------|
 | Kokoro TTS | 24 kHz | CPU-only on Apple Silicon |
 | F5-TTS | 24 kHz | MPS (Apple Silicon GPU) |
-| MusicGen | 32 kHz | CPU only (MPS disabled — EnCodec ELU bug) |
+| HeartMuLa | 44.1 kHz | MPS on Apple Silicon / CPU fallback |
 | ACE-Step 1.5 | **48 kHz** stereo | MLX backend |
 | Lyria RealTime | 48 kHz stereo | Cloud WebSocket API |
 
@@ -19,7 +19,7 @@ Generative AI audio models operate at different native rates:
 All audio is upsampled to a *mix sample rate* before Pedalboard FX and mixing. The mix rate depends on the music engine selected:
 
 - **ACE-Step / Lyria path**: mix at **48 kHz** (preserves native fidelity of the music engine).
-- **MusicGen path**: mix at **44.1 kHz** (MusicGen's 32 kHz is upsampled via Kaiser-windowed sinc).
+- **HeartMuLa path**: mix at **44.1 kHz** (HeartMuLa's native 44.1 kHz output requires no upsampling).
 - The mix sample rate is also the export rate (configurable in the UI via "48 kHz Output" checkbox).
 - TTS audio (24 kHz) is upsampled to the mix rate using high-accuracy resampling for all engines:
   - All TTS engines: `librosa.resample(res_type="soxr_vhq")` — highest accuracy mode, minimises zero-crossing errors
@@ -53,11 +53,11 @@ Before mixing, `make_vocal_pocket_chain()` in `core/audio_processor.py` carves s
 
 Three engine-specific chains exist in `core/audio_processor.py`:
 
-### MusicGen (`make_music_chain`)
+### HeartMuLa (`make_heartmula_music_chain`)
 ```python
 PeakFilter(300 Hz, +2.0 dB, Q=0.7)       # Low-end warmth
-PeakFilter(5500 Hz, +0.8 dB, Q=0.6)      # Clarity/air presence (psychoacoustic super-resolution)
-HighShelfFilter(8000 Hz, -3.0 dB)         # Targets 8-12 kHz autoregressive shimmer
+PeakFilter(5500 Hz, +0.8 dB, Q=0.6)      # Clarity/air presence
+HighShelfFilter(8000 Hz, -3.0 dB)         # Gentle HF rolloff
 Limiter(-1.0 dB)
 ```
 
@@ -97,7 +97,7 @@ The master chain is a lightweight safety net applied per-chunk in `export_audio(
 
 All crossfade operations use **equal-power cosine crossfades** (cos²/sin²) rather than linear fades. This prevents the ~3 dB loudness dip at the midpoint. This applies to:
 
-- **MusicGen segment stitching** (`music_engine.py`): 2-second macro crossfade at each segment seam, plus a **micro-crossfade** (64-sample triangular window at zero-crossing) to eliminate residual HF clicks.
+- **HeartMuLa segment stitching** (`core/heart_mula/engine.py`): 2-second macro crossfade at each segment seam, plus a **micro-crossfade** (64-sample triangular window at zero-crossing) to eliminate residual HF clicks.
 - **ACE-Step continuation** (`acestep_engine.py`): 2-second equal-power cosine crossfade at each cover segment seam.
 - **Music looping** (`mixer.py`): 2-second crossfade when music is looped to cover the full meditation duration.
 - **TTS chunk assembly**: 300ms cosine-squared crossfade for both Kokoro and F5-TTS engines.

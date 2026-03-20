@@ -28,4 +28,6 @@ build/
 ~/.cache/huggingface/
 .cache/
 ACE-Step-1.5/
+ckpt/
+ckpt-mlx/
 docs/temp/

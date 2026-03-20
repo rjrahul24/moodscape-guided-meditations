@@ -229,8 +229,7 @@ class AceStepEngine:
                     ]
 
         Returns:
-            Mono float32 numpy array at 24 000 Hz — same contract as
-            ``MusicEngine.generate()``.
+            Mono float32 numpy array at 48 000 Hz.
         """
         # Quality selection (Task 5)
         requested_model = kwargs.get("acestep_model_type", "sft")

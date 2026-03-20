@@ -205,7 +205,7 @@ Selectable in the UI under "Reverb Space". Applied via Pedalboard `Convolution` 
 | `core/kokoro_tts/postprocessor.py` | Per-chunk cleanup, crossfade assembly, spectral gating, unified voice FX chain (`build_voice_chain()`) |
 | `core/f5_tts/postprocessor.py` | `F5MasteringEngine` — split-band de-esser, crossfade assembly, F5 Phase B EQ |
 | `core/breath_sounds.py` | Shared breath sample loader (cached, 75ms fade-in/out) |
-| `core/audio_processor.py` | Music FX chains (MusicGen/ACE-Step/Lyria), vocal pocket chain, master chain |
+| `core/audio_processor.py` | Music FX chains (HeartMuLa/ACE-Step/Lyria), vocal pocket chain, master chain |
 | `core/mixer.py` | Lookahead sidechain ducking, overlay, cosine crossfade looping, fades, LUFS, streaming export |
 | `core/kokoro_tts/preprocessor.py` | Script parsing (breath/pause/voice), text expansion, IPA injection, prosody punctuation, token chunking |
 | `core/f5_tts/preprocessor.py` | Script parsing (breath/pause/voice), character-count chunking |
@@ -244,7 +244,7 @@ After the master chain, `qa_monitor.run_qa_checks()` runs 7 automated checks:
 - [x] Subsonic below 30 Hz removed from master (HighpassFilter)
 - [x] Sidechain ducking: 75ms lookahead, 50ms attack, 500ms release
 - [x] Equal-power cosine² crossfades: 300ms TTS assembly, 2s music, 2s music loop
-- [x] MusicGen seams: micro-crossfade (64-sample triangular at zero-crossing) after _stitch()
+- [x] HeartMuLa seams: micro-crossfade (64-sample triangular at zero-crossing) after _stitch()
 - [x] Streaming export in 20s chunks — no full-array load at export time
 - [x] LUFS target: -19 LUFS integrated (per session)
 - [x] 7 QA checks including spectral rolloff and onset strength (new)

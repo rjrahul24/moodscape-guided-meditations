@@ -1,13 +1,18 @@
 """Orchestrates the full meditation audio generation pipeline."""
 
+import gc
 import logging
 import time
 
 import numpy as np
 
-from core.audio_processor import make_master_chain, make_music_chain
+try:
+    import mlx.core as mx
+except ImportError:
+    mx = None
+
+from core.audio_processor import make_master_chain
 from core.mixer import export_audio, export_stems, mix, normalize_loudness
-from core.music_engine import MusicEngine
 from core.qa_monitor import run_qa_checks
 from core.kokoro_tts.engine import KokoroEngine
 from core.stitch_client import StitchClient
@@ -23,42 +28,44 @@ def _progress(cb, fraction, message):
         cb(fraction, message)
 
 
-def _enhance_music_prompt(user_prompt: str) -> str:
-    """Build a MusicGen-optimized prompt from the user's description.
+def _enhance_heartmula_prompt(user_prompt: str, duration_hint: float = 120.0) -> tuple[str, str]:
+    """Build (tags, lyrics) for HeartMuLa from the user's music style prompt.
 
-    Token ordering matters: MusicGen's T5 text encoder weighs earlier tokens
-    more heavily, so positive genre anchors are front-loaded, followed by the
-    user's description, then negative exclusions at the tail. Negative terms
-    are soft constraints only — HT Demucs stem separation provides the hard
-    backstop for drums/vocals removal.
+    HeartMuLa uses comma-separated style tags (not natural-language sentences).
+    The tags field corresponds to the 'tags' parameter in heartlib.
+    The lyrics field uses structural markers for instrumental tracks.
 
-    Keeps total under ~45 words for best MusicGen attention utilization.
+    Tag construction:
+    - Prepend meditation base tags (filtered to avoid duplicating user words)
+    - Append user prompt verbatim
+    - Append 'instrumental' if no vocal intent detected
+
+    Structural lyrics:
+    - For instrumental meditation: use section markers only (no text lines)
+    - Scale number of sections with duration
     """
-    # Positive genre anchors — front-loaded for T5 encoder weighting
-    genre_anchors = "deep ambient soundscape, evolving synthesizer pads, ethereal reverb"
+    base_tags = "ambient, meditation, calm, relaxing, peaceful, slow"
+    user_lower = user_prompt.lower().strip()
 
-    # Add contextual descriptors only if the user hasn't already mentioned them
-    optional = [
-        ("ambient", "ambient"),
-        ("reverb", "spacious reverb"),
-        ("evolving", "slow evolving"),
-        ("warm", "warm"),
-    ]
-    user_lower = user_prompt.lower()
-    extras = [desc for key, desc in optional if key not in user_lower][:2]
+    # Filter base tags not already in user prompt
+    filtered = [t.strip() for t in base_tags.split(",") if t.strip().split()[0] not in user_lower]
+    tag_parts = filtered + [user_prompt.strip()]
 
-    # Negative exclusions trail — keeps positive intent at the front
-    negative = "no drums, no percussion, no vocals, no beat, no rhythm, beatless"
+    # Add instrumental marker if no vocal intent
+    if "vocal" not in user_lower and "lyric" not in user_lower and "sing" not in user_lower:
+        tag_parts.append("instrumental, no vocals")
 
-    parts = [genre_anchors, user_prompt] + extras + [negative]
-    enhanced = ", ".join(parts)
+    tags = ", ".join(p for p in tag_parts if p).strip(", ")
 
-    # Cap at 45 words to stay within MusicGen's effective attention window
-    words = enhanced.split()
-    if len(words) > 45:
-        enhanced = " ".join(words[:45])
+    # Build structural lyrics for the duration
+    if duration_hint <= 90.0:
+        lyrics = "[intro]\n\n[verse]\n\n[outro]"
+    elif duration_hint <= 300.0:
+        lyrics = "[intro]\n\n[verse]\n\n[bridge]\n\n[verse]\n\n[outro]"
+    else:
+        lyrics = "[intro]\n\n[verse]\n\n[bridge]\n\n[verse]\n\n[bridge]\n\n[verse]\n\n[outro]"
 
-    return enhanced
+    return tags, lyrics
 
 
 def _enhance_acestep_prompt(user_prompt: str, duration_hint: float = 120.0) -> tuple[str, str]:
@@ -76,7 +83,6 @@ class MeditationPipeline:
 
     def __init__(self):
         self.tts = KokoroEngine()
-        self.music = MusicEngine()
         self.stitch = StitchClient()
 
     def generate(
@@ -96,11 +102,9 @@ class MeditationPipeline:
         upsample_48k: bool = False,
         generation_mode: str = "Instrumental + Vocal",
         instrumental_duration_m: float = 3.0,
-        music_model: str = "musicgen",
+        music_model: str = "heartmula",
         music_prompt_stages: list[tuple[str, float]] | None = None,
         stem_separation: bool = True,
-        melody_audio: np.ndarray | None = None,
-        melody_sample_rate: int | None = None,
         bpm: int = 50,
         keyscale: str = "Auto",
         acestep_model_type: str = "sft",
@@ -144,10 +148,6 @@ class MeditationPipeline:
             stem_separation: If True (default), run AI source separation
                 (HT Demucs) on generated music to remove any unwanted drums
                 or vocals that the model may have produced despite prompting.
-            melody_audio: Optional reference audio for melody conditioning
-                (MusicGen only). Float32 mono numpy array. Guides the model's
-                melodic/harmonic structure toward the reference.
-            melody_sample_rate: Sample rate of melody_audio.
 
         Returns:
             Tuple of (path_to_output_file, status_message, stitch_design).
@@ -166,11 +166,12 @@ class MeditationPipeline:
         is_vocals = generation_mode == "Vocals Only"
         use_acestep = music_model == "acestep"
         use_lyria = music_model == "lyria"
+        use_heartmula = music_model == "heartmula"
 
-        # Lyria, ACE-Step, and F5 instances mix at native 48 kHz for quality; 
-        # all other engines mix at 44.1 kHz.
+        # All music engines output at 48 kHz natively; mix at that rate for quality.
+        # F5-TTS also mixes at 48 kHz.
         # TTS voice (24 kHz) is upsampled to match whichever rate is selected.
-        mix_sr = 48000 if (use_lyria or use_acestep or tts_engine == "f5") else TARGET_SR
+        mix_sr = 48000 if (use_lyria or use_acestep or use_heartmula or tts_engine == "f5") else TARGET_SR
 
         logger.info("Starting generation — mode=%s, music_model=%s, voice=%s, speed=%s, seed=%s, lufs=%s",
                     generation_mode, music_model, voice, speed, seed, target_lufs)
@@ -204,6 +205,7 @@ class MeditationPipeline:
                     tts = self.tts
                     _progress(progress_cb, 0.05, "Loading Kokoro voice model...")
                 tts.load_model()
+                gc.collect()
 
                 # ── Step 3: Synthesize narration ────────────────────────────────
                 _progress(progress_cb, 0.10, "Synthesizing narration...")
@@ -267,7 +269,7 @@ class MeditationPipeline:
 
                 # Upsample Voice to the mix sample rate:
                 #   Lyria / ACE-Step path → 48 kHz (preserves native music resolution)
-                #   MusicGen → 44.1 kHz (studio standard)
+                #   HeartMuLa → 44.1 kHz (HeartCodec native rate)
                 # Always use high_accuracy=True (soxr_vhq) — mathematically zero
                 # aliasing artifacts, avoids subtle metallic shimmer on non-integer
                 # ratio conversions (24 kHz → 44.1 kHz).
@@ -306,7 +308,7 @@ class MeditationPipeline:
                     if tts_engine == "f5":
                         del tts
 
-                music_model_label = "Lyria RealTime" if use_lyria else ("ACE-Step 1.5" if use_acestep else "MusicGen")
+                music_model_label = "Lyria RealTime" if use_lyria else ("ACE-Step 1.5" if use_acestep else "HeartMuLa")
                 _progress(progress_cb, 0.40, f"Switching to {music_model_label}...")
 
                 # Instantiate the selected music engine
@@ -316,9 +318,13 @@ class MeditationPipeline:
                 elif use_acestep:
                     from core.acestep_engine import AceStepEngine
                     music_engine = AceStepEngine()
+                elif use_heartmula:
+                    from core.heart_mula.engine import HeartMulaEngine
+                    music_engine = HeartMulaEngine()
                 else:
-                    music_engine = self.music
+                    raise ValueError(f"Unknown music model: {music_model}")
                 music_engine.load_model()
+                gc.collect()
 
                 # ── Step 5: Generate background music ───────────────────────────
                 story_mode = music_prompt_stages is not None
@@ -339,16 +345,6 @@ class MeditationPipeline:
                     frac = 0.45 + 0.25 * (current / max(total, 1))
                     label = f"story stage {current}/{total}" if story_mode else f"segment {current}/{total}"
                     _progress(progress_cb, frac, f"Generating music {label}...")
-
-                # Melody conditioning is only supported by MusicGen
-                melody_kwargs = {}
-                if not use_acestep and not use_lyria and melody_audio is not None and melody_sample_rate is not None:
-                    melody_kwargs = {
-                        "melody_audio": melody_audio,
-                        "melody_sample_rate": melody_sample_rate,
-                    }
-                    logger.info("Melody conditioning enabled — %.1fs reference audio",
-                                len(melody_audio) / melody_sample_rate)
 
                 if story_mode:
                     # Build engine-specific stages: enhance each stage prompt
@@ -380,23 +376,21 @@ class MeditationPipeline:
                             lyrics=enhanced_lyrics,
                             bpm=bpm,
                             keyscale=keyscale,
-                            **melody_kwargs,
                         )
-                    else:
-                        # MusicEngine expects pre-enhanced prompts (pipeline enhances).
+                    elif use_heartmula:
                         engine_stages = [
-                            (_enhance_music_prompt(p), d)
+                            (_enhance_heartmula_prompt(p, duration_hint=d)[0], d)
                             for p, d in music_prompt_stages
                         ]
-                        enhanced_prompt = _enhance_music_prompt(music_prompt)
+                        enhanced_tags, _ = _enhance_heartmula_prompt(music_prompt, duration_hint=music_duration)
                         music_audio = music_engine.generate(
-                            enhanced_prompt,
+                            enhanced_tags,
                             music_duration,
                             progress_cb=music_progress,
                             prompt_stages=engine_stages,
-                            seed=seed,
-                            **melody_kwargs,
                         )
+                    else:
+                        raise ValueError(f"No story mode path for music_model: {music_model}")
                 else:
                     # Single-prompt generation
                     if use_lyria:
@@ -409,21 +403,28 @@ class MeditationPipeline:
                         enhanced_prompt, lyrics = _enhance_acestep_prompt(music_prompt, duration_hint=music_duration)
                         music_audio = music_engine.generate(
                             enhanced_prompt, music_duration, progress_cb=music_progress,
-                            lyrics=lyrics, bpm=bpm, keyscale=keyscale, 
-                            acestep_model_type=acestep_model_type, **melody_kwargs,
+                            lyrics=lyrics, bpm=bpm, keyscale=keyscale,
+                            acestep_model_type=acestep_model_type,
+                        )
+                    elif use_heartmula:
+                        enhanced_tags, enhanced_lyrics = _enhance_heartmula_prompt(music_prompt, duration_hint=music_duration)
+                        music_audio = music_engine.generate(
+                            enhanced_tags, music_duration, progress_cb=music_progress,
+                            lyrics=enhanced_lyrics,
                         )
                     else:
-                        enhanced_prompt = _enhance_music_prompt(music_prompt)
-                        music_audio = music_engine.generate(
-                            enhanced_prompt, music_duration, progress_cb=music_progress,
-                            seed=seed,
-                            **melody_kwargs,
-                        )
+                        raise ValueError(f"No generation path for music_model: {music_model}")
 
                 # ── Step 5b: Unload music model ─────────────────────────────────
                 music_engine.unload_model()
-                if use_acestep or use_lyria:
+                if use_acestep or use_lyria or use_heartmula:
                     del music_engine
+                gc.collect()
+                if mx:
+                    # Force release ALL cached MLX metal buffers back to the OS
+                    # so subsequent steps (Demucs subprocess) have enough memory.
+                    mx.set_cache_limit(0)
+                    mx.clear_cache()
 
                 # ── Step 5c: AI Source Separation (remove drums/vocals) ─────────
                 if stem_separation:
@@ -432,33 +433,18 @@ class MeditationPipeline:
                         from core.lyria.engine import TARGET_SAMPLE_RATE as MUSIC_SR
                     elif use_acestep:
                         from core.acestep_engine import TARGET_SAMPLE_RATE as MUSIC_SR
+                    elif use_heartmula:
+                        from core.heart_mula.engine import TARGET_SAMPLE_RATE as MUSIC_SR
                     else:
-                        from core.music_engine import TARGET_SAMPLE_RATE as MUSIC_SR
+                        raise ValueError(f"Unknown music model for stem separation: {music_model}")
                     from core.stem_separator import StemSeparator
                     separator = StemSeparator()
-                    separator.load_model()
                     music_audio = separator.remove_drums_and_vocals(music_audio, MUSIC_SR)
-                    separator.unload_model()
                     del separator
+                    gc.collect()
 
-                if mix_sr == 48000:
-                    _progress(progress_cb, 0.70, f"Ensuring {music_model_label} audio is at 48kHz mixing rate...")
-                    if not (use_lyria or use_acestep):
-                        # music_audio is from MusicGen (24kHz) and needs upsampling
-                        from core.audio_processor import upsample_audio
-                        from core.music_engine import TARGET_SAMPLE_RATE as MUSIC_SR
-                        music_audio = upsample_audio(music_audio, from_sr=MUSIC_SR, to_sr=48000)
-                    else:
-                        # Lyria and ACE-Step already output at 48kHz
-                        pass
-                else:
-                    _progress(progress_cb, 0.70, f"Upsampling {music_model_label} audio to 44.1kHz standard...")
-                    from core.audio_processor import resample_to_44100
-                    if use_acestep:
-                        from core.acestep_engine import TARGET_SAMPLE_RATE as MUSIC_SR
-                    else:
-                        from core.music_engine import TARGET_SAMPLE_RATE as MUSIC_SR
-                    music_audio = resample_to_44100(music_audio, MUSIC_SR)
+                # All engines (ACE-Step, Lyria, HeartMuLa) output at 48 kHz natively.
+                _progress(progress_cb, 0.70, f"Ensuring {music_model_label} audio is at 48kHz mixing rate...")
             else:
                 music_audio = np.zeros(0, dtype=np.float32)
 
@@ -488,17 +474,19 @@ class MeditationPipeline:
                 _progress(progress_cb, 0.77, "Applying music effects...")
                 from core.audio_processor import apply_fx as apply_audio_fx
                 # Pre-mix loudness targets per engine:
-                #   Lyria:    -16 LUFS — slightly quieter, avoids dominating the mix
-                #   ACE-Step: -14 LUFS — matches final streaming standard; ensures strong,
-                #             audible presence during vocal pauses before the -17 dB
-                #             music_volume_db offset and ducking are applied in mix()
-                #   MusicGen: -20 LUFS — established reference
+                #   Lyria:     -16 LUFS — slightly quieter, avoids dominating the mix
+                #   ACE-Step:  -14 LUFS — matches final streaming standard; ensures strong,
+                #              audible presence during vocal pauses before the -17 dB
+                #              music_volume_db offset and ducking are applied in mix()
+                #   HeartMuLa: -17 LUFS — consistent output levels from HeartCodec
                 if use_lyria:
                     premix_lufs = -16.0
                 elif use_acestep:
                     premix_lufs = -14.0
+                elif use_heartmula:
+                    premix_lufs = -17.0
                 else:
-                    premix_lufs = -20.0
+                    raise ValueError(f"No premix LUFS for: {music_model}")
                 music_audio = normalize_loudness(music_audio, mix_sr, target_lufs=premix_lufs)
                 if use_lyria:
                     from core.audio_processor import make_lyria_music_chain
@@ -506,8 +494,11 @@ class MeditationPipeline:
                 elif use_acestep:
                     from core.audio_processor import make_acestep_music_chain
                     music_chain = make_acestep_music_chain()
+                elif use_heartmula:
+                    from core.audio_processor import make_heartmula_music_chain
+                    music_chain = make_heartmula_music_chain()
                 else:
-                    music_chain = make_music_chain()
+                    raise ValueError(f"No music FX chain for: {music_model}")
                 music_audio = apply_audio_fx(music_audio, music_chain, mix_sr)
 
                 # Carve vocal pocket for intelligibility
@@ -561,7 +552,7 @@ class MeditationPipeline:
             _progress(progress_cb, 0.95, f"Exporting {output_format.upper()}...")
 
             # Lyria and ACE-Step export at native 48 kHz.
-            # MusicGen respects the user's upsample_48k preference.
+            # HeartMuLa respects the user's upsample_48k preference.
             export_sr = 48000 if (use_lyria or use_acestep or upsample_48k) else TARGET_SR
 
             output_path = export_audio(
@@ -594,6 +585,12 @@ class MeditationPipeline:
             import torch
             if torch.backends.mps.is_available():
                 torch.mps.empty_cache()
+            
+            # Additional stability for MLX and general Python heap
+            gc.collect()
+            if mx:
+                mx.set_cache_limit(0)
+                mx.clear_cache()
 
         _progress(progress_cb, 1.0, "Done!")
         return output_path, status_message, stitch_design

@@ -30,8 +30,8 @@ The full signal flow through Pedalboard in MoodScape:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Kokoro TTS Output                MusicGen Output           │
-│  float32, mono, 24000 Hz          float32, 32000 Hz         │
+│  Kokoro TTS Output                HeartMuLa Output          │
+│  float32, mono, 24000 Hz          float32, 44100 Hz         │
 └──────────┬──────────────────────────────────────────────────┘
            │                              │
            │  ┌───────────────────────┐    │
@@ -83,7 +83,7 @@ The full signal flow through Pedalboard in MoodScape:
 ## 3. Sample Rate Alignment
 
 **Pre-Mix Standardization:**
-Audio from multiple models (Kokoro at 24kHz, MusicGen at 32kHz) must be standardized to a common studio rate to prevent pitch-shifting "chipmunk" artifacts. MoodScape standardizes aggressively on **44.1kHz** immediately after generation using `torchaudio.functional.resample`.
+Audio from multiple models (Kokoro at 24kHz, HeartMuLa at 44.1kHz) must be standardized to a common studio rate to prevent pitch-shifting "chipmunk" artifacts. MoodScape standardizes aggressively on **44.1kHz** immediately after generation using `torchaudio.functional.resample`.
 
 ```python
 def resample_to_44100(audio: np.ndarray, orig_sr: int) -> np.ndarray:
@@ -123,12 +123,12 @@ Background music receives spectral masking to preserve vocal clarity while maint
 
 - `PeakFilter (300Hz, +2dB)`: Adds low-end warmth to ambient pads.
 - `PeakFilter (1800Hz, -3dB)`: Carves a vocal pocket notch — deeper and slightly higher than before for better speech clarity.
-- `HighShelfFilter (10kHz, -4dB)`: Gently softens MusicGen's 'digital shimmer' above 10kHz while preserving all ambient harmonic content between 3–10kHz.
+- `HighShelfFilter (10kHz, -4dB)`: Gently softens HeartMuLa's high-frequency content above 10kHz while preserving all ambient harmonic content between 3–10kHz.
 
 > **Note:** The previous implementation used a `LowpassFilter(3000Hz)` which was a brick-wall cut that destroyed all harmonic content above 3kHz. The `HighShelfFilter` replaces this with a gentle slope that preserves the natural timbre of ambient pads.
 
 ```python
-def make_music_chain() -> Pedalboard:
+def make_heartmula_music_chain() -> Pedalboard:
     return Pedalboard([
         PeakFilter(cutoff_frequency_hz=300, gain_db=2.0, q=0.7),      # Low-end warmth
         PeakFilter(cutoff_frequency_hz=1800, gain_db=-3.0, q=0.6),   # Vocal pocket notch
@@ -143,12 +143,12 @@ def make_music_chain() -> Pedalboard:
 
 ## 6. Master Chain
 
-The master chain applies subsonic filtering, headroom reduction, glue compression, and final limiting. The 35Hz highpass filter removes inaudible MusicGen rumble that would otherwise consume digital headroom, causing the limiter to trigger prematurely.
+The master chain applies subsonic filtering, headroom reduction, glue compression, and final limiting. The 35Hz highpass filter removes inaudible sub-bass rumble that would otherwise consume digital headroom, causing the limiter to trigger prematurely.
 
 ```python
 def make_master_chain() -> Pedalboard:
     return Pedalboard([
-        HighpassFilter(cutoff_frequency_hz=35.0),   # Remove inaudible MusicGen rumble
+        HighpassFilter(cutoff_frequency_hz=35.0),   # Remove inaudible sub-bass rumble
         Gain(gain_db=-3.0),
         Compressor(threshold_db=-18.0, ratio=2.0, attack_ms=30.0, release_ms=300.0),
         Limiter(threshold_db=-0.1),

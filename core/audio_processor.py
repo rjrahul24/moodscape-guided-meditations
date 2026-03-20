@@ -39,41 +39,37 @@ IR_CATALOG = {
 DEFAULT_IR = "warm_studio"
 
 
-def make_music_chain() -> Pedalboard:
-    """FX chain for MusicGen output — spectral shaping for 24 kHz source material.
+def make_heartmula_music_chain() -> Pedalboard:
+    """FX chain tailored for HeartMuLa / HeartCodec output at 44.1 kHz.
 
-    Super-resolution strategy:
-    MusicGen outputs at 32 kHz native, downsampled to 24 kHz in the engine
-    (Nyquist: 12 kHz), then resampled to 44.1 kHz. The 12–22 kHz band in the
-    final file is mathematically empty; the resampler's anti-alias filter
-    (rolloff=0.9475) creates a natural taper from ~11.4 kHz to 12 kHz.
-
-    The previous HighShelfFilter at 10 kHz was acting almost entirely in the
-    dead zone above 12 kHz and barely touching the actual artifact zone. The
-    real MusicGen artefact region — grainy autoregressive-decoding shimmer —
-    sits at 8–10 kHz (just below the processing ceiling).
+    HeartMuLa/HeartCodec produces 44.1 kHz stereo output (downmixed to mono
+    in the engine).  Its spectral profile is clean and full-range with potential
+    for slightly bright upper mids from the autoregressive LM characteristics.
 
     Chain:
-      1. 300 Hz low-end warmth: pads sound fuller without low-mid muddiness.
-      2. 1800 Hz vocal-pocket notch: creates spectral space for narration to
-         sit above the music during mixed sessions.
-      3. 5500 Hz clarity/air presence (+0.8 dB, broad Q=0.6): psychoacoustic
-         "super-resolution" — a gentle boost in the upper-presence range adds
-         perceived openness and compensates for the absent 12–22 kHz octave
-         that the listener's ear expects from high-fidelity content. Applied
-         below the artifact zone so it adds clarity without amplifying shimmer.
-      4. 8000 Hz HF shelf (-3 dB): targets the actual MusicGen artifact zone.
-         Previously at 10 kHz this filter was largely inactive (above Nyquist
-         of the 24 kHz intermediate); moved to 8 kHz it now attenuates the
-         8–12 kHz region where autoregressive decoding leaves grainy noise.
-         ACE-Step's chain already uses this same 8 kHz placement.
-      5. Limiter at -1 dBFS.
+      1. HighpassFilter at 50 Hz — remove sub-50 Hz content; HeartCodec's
+         12.5 Hz token rate introduces low-frequency quantization noise.
+      2. PeakFilter at 250 Hz (+1.5 dB, Q=0.7) — warmth for meditation pads.
+      3. PeakFilter at 4000 Hz (-1.5 dB, Q=0.8) — tame LM upper-mid brightness;
+         keeps music behind narration without killing air.
+      4. HighShelfFilter at 9500 Hz (-1.5 dB) — gentle HF rolloff; HeartCodec
+         has full 22 kHz bandwidth, slight rolloff improves meditation warmth.
+      5. Compressor (-18 dB, 2:1, 80ms attack, 600ms release) — gentle glue;
+         slower release than ACE-Step chain for longer musical phrases.
+      6. Limiter at -0.5 dBFS.
     """
     return Pedalboard([
-        PeakFilter(cutoff_frequency_hz=300, gain_db=2.0, q=0.7),      # Low-end warmth
-        PeakFilter(cutoff_frequency_hz=5500, gain_db=0.8, q=0.6),     # Clarity/air presence
-        HighShelfFilter(cutoff_frequency_hz=8000.0, gain_db=-3.0),    # HF artefact suppression
-        Limiter(threshold_db=-1.0),
+        HighpassFilter(cutoff_frequency_hz=50.0),
+        PeakFilter(cutoff_frequency_hz=250, gain_db=1.5, q=0.7),
+        PeakFilter(cutoff_frequency_hz=4000, gain_db=-1.5, q=0.8),
+        HighShelfFilter(cutoff_frequency_hz=9500.0, gain_db=-1.5),
+        Compressor(
+            threshold_db=-18.0,
+            ratio=2.0,
+            attack_ms=80.0,
+            release_ms=600.0,
+        ),
+        Limiter(threshold_db=-0.5),
     ])
 
 
@@ -124,8 +120,8 @@ def make_lyria_music_chain() -> Pedalboard:
     Lyria's diffusion model produces stereo audio that has been averaged to
     mono by the engine.  Its spectral profile differs from both MusicGen and
     ACE-Step:
-    - The 48 kHz native rate means content extends above 12 kHz (unlike
-      MusicGen's 32→24 kHz pipeline, whose Nyquist sits at 12 kHz).
+    - The 48 kHz native rate means content extends above 12 kHz, with full
+      bandwidth up to ~22 kHz.
     - Lyria tends to be brighter and more harmonically dense than ACE-Step's
       ambient output, so upper-mid softening is more aggressive.
     - Sub-bass rumble is present but not as severe as ACE-Step diffusion noise.
@@ -227,7 +223,7 @@ def resample_to_44100(audio: np.ndarray, orig_sr: int) -> np.ndarray:
     """Resample audio to the 44.1kHz studio standard.
     
     Uses torchaudio for high-quality, efficient resampling. Required before
-    applying any Pedalboard FX or mixing Kokoro (24kHz) and MusicGen (32kHz).
+    applying any Pedalboard FX or mixing audio at different sample rates.
     Supports 1D and 2D arrays.
     """
     import torch

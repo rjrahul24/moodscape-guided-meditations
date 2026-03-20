@@ -9,14 +9,11 @@ import warnings
 # Prevent HuggingFace tokenizers from warning about fork-after-parallelism.
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-# Fix: MPS Autocast on Apple Silicon crashes with float16 on some PyTorch versions
-# related to audiocraft/encodec. We force disable it here for stability.
-os.environ.setdefault("AUDIOCRAFT_DISABLE_MPS_AUTOCAST", "1")
-
 # Fix: MacOS Bus Error (SIGBUS) when Python garbage collects MPS tensors on process exit.
 # We disable fallback to prevent unsupported ops from quietly failing, and register
 # a hard exit hook to bypass the problematic PyTorch C++ destructor sequence.
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.0")
 import atexit
 atexit.register(lambda: os._exit(0))
 
@@ -98,8 +95,8 @@ Slowly open your eyes. Thank you for practicing with me today. [pause:3s]\
 """
 
 DEFAULT_MUSIC_PROMPT = (
-    "Warm evolving synthesizer pads, gentle drone textures, soft sustained tones, "
-    "spacious floating atmosphere, peaceful calm new age instrumental"
+    "ambient, warm synthesizer pads, gentle drone, slow evolving, "
+    "spacious atmosphere, peaceful, soft sustained tones, new age"
 )
 
 
@@ -194,26 +191,13 @@ def generate_meditation(
         if not os.environ.get("GOOGLE_API_KEY", "").strip():
             yield None, _render_status("Error: GOOGLE_API_KEY missing", 0.0, "Please check your .env file")
             return
+    elif music_model_choice == "HeartMuLa":
+        music_model = "heartmula"
     else:
-        music_model = "musicgen"
+        music_model = "heartmula"  # safe default
 
     # Resolve seed: 0 means auto
     seed = int(seed_value) if seed_value and int(seed_value) != 0 else None
-
-    # Load reference audio for melody conditioning if provided
-    melody_audio = None
-    melody_sample_rate = None
-    if reference_audio_file is not None:
-        try:
-            audio_data, sr = sf.read(reference_audio_file)
-            audio_data = audio_data.astype(np.float32)
-            # Convert stereo to mono if needed
-            if audio_data.ndim > 1:
-                audio_data = audio_data.mean(axis=1)
-            melody_audio = audio_data
-            melody_sample_rate = sr
-        except Exception as e:
-            print(f"[App] Failed to load reference audio: {e}")
 
     # Map quality label to engine key (Task 5)
     # "Draft (Turbo / 8-step)" -> "turbo"
@@ -252,8 +236,6 @@ def generate_meditation(
                 do_export_stems=export_stems_flag,
                 upsample_48k=upsample_flag,
                 stem_separation=stem_separation_flag,
-                melody_audio=melody_audio,
-                melody_sample_rate=melody_sample_rate,
                 bpm=acestep_bpm,
                 keyscale=acestep_key,
                 acestep_model_type=acestep_model_type,
@@ -827,16 +809,17 @@ with gr.Blocks(
             # Section 1: Voice & Sound
             with gr.Accordion("Voice & Sound", open=True, elem_classes="accordion-section"):
                 music_model_dropdown = gr.Dropdown(
-                    choices=["MusicGen", "ACE-Step 1.5", "Lyria RealTime"],
-                    value="MusicGen",
+                    choices=["ACE-Step 1.5", "HeartMuLa", "Lyria RealTime"],
+                    value="ACE-Step 1.5",
                     label="Music Engine",
+                    info="ACE-Step 1.5 recommended for Apple Silicon (~5 min). HeartMuLa uses MLX/MPS with lazy loading (~8-20 min).",
                     elem_classes="dropdown-container",
                 )
                 acestep_quality = gr.Radio(
                     choices=["Draft (Turbo / 8-step)", "Studio (SFT / 50-step)"],
                     value="Studio (SFT / 50-step)",
                     label="Quality",
-                    visible=False,
+                    visible=True,
                     elem_classes="pill-radio",
                 )
                 tts_engine_radio = gr.Radio(
@@ -889,7 +872,7 @@ with gr.Blocks(
 
             # Section 3: Advanced
             with gr.Accordion("Advanced", open=False, elem_classes="accordion-section"):
-                with gr.Group(visible=False) as acestep_metadata:
+                with gr.Group(visible=True) as acestep_metadata:
                     gr.Markdown("#### ACE-Step Tuning")
                     with gr.Row():
                         acestep_bpm = gr.Slider(40, 100, 50, step=1, label="BPM")

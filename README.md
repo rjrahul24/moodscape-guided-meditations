@@ -15,7 +15,7 @@ MoodScape is a locally-run AI pipeline that synthesizes professional guided medi
 **AI engines included:**
 - **Kokoro TTS** — fast, lightweight narration (82M params, preset voice blends, CPU)
 - **F5-TTS** — zero-shot voice cloning from any 10s reference recording (MPS)
-- **MusicGen** — ambient music generation from text prompt (1.5B params, CPU)
+- **HeartMuLa** — high-quality text-to-music with structural section control (3B params, MLX/MPS, 44.1 kHz native)
 - **ACE-Step 1.5** — high-fidelity text-to-music with LM planning (MLX, 48 kHz native)
 - **Lyria RealTime** — Google DeepMind cloud music generation (48 kHz, no local GPU needed)
 
@@ -36,7 +36,7 @@ Script text
                   core/f5_tts/      (MPS, 24 kHz mono float32)
     │             → TTS unloaded; memory freed before music loads
     ▼
-[Music Engine]    core/music_engine.py      (MusicGen, CPU, 32→44.1 kHz)
+[Music Engine]    core/heart_mula/engine.py (HeartMuLa, MLX/MPS, 44.1 kHz)
                   core/acestep_engine.py    (ACE-Step 1.5, MLX, 48 kHz)
                   core/lyria/engine.py      (Lyria RealTime, cloud, 48 kHz)
     │             → Music engine unloaded; memory freed
@@ -64,7 +64,7 @@ WAV / MP3  (44.1 kHz or 48 kHz)
 | `core/pipeline.py` | End-to-end orchestration |
 | `core/kokoro_tts/` | Kokoro TTS — preprocessor, engine, postprocessor, voice manager |
 | `core/f5_tts/` | F5-TTS — preprocessor, engine, postprocessor, voice registry |
-| `core/music_engine.py` | MusicGen wrapper (sliding window long-form) |
+| `core/heart_mula/` | HeartMuLa wrapper (3B LM + HeartCodec, segment-and-crossfade) |
 | `core/acestep_engine.py` | ACE-Step 1.5 wrapper (MLX backend, 48 kHz) |
 | `core/lyria/` | Lyria RealTime API — engine, weighted prompt parser |
 | `core/stem_separator.py` | HT Demucs source separation (4-source model) |
@@ -83,9 +83,9 @@ WAV / MP3  (44.1 kHz or 48 kHz)
 
 | Platform | Supported Engines | Notes |
 |----------|-------------------|-------|
-| Apple Silicon (M1/M2/M3) | All 5 engines | Recommended — MLX backend for ACE-Step, MPS for F5-TTS |
-| CUDA GPU (8+ GB VRAM) | Kokoro, F5-TTS, MusicGen, ACE-Step | ACE-Step uses PyTorch MPS fallback on CUDA |
-| CPU-only | Kokoro, MusicGen | ACE-Step and Lyria unavailable; F5-TTS is very slow |
+| Apple Silicon (M1/M2/M3) | All 5 engines | Recommended — MLX backend for ACE-Step, MLX/MPS for HeartMuLa, MPS for F5-TTS |
+| CUDA GPU (8+ GB VRAM) | Kokoro, F5-TTS, HeartMuLa, ACE-Step | ACE-Step uses PyTorch MPS fallback on CUDA |
+| CPU-only | Kokoro | HeartMuLa, ACE-Step, and Lyria unavailable; F5-TTS is very slow |
 
 ### Python & System Dependency
 
@@ -157,7 +157,7 @@ python app.py
 2. **Write your meditation script** in the left panel — use [pause tags](#script-format) for timed silences
 3. **Choose TTS Engine** — `Kokoro` for preset voices, `F5-TTS` for zero-shot voice cloning
 4. **Select a Voice** — Kokoro preset from the dropdown, or F5-TTS voice scanned from `core/f5_tts/assets/`
-5. **Choose Music Engine** — `MusicGen`, `ACE-Step 1.5`, or `Lyria RealTime`
+5. **Choose Music Engine** — `ACE-Step 1.5`, `HeartMuLa`, or `Lyria RealTime`
 6. **Write a Music Prompt** — describe the background music style (see [Music Engines](#music-engines) for prompt tips per engine)
 7. **Configure ACE-Step or Lyria settings** if selected (BPM, key, density, quality mode)
 8. **Expand Audio Settings** to tune ducking, reverb, fade durations, reverb IR, and stem export
@@ -192,7 +192,7 @@ python scripts/generate.py my_script.txt \
 | `--stems` | off | Save separate `voice.wav` and `music.wav` alongside the mix |
 | `--upsample` | off | Export at 48 kHz instead of 44.1 kHz |
 
-> **Note:** The CLI currently uses Kokoro TTS and MusicGen only. F5-TTS, ACE-Step, and Lyria are available via the web UI.
+> **Note:** The CLI currently uses Kokoro TTS and HeartMuLa (default). F5-TTS, ACE-Step, and Lyria are available via the web UI.
 
 ---
 
@@ -291,18 +291,20 @@ See [`docs/model_implementation_guides/f5_tts.md`](docs/model_implementation_gui
 
 ## Music Engines
 
-### MusicGen
+### HeartMuLa
 
 | Property | Value |
 |----------|-------|
-| Model | `facebook/musicgen-medium` (1.5B params) |
-| Backend | CPU (MPS fallback) |
-| Native sample rate | 32 kHz → resampled to 44.1 kHz in pipeline |
-| Long-form strategy | Sliding window (30s segments + audio-conditioned continuation) |
+| Architecture | HeartMuLa LM (3B params) + HeartCodec (12.5 Hz neural codec) |
+| Backend | MLX primary (heartlib-mlx), PyTorch MPS fallback (heartlib) |
+| License | Apache 2.0 |
+| Native sample rate | 44.1 kHz stereo → downmixed to mono |
+| Long-form strategy | Segment-and-crossfade (240s segments + 4s cosine crossfades) |
+| Dtype | LM: bf16, Codec: fp32 (never bf16 for codec) |
 
-Prompts are enhanced with anti-percussion guardrails automatically. Six curated presets are available in the UI: Deep Sleep, Mindfulness, Zen Garden, Healing, Morning, Transcendental.
+Prompts use comma-separated style tags (not sentences). Structural lyrics with `[intro]`, `[verse]`, `[bridge]`, `[outro]` markers guide tonal arc. Tags are enhanced with meditation base tags automatically.
 
-See [`docs/prompting_guides/musicgen_instructions.md`](docs/prompting_guides/musicgen_instructions.md) for prompt engineering and [`docs/model_implementation_guides/musicgen.md`](docs/model_implementation_guides/musicgen.md) for implementation details.
+See [`docs/prompting_guides/heartmula_instructions.md`](docs/prompting_guides/heartmula_instructions.md) for prompt engineering and [`docs/model_implementation_guides/heartmula.md`](docs/model_implementation_guides/heartmula.md) for implementation details.
 
 ---
 
@@ -356,7 +358,7 @@ See [`docs/model_implementation_guides/lyria.md`](docs/model_implementation_guid
 |---------|---------|---------|-------------|
 | Generation Mode | Instrumental + Vocal / Vocals Only / Instrumental Only | Instrumental + Vocal | What the pipeline produces |
 | TTS Engine | Kokoro / F5-TTS | Kokoro | Voice synthesis engine |
-| Music Engine | MusicGen / ACE-Step 1.5 / Lyria RealTime | MusicGen | Background music engine |
+| Music Engine | ACE-Step 1.5 / HeartMuLa / Lyria RealTime | ACE-Step 1.5 | Background music engine |
 | Output Format | WAV / MP3 | WAV | WAV = lossless; MP3 = compressed |
 
 ### Voice Settings
@@ -417,14 +419,14 @@ docs/
 ├── model_implementation_guides/
 │   ├── kokoro_tts.md           ← Kokoro internals, voice blending, preprocessing, FX chain
 │   ├── f5_tts.md               ← F5-TTS zero-shot cloning, multi-phase voices, chained reference
-│   ├── musicgen.md             ← MusicGen sliding window, generation parameters, prompt engineering
+│   ├── heartmula.md            ← HeartMuLa 3B LM + HeartCodec, MLX/MPS, lazy loading, segment-and-crossfade
 │   ├── ace-step.md             ← ACE-Step architecture, MLX backend, MESA framework, weight download
 │   ├── lyria.md                ← Lyria RealTime API, weighted prompts, session limits, SynthID
 │   └── pedalboard.md           ← Pedalboard FX chain design, all plugin parameters
 ├── prompting_guides/
 │   ├── vocal_kokoro_instructions.md   ← How to write scripts for Kokoro TTS
 │   ├── vocal_f5_instructions.md       ← How to write scripts for F5-TTS + phase guide
-│   ├── musicgen_instructions.md       ← MusicGen prompt engineering (curated presets + examples)
+│   ├── heartmula_instructions.md      ← HeartMuLa tag-based prompting (meditation presets + examples)
 │   └── ace_step_instructions.md       ← ACE-Step MESA framework + story mode prompting
 ├── optimization_and_processing/
 │   ├── audio_processing.md            ← Ducking, FX chains, sample rate strategy, stereo-to-mono
@@ -482,7 +484,9 @@ Unit test coverage: mixer, audio_processor, qa_monitor, stem_separator, TTS engi
 | Problem | Solution |
 |---------|----------|
 | Bus error on app exit | Expected behavior — suppressed by `atexit.register(os._exit(0))` in `app.py`. Do not remove this line. |
-| MPS autocast crash in AudioCraft | `AUDIOCRAFT_DISABLE_MPS_AUTOCAST=1` is set at app startup. When running scripts directly, export this variable first. |
+| HeartMuLa `FileNotFoundError` | Download weights: `huggingface-cli download HeartMuLa/HeartMuLa-RL-oss-3B-20260123 --local-dir ./ckpt/HeartMuLa-oss-3B` and `huggingface-cli download HeartMuLa/HeartCodec-oss-20260123 --local-dir ./ckpt/HeartCodec-oss` |
+| HeartMuLa generation very slow | Expected on MPS (~5-10x slower than CUDA). Use MLX backend (`pip install git+https://github.com/Acelogic/heartlib-mlx.git`) or ACE-Step for faster results. |
+| HeartMuLa audio quality degradation | Verify `codec_dtype="fp32"` in `core/heart_mula/engine.py` — never use `bf16` for HeartCodec |
 | Kokoro is running on CPU, not MPS | Intentional — Kokoro on MPS causes deallocation bus errors. CPU is stable and fast enough. |
 | High peak RAM usage (~12–16 GB) | Expected — TTS and music models are large. Sequential loading (TTS → unload → music) keeps peak usage manageable. |
 
@@ -515,7 +519,7 @@ This allows the 36 GB M1 Max to run all engines comfortably at peak usage of ~12
 |---------|------|
 | [Kokoro](https://github.com/hexgrad/kokoro) | TTS narration (82M params, StyleTTS2, CPU) |
 | [F5-TTS](https://github.com/SWivid/F5-TTS) | Zero-shot voice cloning (Vocos vocoder, MPS) |
-| [AudioCraft / MusicGen](https://github.com/facebookresearch/audiocraft) | AI music generation (1.5B params) |
+| [HeartMuLa / heartlib](https://github.com/HeartMuLa/heartlib) | AI music generation (3B LM + HeartCodec, MLX/MPS, 44.1 kHz) |
 | [ACE-Step 1.5](https://github.com/ace-step/ACE-Step) | Music generation (LM + DiT, MLX, 48 kHz) |
 | [Google Lyria RealTime](https://deepmind.google/technologies/lyria/) | Cloud music generation (48 kHz, no local GPU) |
 | [HT Demucs](https://github.com/facebookresearch/demucs) | AI source separation (4-source model) |

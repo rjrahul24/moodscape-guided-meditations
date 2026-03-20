@@ -272,7 +272,7 @@ F5-TTS works well with any music engine. Recommended pairings:
 | Music Engine | Best For |
 |---|---|
 | **ACE-Step** (Studio quality) | Rich, evolving ambient textures. Best quality but slower generation. |
-| **MusicGen** | Simple ambient pads. Faster generation, more predictable output. |
+| **HeartMuLa** | Simple ambient pads. Faster generation, more predictable output. |
 | **Lyria** | Cloud-generated, high-quality ambient music. Requires API key. |
 
 ---

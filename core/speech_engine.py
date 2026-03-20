@@ -12,7 +12,7 @@ class SpeechEngine(ABC):
 
     Every engine produces mono float32 audio at 24 000 Hz together with a
     boolean voice-activity mask of the same length.  The rest of the pipeline
-    (MusicGen, Pedalboard FX, mixer) is engine-agnostic — it only depends on
+    (HeartMuLa, Pedalboard FX, mixer) is engine-agnostic — it only depends on
     this contract.
     """
 
