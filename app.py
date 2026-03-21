@@ -812,7 +812,7 @@ with gr.Blocks(
                     choices=["ACE-Step 1.5", "HeartMuLa", "Lyria RealTime"],
                     value="ACE-Step 1.5",
                     label="Music Engine",
-                    info="ACE-Step 1.5 recommended for Apple Silicon (~5 min). HeartMuLa uses MLX/MPS with lazy loading (~8-20 min).",
+                    info="ACE-Step 1.5 recommended for Apple Silicon (approx. 5 min). HeartMuLa uses MLX/MPS with lazy loading (approx. 8-20 min).",
                     elem_classes="dropdown-container",
                 )
                 acestep_quality = gr.Radio(

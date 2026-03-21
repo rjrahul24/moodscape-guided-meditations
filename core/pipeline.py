@@ -33,37 +33,76 @@ def _enhance_heartmula_prompt(user_prompt: str, duration_hint: float = 120.0) ->
 
     HeartMuLa uses comma-separated style tags (not natural-language sentences).
     The tags field corresponds to the 'tags' parameter in heartlib.
-    The lyrics field uses structural markers for instrumental tracks.
+    The lyrics field uses structural markers ([interlude]) for instrumental tracks.
+
+    Follows the **Eight Pillars** tag hierarchy from HeartMuLa research:
+      GENRE (95%) > TIMBRE (50%) > MOOD (32%) > INSTRUMENT (25%) > SCENE (20%)
+    with the "Less is More" principle — 7-9 focused tags instead of 20+ diffuse
+    tags.  Excessive tags cause *probability interference*: the cross-attention
+    distribution fractures and produces muddy, generic output.
 
     Tag construction:
-    - Prepend meditation base tags (filtered to avoid duplicating user words)
-    - Append user prompt verbatim
-    - Append 'instrumental' if no vocal intent detected
+      1. Core anchors: Genre + Timbre + Mood + Instrument (4 tags)
+      2. Temporal descriptor scaled to duration (1 tag)
+      3. Negative floor: "no drums, instrumental" (2 tags)
+      4. User tags appended (deduplicated against core anchors)
 
     Structural lyrics:
-    - For instrumental meditation: use section markers only (no text lines)
-    - Scale number of sections with duration
+      - [interlude] markers (not [verse]/[bridge]) to suppress vocal bias
+      - Fewer sections = less model-induced change = more ambient stillness
     """
-    base_tags = "ambient, meditation, calm, relaxing, peaceful, slow"
     user_lower = user_prompt.lower().strip()
 
-    # Filter base tags not already in user prompt
-    filtered = [t.strip() for t in base_tags.split(",") if t.strip().split()[0] not in user_lower]
-    tag_parts = filtered + [user_prompt.strip()]
+    # ── Eight Pillars core anchors (ordered by influence weight) ──────
+    # Each pillar has a default that is skipped if the user already covers it.
+    _PILLAR_DEFAULTS = {
+        # pillar: (default_tag, keywords_that_indicate_user_coverage)
+        "genre":      ("Ambient",      {"ambient", "new age", "drone", "classical"}),
+        "timbre":     ("Warm",         {"warm", "soft", "dark", "ethereal", "smooth", "bright"}),
+        "mood":       ("Relaxing",     {"relaxing", "peaceful", "calm", "meditation", "serene"}),
+        "instrument": ("Synthesizer",  {"synthesizer", "piano", "strings", "bowl", "singing bowl",
+                                        "flute", "harp", "chimes", "organ", "cello", "guitar",
+                                        "pads", "pad"}),
+    }
+    core = []
+    for _pillar, (default, keywords) in _PILLAR_DEFAULTS.items():
+        if not any(kw in user_lower for kw in keywords):
+            core.append(default)
 
-    # Add instrumental marker if no vocal intent
-    if "vocal" not in user_lower and "lyric" not in user_lower and "sing" not in user_lower:
-        tag_parts.append("instrumental, no vocals")
-
-    tags = ", ".join(p for p in tag_parts if p).strip(", ")
-
-    # Build structural lyrics for the duration
+    # ── Temporal descriptor (1 tag, scaled to duration) ───────────────
+    # Explicit pacing language the model learned during DPO training.
     if duration_hint <= 90.0:
-        lyrics = "[intro]\n\n[verse]\n\n[outro]"
+        temporal = "extremely slow"
     elif duration_hint <= 300.0:
-        lyrics = "[intro]\n\n[verse]\n\n[bridge]\n\n[verse]\n\n[outro]"
+        temporal = "long soft pads that barely move"
     else:
-        lyrics = "[intro]\n\n[verse]\n\n[bridge]\n\n[verse]\n\n[bridge]\n\n[verse]\n\n[outro]"
+        temporal = "soundscape stays flat"
+
+    # ── Assemble tags ─────────────────────────────────────────────────
+    tag_parts = core + [temporal]
+
+    # Append user tags
+    user_stripped = user_prompt.strip()
+    if user_stripped:
+        tag_parts.append(user_stripped)
+
+    # Negative constraints floor — minimal but essential.
+    # "no drums" prevents the most common failure (percussion leaking into
+    # ambient output). "instrumental" suppresses vocal generation.
+    tag_parts.extend(["no drums", "instrumental"])
+
+    tags = ", ".join(tag_parts)
+
+    # ── Structural lyrics ([interlude] markers) ───────────────────────
+    # [interlude] starves the vocal generation module — without phonetic
+    # tokens the LM sustains instrumental pads and atmospheric textures.
+    # Fewer sections = more stillness = better for meditation.
+    if duration_hint <= 90.0:
+        lyrics = "[intro]\n\n[interlude]\n\n[outro]"
+    elif duration_hint <= 300.0:
+        lyrics = "[intro]\n\n[interlude]\n\n[interlude]\n\n[outro]"
+    else:
+        lyrics = "[intro]\n\n[interlude]\n\n[interlude]\n\n[interlude]\n\n[outro]"
 
     return tags, lyrics
 

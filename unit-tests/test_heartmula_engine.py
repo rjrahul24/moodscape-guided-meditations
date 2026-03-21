@@ -64,8 +64,7 @@ class TestHeartMulaEngine(unittest.TestCase):
 
     def test_build_segment_lyrics_middle(self):
         lyrics = HeartMulaEngine._build_segment_lyrics(None, 1, 3, 60.0)
-        self.assertIn("[verse]", lyrics)
-        self.assertIn("[bridge]", lyrics)
+        self.assertIn("[interlude]", lyrics)
         self.assertNotIn("[intro]", lyrics)
         self.assertNotIn("[outro]", lyrics)
 

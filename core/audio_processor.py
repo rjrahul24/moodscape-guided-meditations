@@ -40,34 +40,58 @@ DEFAULT_IR = "warm_studio"
 
 
 def make_heartmula_music_chain() -> Pedalboard:
-    """FX chain tailored for HeartMuLa / HeartCodec output at 44.1 kHz.
+    """FX chain tailored for HeartMuLa / HeartCodec output at 48 kHz.
 
-    HeartMuLa/HeartCodec produces 44.1 kHz stereo output (downmixed to mono
-    in the engine).  Its spectral profile is clean and full-range with potential
-    for slightly bright upper mids from the autoregressive LM characteristics.
+    HeartMuLa/HeartCodec produces 48 kHz stereo output (downmixed to mono
+    in the engine).  Tuned specifically for meditation quality with the following
+    design principles:
+
+    - Suppress codec quantization noise (HeartCodec 12.5 Hz token rate)
+    - Roll off frequency extremes to avoid headphone harshness
+    - Clarity cuts in low-mid and upper-mid (cuts are more transparent than boosts)
+    - Add grounding warmth via low shelf (drone-heavy output benefits from sub-bass)
+    - Slow compressor dynamics for a meditative, non-pumping envelope
 
     Chain:
-      1. HighpassFilter at 50 Hz — remove sub-50 Hz content; HeartCodec's
-         12.5 Hz token rate introduces low-frequency quantization noise.
-      2. PeakFilter at 250 Hz (+1.5 dB, Q=0.7) — warmth for meditation pads.
-      3. PeakFilter at 4000 Hz (-1.5 dB, Q=0.8) — tame LM upper-mid brightness;
-         keeps music behind narration without killing air.
-      4. HighShelfFilter at 9500 Hz (-1.5 dB) — gentle HF rolloff; HeartCodec
-         has full 22 kHz bandwidth, slight rolloff improves meditation warmth.
-      5. Compressor (-18 dB, 2:1, 80ms attack, 600ms release) — gentle glue;
-         slower release than ACE-Step chain for longer musical phrases.
-      6. Limiter at -0.5 dBFS.
+      1. NoiseGate (-55 dB, 2:1) — suppress codec quantization noise in
+         quiet passages.  Lowered from -52 dB: higher CFG (5.0) produces more
+         consistent amplitude, so a lower threshold preserves quiet ambient
+         textures that the more focused model generates.
+      2. HighpassFilter at 60 Hz — removes low-frequency codec noise
+         (12.5 Hz token rate introduces rumble up to ~60 Hz).
+      3. LowShelfFilter at 100 Hz (+1.5 dB) — grounding warmth for drone-
+         heavy content.  The concise prompt system (Eight Pillars) produces
+         more resonant, drone-oriented output that benefits from sub-bass
+         presence.  Placed after HPF to avoid boosting rumble.
+      4. PeakFilter at 220 Hz (-1.0 dB, Q=0.7) — clarity cut; removes
+         low-mid mud buildup common in HeartCodec's harmonic output.
+      5. PeakFilter at 4000 Hz (-2.0 dB, Q=0.6) — tame LM upper-mid
+         brightness; keeps music behind narration without killing air.
+         Wider Q (was 0.8) for a gentler, more transparent cut — source
+         is cleaner from the improved prompt system.
+      6. HighShelfFilter at 9500 Hz (-2.0 dB) — warmer HF rolloff for
+         headphone listening during meditation.
+      7. Compressor (-20 dB, 2:1, 100ms attack, 900ms release) — slower,
+         more meditative dynamics; prevents pumping on sustained pads.
+      8. Limiter at -0.5 dBFS.
     """
     return Pedalboard([
-        HighpassFilter(cutoff_frequency_hz=50.0),
-        PeakFilter(cutoff_frequency_hz=250, gain_db=1.5, q=0.7),
-        PeakFilter(cutoff_frequency_hz=4000, gain_db=-1.5, q=0.8),
-        HighShelfFilter(cutoff_frequency_hz=9500.0, gain_db=-1.5),
-        Compressor(
-            threshold_db=-18.0,
+        NoiseGate(
+            threshold_db=-55.0,
             ratio=2.0,
-            attack_ms=80.0,
-            release_ms=600.0,
+            attack_ms=5.0,
+            release_ms=200.0,
+        ),
+        HighpassFilter(cutoff_frequency_hz=60.0),
+        LowShelfFilter(cutoff_frequency_hz=100.0, gain_db=1.5),
+        PeakFilter(cutoff_frequency_hz=220, gain_db=-1.0, q=0.7),
+        PeakFilter(cutoff_frequency_hz=4000, gain_db=-2.0, q=0.6),
+        HighShelfFilter(cutoff_frequency_hz=9500.0, gain_db=-2.0),
+        Compressor(
+            threshold_db=-20.0,
+            ratio=2.0,
+            attack_ms=100.0,
+            release_ms=900.0,
         ),
         Limiter(threshold_db=-0.5),
     ])

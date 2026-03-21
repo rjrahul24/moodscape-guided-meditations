@@ -15,6 +15,7 @@ import gc
 import logging
 import math
 import os
+import random
 import tempfile
 import time
 
@@ -33,11 +34,31 @@ NATIVE_SAMPLE_RATE = 48_000     # HeartCodec native output rate
 TARGET_SAMPLE_RATE = 48_000     # Exported for pipeline.py to import
 
 MAX_SEGMENT_SEC = 240.0         # HeartMuLa OSS max per inference call (4 min)
-CROSSFADE_SEC = 4.0             # Equal-power cosine crossfade between segments
+CROSSFADE_SEC = 8.0             # Equal-power cosine crossfade between segments
+                                # 8s (was 4s) — longer overlap masks tonal differences
+                                # between independently generated segments.
 
 # Checkpoint directories (relative to project root)
 CHECKPOINT_DIR = "./ckpt"           # PyTorch MPS path
 CHECKPOINT_DIR_MLX = "./ckpt-mlx"   # MLX converted weights path
+
+# Generation tuning — optimised for calm meditation / sleep music
+# cfg_scale: classifier-free guidance strength. Higher = model adheres more strictly to tags.
+#   1.5 (heartlib default) was too loose — LM wandered from calm/ambient conditioning.
+#   3.0 provides moderate adherence without over-constraining the autoregressive LM.
+#   Values above 4.0 risk early EOS prediction (truncated output) and mode collapse.
+_LM_CFG_SCALE = 3.0
+# temperature: token sampling temperature. Lower = more predictable, grounded output.
+#   1.0 (heartlib default) introduced too much randomness for sleep music.
+#   0.9 provides stable ambient output while preserving tonal variety.
+_LM_TEMPERATURE = 0.9
+# top_k: sampling pool size. Moderate restriction keeps the LM within ambient
+#   territory without starving it of token diversity (which causes repetitive loops).
+_LM_TOP_K = 45
+# guidance_scale for HeartCodec flow-matching decoder. Slightly higher than default (1.25)
+#   improves fidelity of sustained pads and smooth textures.
+_CODEC_GUIDANCE_SCALE = 1.5
+_CODEC_NUM_STEPS = 16   # Higher than default (10) — cleaner reconstruction, less quantization noise
 
 
 # -- Engine -------------------------------------------------------------------
@@ -315,16 +336,16 @@ class HeartMulaEngine:
         pipeline._parallel_number = heartmula_lm.num_codebooks + 1
 
         # Preprocess text inputs
-        inputs = pipeline.preprocess(lyrics=lyrics or "", tags=tags, cfg_scale=1.5)
+        inputs = pipeline.preprocess(lyrics=lyrics or "", tags=tags, cfg_scale=_LM_CFG_SCALE)
 
         # Generate discrete audio codes
         logger.info("[HeartMuLa/MLX] Generating audio codes (%.0fs)...", duration_sec)
         codes = pipeline.generate(
             inputs=inputs,
             duration=duration_sec,
-            temperature=1.0,
-            top_k=50,
-            cfg_scale=1.5,
+            temperature=_LM_TEMPERATURE,
+            top_k=_LM_TOP_K,
+            cfg_scale=_LM_CFG_SCALE,
         )
         # Ensure codes are fully evaluated before we unload the LM
         mx.eval(codes)
@@ -359,8 +380,8 @@ class HeartMulaEngine:
         audio_mx = heartcodec.detokenize(
             codes=codes_input,
             duration=duration_for_codec,
-            num_steps=10,
-            guidance_scale=1.25,
+            num_steps=_CODEC_NUM_STEPS,
+            guidance_scale=_CODEC_GUIDANCE_SCALE,
         )
         # Evaluate to get the result before cleanup
         mx.eval(audio_mx)
@@ -435,9 +456,9 @@ class HeartMulaEngine:
                 inputs,
                 save_path=tmp_path,
                 max_audio_length_ms=max_len_ms,
-                temperature=1.0,
-                topk=50,
-                cfg_scale=1.5,
+                temperature=_LM_TEMPERATURE,
+                topk=_LM_TOP_K,
+                cfg_scale=_LM_CFG_SCALE,
             )
 
             # Read back the generated audio
@@ -462,6 +483,13 @@ class HeartMulaEngine:
     # Internal: long-form generation (>240s)
     # ------------------------------------------------------------------
 
+    # Musical keys suitable for meditation — minor keys and soft major keys
+    # that pair well with ambient/drone textures.
+    _MEDITATION_KEYS = [
+        "key of C major", "key of D minor", "key of A minor",
+        "key of F major", "key of E minor", "key of G major",
+    ]
+
     def _generate_long_form(
         self,
         tags: str,
@@ -472,15 +500,23 @@ class HeartMulaEngine:
         """Generate audio longer than MAX_SEGMENT_SEC via segment-and-crossfade.
 
         Divides total_duration_sec into N segments of at most MAX_SEGMENT_SEC
-        each.  Generates each segment with the same tags prompt for style
-        continuity.  Joins adjacent segments with equal-power cosine crossfades.
+        each.  All segments share the same tags + a randomly selected tonal key
+        anchor (e.g. "key of D minor") to prevent harmonic drift across segment
+        boundaries.  Joins adjacent segments with equal-power cosine crossfades.
+
+        Without latent context feedback (heartlib API does not support it),
+        tonal key anchoring is the primary cross-segment coherence mechanism.
         """
         n_segments = math.ceil(total_duration_sec / MAX_SEGMENT_SEC)
         seg_duration = total_duration_sec / n_segments
 
+        # Anchor all segments to the same musical key for harmonic continuity.
+        tonal_anchor = random.choice(self._MEDITATION_KEYS)
+        anchored_tags = f"{tags}, {tonal_anchor}"
         logger.info(
-            "[HeartMuLa] Long-form: %.0fs total -> %d segments x %.0fs",
-            total_duration_sec, n_segments, seg_duration,
+            "[HeartMuLa] Long-form: %.0fs total -> %d segments x %.0fs "
+            "(tonal anchor: %s)",
+            total_duration_sec, n_segments, seg_duration, tonal_anchor,
         )
 
         if progress_cb:
@@ -489,7 +525,9 @@ class HeartMulaEngine:
         segment_audios = []
         for i in range(n_segments):
             seg_lyrics = self._build_segment_lyrics(lyrics, i, n_segments, seg_duration)
-            audio = self._generate_single(tags, seg_duration, seg_lyrics, progress_cb=None)
+            audio = self._generate_single(
+                anchored_tags, seg_duration, seg_lyrics, progress_cb=None,
+            )
             segment_audios.append(audio)
             if progress_cb:
                 progress_cb(i + 1, n_segments)
@@ -546,26 +584,27 @@ class HeartMulaEngine:
     ) -> str:
         """Build structural section tags per segment for heartlib lyrics field.
 
-        HeartMuLa uses standard markers: [intro], [verse], [chorus], [bridge],
-        [outro].  For instrumental meditation tracks (no lyrics), structural
-        markers alone guide the model's tonal arc.
+        Uses [interlude] markers instead of [verse]/[bridge] to suppress
+        HeartMuLa's vocal generation bias.  [interlude] starves the vocal
+        module — without phonetic tokens, the LM sustains instrumental pads
+        and atmospheric textures.
 
-        Segment 0 of N:  [intro] + [verse]
-        Middle segments:  [verse] + [bridge] + [verse]
-        Last segment:     [verse] + [outro]
-        Single segment:   [intro] + [verse] + [outro]
+        Segment 0 of N:  [intro] + [interlude]
+        Middle segments:  [interlude] + [interlude]
+        Last segment:     [interlude] + [outro]
+        Single segment:   [intro] + [interlude] + [outro]
         """
         if user_lyrics:
             return user_lyrics
 
         if n_segments == 1:
-            return "[intro]\n\n[verse]\n\n[outro]"
+            return "[intro]\n\n[interlude]\n\n[outro]"
         elif segment_idx == 0:
-            return "[intro]\n\n[verse]"
+            return "[intro]\n\n[interlude]"
         elif segment_idx == n_segments - 1:
-            return "[verse]\n\n[outro]"
+            return "[interlude]\n\n[outro]"
         else:
-            return "[verse]\n\n[bridge]\n\n[verse]"
+            return "[interlude]\n\n[interlude]"
 
     @staticmethod
     def _crossfade_segments(
