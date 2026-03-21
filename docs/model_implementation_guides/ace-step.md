@@ -103,10 +103,10 @@ python -c "from acestep.llm_inference import LLMHandler; print('LLM Handler OK')
 
 | Parameter | Value | Rationale |
 |-----------|-------|-----------|
-| `_GUIDANCE_SCALE` | `5.0` | SFT optimal range 5.0–7.0; balances prompt adherence with smooth textures |
+| `_GUIDANCE_SCALE` | `3.0` | Lower CFG gives the DiT more freedom to settle into smooth natural distributions; reduces algorithmic spectral roughness |
 | `_INFERENCE_STEPS` | `50` | SFT max without error accumulation |
 | `_INFERENCE_STEPS_REPAINT` | `50` | Matches base steps for consistency |
-| `_LM_TEMPERATURE` | `0.85` | Richer tonal palettes while maintaining coherence |
+| `_LM_TEMPERATURE` | `0.7` | Conservative tonal choices for smooth, warm meditation output; reduces unexpected bright or harsh timbres |
 | `_USE_ADG` | `True` | Adaptive Dual Guidance reduces spectral noise |
 | `instrumental` | `True` | Always — meditation tracks must never have vocals |
 | `thinking` | `True` | Enables Chain-of-Thought planning for coherent structure |
@@ -346,9 +346,9 @@ BACKEND = "mlx"
 COMPILE_MODEL = True
 
 # Generation parameters
-GUIDANCE_SCALE = 5.0
+GUIDANCE_SCALE = 3.0
 INFERENCE_STEPS = 50
-LM_TEMPERATURE = 0.85
+LM_TEMPERATURE = 0.7
 USE_ADG = True
 INSTRUMENTAL = True
 ENABLE_NORMALIZATION = True

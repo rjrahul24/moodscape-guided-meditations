@@ -49,5 +49,19 @@ class TestAceStepEngine(unittest.TestCase):
         self.assertEqual(res.dtype, np.float32)
 
 
+    def test_guidance_scale_value(self):
+        """Task 4: _GUIDANCE_SCALE should be 3.0 for smoother spectral output."""
+        from core.acestep_engine import _GUIDANCE_SCALE
+        self.assertEqual(_GUIDANCE_SCALE, 3.0)
+
+    def test_enhance_prompt_anti_harshness_tags(self):
+        """Task 2: enhanced caption must include anti-harshness tokens."""
+        caption, _lyrics = AceStepEngine._enhance_prompt("gentle pads")
+        caption_lower = caption.lower()
+        self.assertIn("smooth texture", caption_lower)
+        self.assertIn("432 hz", caption_lower)
+        self.assertIn("warm tone", caption_lower)
+
+
 if __name__ == "__main__":
     unittest.main()

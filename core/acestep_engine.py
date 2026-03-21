@@ -26,9 +26,10 @@ TARGET_SAMPLE_RATE = 48000       # Preserve native 48 kHz through the pipeline
 
 # ── Generation quality knobs ──────────────────────────────────────────────────
 # guidance_scale: CFG strength for the SFT model.
-# SFT optimal range is 5.0–7.0; 5.0 balances prompt adherence with smooth
-# ambient textures without amplifying spectral roughness.
-_GUIDANCE_SCALE = 5.0
+# 3.0 gives the diffusion model more freedom to settle into mathematically
+# smooth, natural audio distributions rather than over-indexing on prompt
+# tokens — reduces algorithmic "crackle" and spectral roughness.
+_GUIDANCE_SCALE = 3.0
 
 # inference_steps: SFT supports up to 50 steps. Going higher causes error
 # accumulation that degrades output quality. 50 is maximum detail without
@@ -38,7 +39,7 @@ _INFERENCE_STEPS_REPAINT = 50
 
 # lm_temperature: Controls LM planner creativity.
 # 0.85 allows richer tonal palettes for ambient while maintaining coherence.
-_LM_TEMPERATURE = 0.85
+_LM_TEMPERATURE = 0.7
 
 # Enable Adaptive Dual Guidance for the base (non-turbo) model.
 # ADG applies two complementary CFG branches that reinforce each other:
@@ -994,8 +995,9 @@ class AceStepEngine:
     # Filtered at runtime to avoid duplicating words the user already supplied.
     _MESA_BASE_TAGS = (
         "ambient, meditation, calm, peaceful, warm, spacious, "
-        "soft dynamics, gentle, soothing, "
-        "high fidelity, studio quality, clean production"
+        "soft dynamics, gentle, soothing, smooth texture, "
+        "high fidelity, warm tone, studio quality, clean production, "
+        "tuned to 432 Hz for natural resonance"
     )
 
     @classmethod

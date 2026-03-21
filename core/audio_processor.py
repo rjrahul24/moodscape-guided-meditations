@@ -108,14 +108,25 @@ def make_acestep_music_chain() -> Pedalboard:
       2. Sub-bass HPF at 60 Hz — removes diffusion noise rumble (30–60 Hz band)
       3. Low-shelf warmth at 200 Hz (+2.0 dB) — enveloping warmth; conservative
          increment to avoid low-mid muddiness at the hotter -14 LUFS premix level
-      4. Upper-mid softening at 4 kHz (-1.5 dB, Q=0.8) — keeps music behind
-         narration and tames diffusion decoder artifacts in the 3–5 kHz band
-      5. Gentle HF shelf at 10 kHz (-1.0 dB) — smooths the digital edge
-      6. Glue compressor — threshold -20 dB / 2.5:1 / 80ms attack / 800ms release.
+      4. Midrange cut at 3 kHz (-4.5 dB, Q=1.5) — deepened surgical bell EQ cut
+         targeting the primary AI diffusion artifact zone. Narrow Q keeps the cut
+         focused without affecting 2 kHz warmth below or 5 kHz presence above.
+      5. Upper-mid cut at 4 kHz (-2.5 dB, Q=0.8) — deepened; removes upper-mid
+         diffusion artifacts in the 3–5 kHz band more aggressively.
+      6. Gap fill at 6 kHz (-2.0 dB, Q=1.0) — addresses the 5–7 kHz AI harshness
+         zone that sits between the 4 kHz cut and the 8 kHz shelf. This is the
+         prime source of perceived "digital edge" in ACE-Step output.
+      7. Air shelf at 8 kHz (+0.5 dB) — reduced from +1.5; retains gentle air
+         without counteracting the 6 kHz cut above.
+      8. HF rolloff at 10 kHz (-2.5 dB) — deepened from -1.0; significantly
+         smoother high-end rolloff; removes the "digital" upper octave.
+      9. Ultrasonic LPF at 16 kHz — hard rolloff for diffusion noise above 16 kHz.
+         Meditation content (pads, bowls, drones) has no musical information there.
+     10. Glue compressor — threshold -20 dB / 2.5:1 / 80ms attack / 800ms release.
          Lower threshold (-20 dB) ensures engagement on quieter ambient passages;
          2.5:1 ratio gives tighter macro-dynamic control without squashing pads;
          800ms release is slower and more meditative.
-      7. Limiter at -0.5 dBFS
+     11. Limiter at -0.5 dBFS
     """
     return Pedalboard([
         NoiseGate(
@@ -126,8 +137,12 @@ def make_acestep_music_chain() -> Pedalboard:
         ),
         HighpassFilter(cutoff_frequency_hz=60.0),
         LowShelfFilter(cutoff_frequency_hz=200, gain_db=2.0),
-        PeakFilter(cutoff_frequency_hz=4000, gain_db=-1.5, q=0.8),
-        HighShelfFilter(cutoff_frequency_hz=10000.0, gain_db=-1.0),
+        PeakFilter(cutoff_frequency_hz=3000, gain_db=-4.5, q=1.5),    # deepened: was -3.0
+        PeakFilter(cutoff_frequency_hz=4000, gain_db=-2.5, q=0.8),    # deepened: was -1.5
+        PeakFilter(cutoff_frequency_hz=6000, gain_db=-2.0, q=1.0),    # NEW: 5-7 kHz gap fill
+        HighShelfFilter(cutoff_frequency_hz=8000.0, gain_db=0.5),     # reduced: was +1.5
+        HighShelfFilter(cutoff_frequency_hz=10000.0, gain_db=-2.5),   # deepened: was -1.0
+        LowpassFilter(cutoff_frequency_hz=16000.0),                   # NEW: ultrasonic cutoff
         Compressor(
             threshold_db=-20.0,
             ratio=2.5,

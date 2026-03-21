@@ -63,12 +63,16 @@ Limiter(-1.0 dB)
 
 ### ACE-Step 1.5 (`make_acestep_music_chain`)
 ```python
-NoiseGate(-50 dB, 2:1, 1ms/100ms)         # Catches diffusion residual noise
-HighpassFilter(60 Hz)                      # Sub-bass removal
-LowShelfFilter(200 Hz, +2.0 dB)           # Warmth
-PeakFilter(4000 Hz, -1.5 dB, Q=0.8)      # Upper-mid softening / diffusion artifact taming
-HighShelfFilter(10000 Hz, -1.0 dB)        # Gentle HF smoothing
-Compressor(-20 dB, 2.5:1, 80ms/800ms)    # Glue compression
+NoiseGate(-50 dB, 2:1, 1ms/100ms)              # Catches diffusion residual noise
+HighpassFilter(60 Hz)                           # Sub-bass removal
+LowShelfFilter(200 Hz, +2.0 dB)                # Warmth
+PeakFilter(3000 Hz, -4.5 dB, Q=1.5)           # Primary AI artifact zone (surgical)
+PeakFilter(4000 Hz, -2.5 dB, Q=0.8)           # Upper-mid diffusion artifacts
+PeakFilter(6000 Hz, -2.0 dB, Q=1.0)           # 5-7 kHz gap fill (prime AI harshness zone)
+HighShelfFilter(8000 Hz, +0.5 dB)              # Gentle air (reduced from +1.5)
+HighShelfFilter(10000 Hz, -2.5 dB)             # Stronger HF rolloff (was -1.0)
+LowpassFilter(16000 Hz)                        # Ultrasonic diffusion noise cutoff
+Compressor(-20 dB, 2.5:1, 80ms/800ms)         # Glue compression
 Limiter(-0.5 dB)
 ```
 

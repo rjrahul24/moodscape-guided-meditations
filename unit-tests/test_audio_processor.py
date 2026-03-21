@@ -27,10 +27,46 @@ class TestAudioProcessor(unittest.TestCase):
         self.assertIsNotNone(mac)
 
     def test_acestep_chain_has_expected_effects(self):
-        """Verify the ACE-Step chain contains all 7 expected effects."""
+        """Verify the ACE-Step chain contains all 11 expected effects."""
         chain = make_acestep_music_chain()
-        # 7 effects: NoiseGate, HPF, LowShelf, PeakFilter(4kHz), HighShelf, Compressor, Limiter
-        self.assertEqual(len(chain), 7, f"Expected 7 effects, got {len(chain)}")
+        # 11 effects: NoiseGate, HPF, LowShelf, PeakFilter(3kHz), PeakFilter(4kHz),
+        #             PeakFilter(6kHz), HighShelf(8kHz), HighShelf(10kHz),
+        #             LowpassFilter(16kHz), Compressor, Limiter
+        self.assertEqual(len(chain), 11, f"Expected 11 effects, got {len(chain)}")
+
+    def test_acestep_chain_midrange_and_air_filters(self):
+        """Verify 3 kHz midrange cut, 6 kHz gap fill, and 8 kHz air shelf filters."""
+        from pedalboard import PeakFilter, HighShelfFilter
+        chain = make_acestep_music_chain()
+
+        # Find the 3 kHz PeakFilter (primary AI artifact zone)
+        peak_3k = [p for p in chain if isinstance(p, PeakFilter)
+                   and abs(p.cutoff_frequency_hz - 3000) < 1]
+        self.assertEqual(len(peak_3k), 1, "Missing PeakFilter at 3000 Hz")
+        self.assertAlmostEqual(peak_3k[0].gain_db, -4.5, places=1)
+
+        # Find the 6 kHz PeakFilter (5-7 kHz gap fill)
+        peak_6k = [p for p in chain if isinstance(p, PeakFilter)
+                   and abs(p.cutoff_frequency_hz - 6000) < 1]
+        self.assertEqual(len(peak_6k), 1, "Missing PeakFilter at 6000 Hz")
+        self.assertAlmostEqual(peak_6k[0].gain_db, -2.0, places=1)
+
+        # Find the 8 kHz HighShelfFilter (gentle air)
+        shelf_8k = [p for p in chain if isinstance(p, HighShelfFilter)
+                    and abs(p.cutoff_frequency_hz - 8000) < 1]
+        self.assertEqual(len(shelf_8k), 1, "Missing HighShelfFilter at 8000 Hz")
+        self.assertAlmostEqual(shelf_8k[0].gain_db, 0.5, places=1)
+
+    def test_acestep_chain_signal_path(self):
+        """Smoke test: 48 kHz signal through ACE-Step chain produces valid output."""
+        chain = make_acestep_music_chain()
+        # 1 second of pink-ish noise at 48 kHz
+        rng = np.random.default_rng(42)
+        audio = rng.uniform(-0.3, 0.3, 48000).astype(np.float32)
+        out = apply_fx(audio, chain, sample_rate=48000)
+        self.assertEqual(out.shape, audio.shape)
+        self.assertFalse(np.isnan(out).any(), "NaN in output")
+        self.assertTrue(np.all(np.abs(out) <= 1.0), "Clipping in output")
 
     def test_apply_fx_1d(self):
         # A simple array 24000 samples (1 sec)
