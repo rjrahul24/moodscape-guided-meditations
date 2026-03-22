@@ -281,6 +281,181 @@ def reduce_synthesis_noise(
 
 
 # =====================================================================
+# Stage 2b+: Room-tone pause generation
+# =====================================================================
+
+
+def generate_room_tone(
+    duration_sec: float,
+    sr: int = SAMPLE_RATE,
+    level_db: float = -55.0,
+) -> np.ndarray:
+    """Generate low-level bandpass-filtered noise for natural-sounding pauses.
+
+    Dead silence between sentences sounds unnatural — professional meditation
+    audio maintains room-tone continuity. This generates barely perceptible
+    noise (default -55 dBFS) bandpass-filtered to 100–800 Hz with cosine
+    fade-in/out to avoid clicks.
+
+    Args:
+        duration_sec: Pause duration in seconds.
+        sr: Sample rate (default 24 kHz).
+        level_db: Noise floor level in dBFS (-55 = barely perceptible).
+
+    Returns:
+        float32 noise array at the specified sample rate.
+    """
+    n_samples = int(duration_sec * sr)
+    if n_samples <= 0:
+        return np.zeros(0, dtype=np.float32)
+
+    # Generate white noise at target level
+    level_linear = 10 ** (level_db / 20.0)
+    noise = np.random.randn(n_samples).astype(np.float32) * level_linear
+
+    # Bandpass filter 100–800 Hz (voice frequency range for room ambience)
+    from scipy.signal import butter, sosfilt
+    nyquist = sr / 2.0
+    low = 100.0 / nyquist
+    high = min(800.0 / nyquist, 0.99)
+    sos = butter(2, [low, high], btype='band', output='sos')
+    noise = sosfilt(sos, noise).astype(np.float32)
+
+    # Re-normalize to target level after filtering
+    rms = float(np.sqrt(np.mean(noise ** 2)))
+    if rms > 1e-10:
+        noise *= level_linear / rms
+
+    # Cosine fade-in/out (20ms each) to avoid clicks
+    fade_samples = min(int(0.020 * sr), n_samples // 2)
+    if fade_samples > 0:
+        fade_in = (0.5 * (1 - np.cos(np.linspace(0, np.pi, fade_samples)))).astype(np.float32)
+        fade_out = (0.5 * (1 + np.cos(np.linspace(0, np.pi, fade_samples)))).astype(np.float32)
+        noise[:fade_samples] *= fade_in
+        noise[-fade_samples:] *= fade_out
+
+    return noise
+
+
+# =====================================================================
+# Stage 2c: Pitch humanization & formant warmth (pyworld)
+# =====================================================================
+
+_PYWORLD_AVAILABLE = None  # lazy check
+
+
+def _check_pyworld() -> bool:
+    """Lazy-check pyworld availability. Warns once if missing."""
+    global _PYWORLD_AVAILABLE
+    if _PYWORLD_AVAILABLE is None:
+        try:
+            import pyworld  # noqa: F401
+            _PYWORLD_AVAILABLE = True
+        except ImportError:
+            _PYWORLD_AVAILABLE = False
+            logger.warning(
+                "pyworld not installed — pitch humanization and formant warmth "
+                "disabled. Install with: pip install 'pyworld>=0.3.4'"
+            )
+    return _PYWORLD_AVAILABLE
+
+
+def humanize_voice(
+    audio: np.ndarray,
+    sr: int = SAMPLE_RATE,
+    drift_hz: float = 0.5,
+    drift_cents: float = 6.0,
+    vibrato_hz: float = 5.0,
+    vibrato_cents: float = 3.0,
+    jitter_cents: float = 2.0,
+    formant_shift: float = 0.97,
+) -> np.ndarray:
+    """Add micro-pitch variation and formant warmth in a single pyworld pass.
+
+    Natural speech contains three layers of pitch variation that TTS lacks:
+    slow drift (~0.5 Hz, ±6 cents from vocal fold tension changes), subtle
+    vibrato (~5 Hz, ±3 cents present in sustained vowels), and random
+    micro-jitter (±2 cents from neural noise). Combined modulation stays
+    under ±15 cents to avoid a trembling quality.
+
+    Formant warmth lowers formants by 3% (shift_ratio=0.97), simulating a
+    slightly larger vocal tract for perceived warmth. Keep under 5% to
+    preserve vowel identity.
+
+    Both transforms share a single pyworld analysis/resynthesis pass for
+    efficiency.
+
+    Args:
+        audio: 1-D float32 audio at sr.
+        sr: Sample rate (default 24 kHz).
+        drift_hz: Slow drift frequency in Hz.
+        drift_cents: Slow drift amplitude in cents.
+        vibrato_hz: Vibrato frequency in Hz.
+        vibrato_cents: Vibrato amplitude in cents.
+        jitter_cents: Random jitter amplitude in cents.
+        formant_shift: Spectral envelope warp ratio (0.97 = 3% lower formants).
+
+    Returns:
+        Humanized audio at the same sample rate. Returns input unchanged if
+        pyworld is unavailable or audio is too short.
+    """
+    if not _check_pyworld():
+        return audio
+    if len(audio) < sr * 0.5:  # skip clips < 500ms
+        return audio
+
+    import pyworld as pw
+    from scipy.ndimage import gaussian_filter1d
+
+    audio_f64 = audio.astype(np.float64)
+
+    # ── pyworld analysis (single pass) ──
+    f0, t = pw.harvest(audio_f64, sr)
+    sp = pw.cheaptrick(audio_f64, f0, t, sr)
+    ap = pw.d4c(audio_f64, f0, t, sr)
+
+    # ── Pitch humanization ──
+    voiced = f0 > 0
+    n = len(f0)
+    frame_period = pw.default_frame_period / 1000.0  # ms → sec
+    t_frames = np.arange(n) * frame_period
+
+    # Layer 1: Slow drift (simulates vocal fold tension variation)
+    drift = drift_cents * np.sin(2 * np.pi * drift_hz * t_frames)
+
+    # Layer 2: Subtle vibrato with rate variation
+    vib_rate = vibrato_hz + 0.5 * np.sin(2 * np.pi * 0.1 * t_frames)
+    vib_phase = np.cumsum(vib_rate * frame_period) * 2 * np.pi
+    vibrato = vibrato_cents * np.sin(vib_phase)
+
+    # Layer 3: Random micro-jitter (Gaussian-smoothed)
+    jitter = gaussian_filter1d(np.random.randn(n) * jitter_cents, sigma=3)
+
+    total_cents = (drift + vibrato + jitter) * voiced
+    f0_mod = np.where(voiced, f0 * 2 ** (total_cents / 1200.0), f0)
+
+    # ── Formant warmth (spectral envelope warp) ──
+    sp_warped = np.zeros_like(sp)
+    for i in range(sp.shape[1]):
+        src_idx = int(i * formant_shift)
+        if src_idx < sp.shape[1]:
+            sp_warped[:, i] = sp[:, src_idx]
+        else:
+            sp_warped[:, i] = sp[:, -1]
+
+    # ── Resynthesize (single pass) ──
+    result = pw.synthesize(f0_mod, sp_warped, ap, sr)
+
+    # Match original length (pyworld can shift by a few samples)
+    if len(result) > len(audio):
+        result = result[:len(audio)]
+    elif len(result) < len(audio):
+        result = np.pad(result, (0, len(audio) - len(result)))
+
+    return result.astype(np.float32)
+
+
+# =====================================================================
 # Stage 3: Pedalboard FX chains (Kokoro-specific)
 # =====================================================================
 
@@ -295,18 +470,17 @@ def build_voice_chain(reverb_amount: float = 0.08, ir_name: str = "warm_studio")
       1. NoiseGate -42 dB: mutes inter-chunk silence without gating soft
          phonemes (breathy /h/, /f/, unvoiced trailing stops)
       2. HPF 80 Hz: removes sub-bass rumble and plosive energy
-      3. LowShelf +2 dB @ 200 Hz: warmth / proximity effect
+      3. LowShelf +2.0 dB @ 200 Hz: warmth / proximity effect
       4. Peak -2 dB @ 350 Hz (Q=1.0): single mud cut for ISTFTNet boxy
          resonance (replaces dual cuts at 300 Hz and 400 Hz)
-      5. Compressor 2:1 @ -18 dB: gentle glue; single compressor instead
-         of cascading compressor + limiter + compressor
+      5. Compressor 2:1 @ -18 dB: gentle glue compression
       6. Peak +1.0 dB @ 3 kHz (Q=0.6): broad presence for intelligibility
       7. HiShelf -3.0 dB @ 7.5 kHz: single de-harsh shelf for vocoder
          artifacts (replaces dual shelves at 7 kHz + 8 kHz = -5 dB)
       8. Convolution reverb: real IR for natural room presence
       9. LPF 9.5 kHz: Nyquist masking AFTER reverb (so reverb tails are
          filtered too — previous chain applied this BEFORE reverb)
-     10. Limiter -1 dBFS: single peak limiter (was three limiters)
+     10. Limiter -1 dBFS: single peak limiter
     """
     from core.audio_processor import IR_CATALOG, DEFAULT_IR
 
@@ -320,8 +494,8 @@ def build_voice_chain(reverb_amount: float = 0.08, ir_name: str = "warm_studio")
         # ── Tone shaping ──
         LowShelfFilter(cutoff_frequency_hz=200, gain_db=2.0),
         PeakFilter(cutoff_frequency_hz=350, gain_db=-2.0, q=1.0),
-        # ── Dynamics ──
-        Compressor(threshold_db=-18.0, ratio=2.0, attack_ms=2.0, release_ms=80.0),
+        # ── Dynamics: gentle glue compression ──
+        Compressor(threshold_db=-18, ratio=2.0, attack_ms=10.0, release_ms=100.0),
         # ── Presence & de-harsh ──
         PeakFilter(cutoff_frequency_hz=3000, gain_db=1.0, q=0.6),
         HighShelfFilter(cutoff_frequency_hz=7500, gain_db=-3.0),

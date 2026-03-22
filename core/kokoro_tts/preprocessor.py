@@ -419,19 +419,118 @@ def enhance_prosody_punctuation(text: str) -> str:
     return text.strip()
 
 
+# ── Meditation expressiveness transforms ─────────────────────────────
+
+# Contraction map: formal → natural (Kokoro produces warmer prosody with contractions)
+_CONTRACTION_MAP = [
+    (r'\byou are\b', "you're"),
+    (r'\byou will\b', "you'll"),
+    (r'\byou have\b', "you've"),
+    (r'\bwe are\b', "we're"),
+    (r'\bwe will\b', "we'll"),
+    (r'\bdo not\b', "don't"),
+    (r'\bdoes not\b', "doesn't"),
+    (r'\bcannot\b', "can't"),
+    (r'\bcan not\b', "can't"),
+    (r'\bwill not\b', "won't"),
+    (r'\blet us\b', "let's"),
+    (r'\bit is\b', "it's"),
+    (r'\bthere is\b', "there's"),
+    (r'\bthat is\b', "that's"),
+]
+
+# Sensory/somatic words that benefit from a preceding contemplative ellipsis
+_SENSORY_WORDS = frozenset({
+    'warmth', 'softness', 'peace', 'stillness', 'calm', 'gentle', 'quiet',
+    'ease', 'comfort', 'lightness', 'heaviness', 'relaxation', 'serenity',
+    'tingling', 'floating', 'waves', 'glow', 'radiance', 'spaciousness',
+    'openness', 'tenderness', 'coolness', 'silence', 'presence', 'awareness',
+})
+
+# Conjunctions eligible for sentence-break promotion in _vary_sentence_lengths
+_VARIATION_CONJUNCTIONS = frozenset({'and', 'as', 'while', 'letting', 'allowing'})
+
+
+def _convert_to_contractions(text: str) -> str:
+    """Convert formal phrasing to contractions for warmer, conversational delivery.
+
+    Kokoro produces more natural prosody with contractions — formal phrasing
+    triggers a stiffer, more declarative intonation contour.
+    """
+    for pattern, replacement in _CONTRACTION_MAP:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    return text
+
+
+def _inject_sensory_ellipses(text: str) -> str:
+    """Insert contemplative ellipsis before sensory/somatic words.
+
+    Kokoro treats ``...`` as a ~200ms trailing pause with suspended pitch,
+    creating an "invitation to feel" quality before words like warmth, peace,
+    stillness. Only triggers when preceded by a determiner (the/a/this/that/your).
+    """
+    sensory_alt = '|'.join(sorted(_SENSORY_WORDS))
+    # Match determiner + space + sensory word, but NOT when already preceded by punctuation
+    text = re.sub(
+        rf'(?<![,\.!?\u2014])\b(the|a|this|that|your)\s+({sensory_alt})\b',
+        r'\1... \2',
+        text,
+        flags=re.IGNORECASE,
+    )
+    return text
+
+
+def _vary_sentence_lengths(text: str) -> str:
+    """Promote one long-clause comma to a period for sentence-length variation.
+
+    Alternating short and long sentences produces more natural prosody in Kokoro
+    because the model's style vector is selected by token count — shorter
+    utterances receive different (often more deliberate) prosodic characteristics.
+
+    Only breaks at commas before eligible conjunctions, and only when the clause
+    before the comma is >= 10 words. Limited to one break per text block.
+    """
+    # Find candidates: ", and/as/while/letting/allowing" with >=10 words before
+    def _maybe_promote(m: re.Match) -> str:
+        prefix = m.group(1)
+        conj = m.group(2)
+        rest = m.group(3)
+        # Count words since last sentence boundary
+        last_boundary = max(prefix.rfind('.'), prefix.rfind('!'), prefix.rfind('?'))
+        clause = prefix[last_boundary + 1:].strip()
+        if len(clause.split()) >= 10:
+            return f'{prefix}. {conj.capitalize()}{rest}'
+        return m.group(0)
+
+    # Only apply once (count=1) to avoid over-fragmentation
+    text = re.sub(
+        r'(.+?), (and|as|while|letting|allowing)( \w)',
+        _maybe_promote,
+        text,
+        count=1,
+    )
+    return text
+
+
 def preprocess_for_meditation(text: str) -> str:
     """Optimise text for calm, meditation-style Kokoro TTS delivery.
 
     Pipeline:
     1. Expand digits/abbreviations to spoken forms.
-    2. Inject IPA phonemes for Sanskrit/yoga terms.
-    3. Insert commas at natural phrasing boundaries (enhance_prosody_punctuation).
-    4. Add ellipsis transition before any inline [pause:] markers.
-    5. Normalise ellipsis to exactly three dots.
+    2. Convert formal phrasing to contractions for warmth.
+    3. Inject IPA phonemes for Sanskrit/yoga terms.
+    4. Insert commas at natural phrasing boundaries (enhance_prosody_punctuation).
+    5. Inject contemplative ellipses before sensory/somatic words.
+    6. Vary sentence lengths for prosodic diversity.
+    7. Add ellipsis transition before any inline [pause:] markers.
+    8. Normalise ellipsis to exactly three dots.
     """
     text = expand_for_tts(text)
+    text = _convert_to_contractions(text)
     text = inject_phonemes(text)
     text = enhance_prosody_punctuation(text)
+    text = _inject_sensory_ellipses(text)
+    text = _vary_sentence_lengths(text)
     # Soft ellipsis transition into an explicit pause marker (graceful handoff)
     text = re.sub(r'(\w)\s*(\[pause:)', r'\1... \2', text)
     # Normalise any multi-dot sequences to clean three-dot ellipsis
@@ -519,6 +618,37 @@ def merge_sentences_to_chunks(sentences: list[str]) -> list[str]:
         chunks.append(" ".join(current_parts))
 
     return chunks
+
+
+def annotate_speed(sentence: str, base_speed: float) -> float:
+    """Compute per-sentence speed based on sentence characteristics.
+
+    Shorter phrases and reflective sentences are spoken more slowly,
+    creating natural pacing variation across a meditation session.
+    Kokoro's length-dependent style vector selection means shorter
+    utterances already receive different prosody — slower speed
+    amplifies this deliberate quality.
+
+    Args:
+        sentence: The sentence text to analyse.
+        base_speed: The user-selected base speed (0.65–1.0).
+
+    Returns:
+        Adjusted speed, clamped to safe Kokoro range (>= 0.65).
+    """
+    stripped = sentence.strip()
+    word_count = len(stripped.split())
+
+    if word_count < 6:
+        speed = base_speed * 0.88  # Short phrases: deliberate, intimate
+    elif stripped.endswith('?'):
+        speed = base_speed * 0.95  # Questions: slightly slower for reflection
+    elif stripped.rstrip().endswith(('...', '\u2026')):
+        speed = base_speed * 0.92  # Trailing thoughts: contemplative
+    else:
+        speed = base_speed
+
+    return clamp_speed(speed)
 
 
 def clamp_speed(speed: float) -> float:

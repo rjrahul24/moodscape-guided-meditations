@@ -12,15 +12,16 @@ import random
 import numpy as np
 
 from core.speech_engine import SAMPLE_RATE, SpeechEngine
-from core.kokoro_tts.voice_manager import BRITISH_VOICES, is_british_voice
+from core.kokoro_tts.voice_manager import BRITISH_VOICES, is_british_voice, add_voice_jitter
 from core.kokoro_tts.postprocessor import (
     CROSSFADE_SAMPLES,
     process_chunk,
     crossfade_chunks,
     apply_segment_fades,
     reduce_synthesis_noise,
+    generate_room_tone,
 )
-from core.kokoro_tts.preprocessor import clamp_speed, split_into_sentences
+from core.kokoro_tts.preprocessor import annotate_speed, clamp_speed, split_into_sentences
 
 logger = logging.getLogger(__name__)
 
@@ -161,9 +162,17 @@ class KokoroEngine(SpeechEngine):
             if torch.cuda.is_available():
                 torch.cuda.manual_seed_all(seed)
 
-        # Resolve voice specification
-        from core.kokoro_tts.voice_manager import get_voice
-        resolved_voice = get_voice(voice) if isinstance(voice, str) else voice
+        # Resolve voice specification — always to a tensor so per-sentence
+        # jitter can be applied for natural micro-variation
+        from core.kokoro_tts.voice_manager import get_voice, load_voice_tensor
+        if isinstance(voice, str):
+            resolved = get_voice(voice)
+            # Single voice IDs return as string — convert to tensor
+            if isinstance(resolved, str):
+                resolved = load_voice_tensor(resolved)
+            resolved_voice = resolved
+        else:
+            resolved_voice = voice
 
         # Clamp speed to safe Kokoro range
         speed = clamp_speed(speed)
@@ -182,10 +191,12 @@ class KokoroEngine(SpeechEngine):
                     sentences = [segment["text"]]
 
                 for s_idx, sentence in enumerate(sentences):
+                    sentence_speed = annotate_speed(sentence, speed)
+                    sentence_voice = add_voice_jitter(resolved_voice)
                     gen = pipe(
                         sentence,
-                        voice=resolved_voice,
-                        speed=speed,
+                        voice=sentence_voice,
+                        speed=sentence_speed,
                         split_pattern='',
                     )
 
@@ -222,14 +233,14 @@ class KokoroEngine(SpeechEngine):
                             if sentence.rstrip().endswith(("...", "\u2026"))
                             else INTER_SENTENCE_PAUSE_SEC
                         )
-                        pause_samples = int(pause_sec * SAMPLE_RATE)
-                        audio_chunks.append(np.zeros(pause_samples, dtype=np.float32))
-                        activity_chunks.append(np.zeros(pause_samples, dtype=bool))
+                        room_tone = generate_room_tone(pause_sec, sr=SAMPLE_RATE)
+                        audio_chunks.append(room_tone)
+                        activity_chunks.append(np.zeros(len(room_tone), dtype=bool))
 
             elif segment["type"] == "pause":
-                num_samples = int(segment["duration_sec"] * SAMPLE_RATE)
-                audio_chunks.append(np.zeros(num_samples, dtype=np.float32))
-                activity_chunks.append(np.zeros(num_samples, dtype=bool))
+                room_tone = generate_room_tone(segment["duration_sec"], sr=SAMPLE_RATE)
+                audio_chunks.append(room_tone)
+                activity_chunks.append(np.zeros(len(room_tone), dtype=bool))
 
             elif segment["type"] == "breath":
                 from core.breath_sounds import load_breath

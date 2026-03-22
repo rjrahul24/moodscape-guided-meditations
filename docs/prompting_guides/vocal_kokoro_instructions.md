@@ -14,20 +14,32 @@ Raw script text
       ▼ core/kokoro_tts/preprocessor.py — parse_script()
 List of segments: {"type": "speech", "text": "..."} and {"type": "pause", "duration_sec": N.N}
       │
-      ▼ core/tts_engine.py — TTSEngine.synthesize()
+      ▼ core/kokoro_tts/preprocessor.py — preprocess_for_meditation()
+For each speech segment:
+  - Expand digits/abbreviations → spoken words
+  - Convert formal phrasing → contractions (warmer prosody)
+  - Inject IPA phonemes for Sanskrit/yoga terms
+  - Enhance prosody punctuation (comma insertion at breath boundaries)
+  - Inject contemplative ellipses before sensory words (warmth, peace, etc.)
+  - Vary sentence lengths (promote long-clause commas to periods)
+      │
+      ▼ core/kokoro_tts/engine.py — KokoroEngine.synthesize()
 For each "speech" segment:
   - Split into individual sentences at .!? boundaries
   - Merge sentences < 4 words with the next sentence
+  - Per sentence: annotate_speed() adjusts pace (short phrases slower, questions slower)
+  - Per sentence: add_voice_jitter() for subtle timbre variation
   - Call Kokoro KPipeline for each sentence → float32 audio
-  - Insert 0.8s gap between sentences (1.2s after "...")
+  - Insert room-tone pauses between sentences (0.8s / 1.2s after "...")
 For each "pause" segment:
-  - Insert np.zeros(duration_sec × 24000) samples of silence
+  - Insert room-tone noise (bandpass 100–800 Hz, -55 dBFS)
       │
-      ▼ Concatenate all chunks → voice_audio (float32, 24 kHz, mono)
-         + voice_activity mask (True where voice is speaking)
+      ▼ Concatenate → spectral gating
+      │
+      ▼ voice_audio (float32, 24 kHz, mono) + voice_activity mask
 ```
 
-**Critical rule:** The app never passes `[pause:Xs]` markers to Kokoro. The script parser strips all pause markers and converts them to silence arrays before any TTS call happens. If you accidentally pass a pause marker string to Kokoro, it will try to pronounce the words "pause" and "3s" — which is never what you want.
+**Critical rule:** The app never passes `[pause:Xs]` markers to Kokoro. The script parser strips all pause markers and converts them to room-tone audio arrays before any TTS call happens. If you accidentally pass a pause marker string to Kokoro, it will try to pronounce the words "pause" and "3s" — which is never what you want.
 
 ---
 

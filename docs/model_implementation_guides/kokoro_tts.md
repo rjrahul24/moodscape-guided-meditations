@@ -539,10 +539,10 @@ The Kokoro TTS implementation is a self-contained package at `core/kokoro_tts/`:
 
 | File | Purpose |
 |------|---------|
-| `core/kokoro_tts/engine.py` | `KokoroEngine` — model loading, dual-pipeline (US/British), synthesis with per-chunk artifact trimming, inter-sentence pausing, spectral gating noise reduction |
-| `core/kokoro_tts/preprocessor.py` | Script parsing (`[pause:Xs]`, `[breath]`, `\n\n`), text expansion (digits/abbreviations), IPA phoneme injection (30+ Sanskrit/yoga terms), prosody punctuation enhancement, token-aware chunking (100-150 target, 400 ceiling) |
-| `core/kokoro_tts/postprocessor.py` | Per-chunk cleanup (artifact trim, RMS norm), crossfade assembly (22ms cos²), segment fades, spectral gating noise reduction, unified voice FX chain (`build_voice_chain()`) |
-| `core/kokoro_tts/voice_manager.py` | Voice tensor loading from HuggingFace, weighted blending, 5 meditation presets (`balanced_calm`, `deep_rest`, `soft_whisper`, `golden_hour`, `earth_root`), British voice detection |
+| `core/kokoro_tts/engine.py` | `KokoroEngine` — model loading, dual-pipeline (US/British), synthesis with per-sentence speed variation, per-sentence voice jitter, room-tone pauses, spectral gating noise reduction |
+| `core/kokoro_tts/preprocessor.py` | Script parsing (`[pause:Xs]`, `[breath]`, `\n\n`), text expansion, contraction conversion, IPA phoneme injection (30+ Sanskrit/yoga terms), prosody punctuation enhancement, sensory ellipsis injection, sentence length variation, per-sentence speed annotation, token-aware chunking |
+| `core/kokoro_tts/postprocessor.py` | Per-chunk cleanup (artifact trim, RMS norm), crossfade assembly (300ms cos²), segment fades, spectral gating noise reduction, room-tone pause generation, unified voice FX chain (`build_voice_chain()`) |
+| `core/kokoro_tts/voice_manager.py` | Voice tensor loading from HuggingFace, SLERP blending, per-sentence voice micro-variation (jitter, amount=0.001), 5 meditation presets (`balanced_calm`, `deep_rest`, `soft_whisper`, `golden_hour`, `earth_root`), British voice detection |
 | `core/pipeline.py` | End-to-end orchestration: script → TTS → upsampling (soxr_vhq) → voice FX → music gen → mixing → master → export |
 | `core/qa_monitor.py` | Quality validation: clipping, LUFS, silence gaps, spectral balance, silence ratio |
 
@@ -570,11 +570,54 @@ KOKORO_VOICE_CHOICES = [
 ]
 ```
 
-Blend presets are resolved by `core/kokoro_tts/voice_manager.py` into weighted tensor sums.
+Blend presets are resolved by `core/kokoro_tts/voice_manager.py` using SLERP interpolation.
 
 ---
 
-## 13. What NOT to Do (confirmed across all three research documents)
+## 13. Expressiveness Enhancements
+
+Kokoro-82M has no runtime emotion conditioning, SSML, or prosody parameters beyond `speed` and `voice`. Expressiveness is achieved through two primary layers: **text structure** (shapes the model's pitch/duration predictions at generation time — highest impact) and **voice blending** (interpolation in the convex style space). DSP post-processing is kept minimal to preserve Kokoro's neural vocoder quality.
+
+### Text Preprocessing (`preprocessor.py`)
+
+The `preprocess_for_meditation()` pipeline applies these transforms in order:
+
+1. **Text expansion** — digits/abbreviations → spoken words
+2. **Contraction conversion** — formal phrasing → contractions (`"you are"→"you're"`, `"do not"→"don't"`, etc.). Kokoro produces warmer, more conversational prosody with contractions.
+3. **IPA phoneme injection** — Sanskrit/yoga terms → misaki IPA syntax
+4. **Prosody punctuation** — comma insertion at breath-group boundaries (gerund phrases, meditation verbs, long clauses)
+5. **Sensory ellipsis injection** — `...` before sensory words (`warmth`, `peace`, `stillness`, etc.) when preceded by a determiner. Kokoro treats ellipsis as a ~200ms trailing pause with suspended pitch.
+6. **Sentence length variation** — promotes one long-clause comma to a period per block. Short/long alternation exploits Kokoro's length-dependent style vector selection (shorter utterances receive different prosodic characteristics).
+
+### Per-Sentence Speed Variation (`preprocessor.py` + `engine.py`)
+
+`annotate_speed(sentence, base_speed)` adjusts speed per sentence:
+- Short phrases (<6 words): `base_speed × 0.88` (deliberate, intimate)
+- Questions: `base_speed × 0.95` (slower for reflection)
+- Ellipsis endings: `base_speed × 0.92` (contemplative trailing)
+- Default: `base_speed` unchanged
+- Always clamped to ≥ 0.65 (Kokoro distortion floor)
+
+### Voice Blending (`voice_manager.py`)
+
+- **SLERP interpolation** replaces linear blending. Spherical linear interpolation preserves embedding norms on the style space hypersphere, producing smoother blends (linear interpolation shrinks norms by ~29% at midpoint for orthogonal vectors).
+- **Per-sentence voice jitter** (`add_voice_jitter`, amount=0.001) adds subtle Gaussian noise to the voice tensor per sentence, creating natural micro-variation in timbre. Kept very low (0.001) to avoid audible timbre shifts at pause boundaries.
+
+### Pitch Humanization & Formant Warmth (`postprocessor.py` — DISABLED)
+
+`humanize_voice(audio, sr)` exists in the codebase but is **not called** in the active pipeline. pyworld's WORLD vocoder resynthesis degrades Kokoro's neural vocoder output (ISTFTNet), causing both flatness and harshness. The function is retained for potential future use with a higher-quality resynthesis approach.
+
+### Voice FX Chain (`postprocessor.py`)
+
+The voice FX chain uses gentle glue compression (2:1 @ -18 dB) rather than aggressive parallel compression. The EQ is conservative: +2.0 dB low shelf @ 200 Hz for warmth, broad +1.0 dB presence @ 3 kHz (Q=0.6), -3.0 dB high shelf @ 7.5 kHz for de-harshness. This preserves the natural smoothness of Kokoro's neural vocoder output.
+
+### Room-Tone Pauses (`postprocessor.py` + `engine.py`)
+
+`generate_room_tone(duration_sec, sr, level_db=-55)` replaces dead-silence pauses with barely perceptible bandpass-filtered noise (100–800 Hz, -55 dBFS). Cosine fade-in/out prevents clicks. Used for both inter-sentence pauses and explicit `[pause:Xs]` segments.
+
+---
+
+## 14. What NOT to Do (confirmed across all three research documents)
 
 | Anti-Pattern | Reason | Alternative |
 |-------------|--------|-------------|

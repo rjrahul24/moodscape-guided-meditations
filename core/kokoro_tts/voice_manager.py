@@ -63,26 +63,105 @@ def blend_voices(voice_weights: dict[str, float]) -> torch.Tensor:
     return result
 
 
+def _slerp(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
+    """Spherical linear interpolation between two tensors.
+
+    Preserves embedding norms on the hypersphere, producing more natural
+    intermediate voices than linear interpolation (which shrinks norms
+    at midpoint by ~29% for orthogonal vectors).
+    """
+    v0_flat = v0.flatten().float()
+    v1_flat = v1.flatten().float()
+    v0_norm = v0_flat / torch.norm(v0_flat)
+    v1_norm = v1_flat / torch.norm(v1_flat)
+    omega = torch.acos(torch.clamp(torch.dot(v0_norm, v1_norm), -1.0, 1.0))
+    sin_omega = torch.sin(omega)
+    if sin_omega.abs() < 1e-6:
+        # Vectors nearly parallel — fall back to linear
+        result = (1.0 - t) * v0_flat + t * v1_flat
+    else:
+        result = (torch.sin((1.0 - t) * omega) / sin_omega) * v0_flat + \
+                 (torch.sin(t * omega) / sin_omega) * v1_flat
+    return result.reshape(v0.shape)
+
+
+def slerp_blend(voice_weights: dict[str, float]) -> torch.Tensor:
+    """Blend voice tensors using spherical linear interpolation (SLERP).
+
+    For 2 voices: direct SLERP with weight as interpolation parameter.
+    For 3+ voices: iterative pairwise SLERP (blend first two, then
+    SLERP result with third, etc.).
+
+    SLERP preserves the norm of voice embeddings on the style space
+    hypersphere, producing smoother blends than linear interpolation.
+    """
+    items = list(voice_weights.items())
+    if len(items) == 1:
+        return load_voice_tensor(items[0][0])
+
+    # Normalise weights to sum to 1.0
+    total = sum(w for _, w in items)
+    items = [(vid, w / total) for vid, w in items]
+
+    # For 2 voices: direct SLERP
+    if len(items) == 2:
+        v0 = load_voice_tensor(items[0][0])
+        v1 = load_voice_tensor(items[1][0])
+        t = items[1][1]  # weight of second voice = interpolation parameter
+        return _slerp(v0, v1, t)
+
+    # For 3+ voices: iterative pairwise SLERP
+    result = load_voice_tensor(items[0][0])
+    accumulated_weight = items[0][1]
+    for voice_id, weight in items[1:]:
+        tensor = load_voice_tensor(voice_id)
+        # t is the fraction of the new voice in the running blend
+        t = weight / (accumulated_weight + weight)
+        result = _slerp(result, tensor, t)
+        accumulated_weight += weight
+
+    return result
+
+
+def add_voice_jitter(voice_tensor: torch.Tensor, amount: float = 0.001) -> torch.Tensor:
+    """Add subtle random perturbation to a voice tensor for natural variation.
+
+    Human speakers have micro-variation in timbre across utterances.
+    This creates a "liveness" quality when applied per-sentence — each
+    sentence gets a slightly different voice without sounding like a
+    different speaker.
+
+    Args:
+        voice_tensor: Voice embedding tensor of shape (511, 1, 256).
+        amount: Perturbation magnitude (~0.1% of typical embedding norm).
+                Keep very low (≤0.001) to avoid audible timbre shifts at
+                pause boundaries.
+    """
+    return voice_tensor + torch.randn_like(voice_tensor) * amount
+
+
 def get_voice(voice_spec: str):
-    """Resolve a voice specification to either a string ID or a blended tensor.
+    """Resolve a voice specification to a blended tensor or string ID.
 
     Accepts:
       - Single voice ID: "af_heart" → returns string
       - Comma-separated blend: "af_heart,af_nicole" → returns blended tensor (equal weight)
       - Preset name: "golden_hour" → returns blended tensor from preset
 
+    Blends use SLERP interpolation to preserve embedding norms.
+
     Returns:
         str | torch.Tensor
     """
     # Check if it is a preset
     if voice_spec in MEDITATION_PRESETS:
-        return blend_voices(MEDITATION_PRESETS[voice_spec]["blend"])
+        return slerp_blend(MEDITATION_PRESETS[voice_spec]["blend"])
 
     # Check if it is a comma-separated blend
     if "," in voice_spec:
         voices = [v.strip() for v in voice_spec.split(",")]
         weight = 1.0 / len(voices)
-        return blend_voices({v: weight for v in voices})
+        return slerp_blend({v: weight for v in voices})
 
     # Single voice ID — return as string (Kokoro handles it)
     return voice_spec

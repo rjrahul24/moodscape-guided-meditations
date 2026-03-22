@@ -41,6 +41,8 @@ Kokoro TTS (24 kHz, CPU)
 │ Segment assembly                     │
 │   • 300ms cosine² crossfade          │
 │   • 25ms pre-roll + 100ms fade-in    │
+│   • Room-tone pauses (bandpass noise │
+│     100–800 Hz, -55 dBFS)           │
 └──────────────────────────────────────┘
   │
   ▼
@@ -59,12 +61,13 @@ Upsample → mix sample rate (soxr_vhq for all TTS engines)
 │ Unified Voice FX: build_voice_chain()│
 │   1. NoiseGate (-42 dB)             │
 │   2. Highpass 80 Hz                  │
-│   3. LowShelf +2 dB @ 200 Hz        │
+│   3. LowShelf +2.0 dB @ 200 Hz      │
 │   4. PeakFilter -2 dB @ 350 Hz      │
 │      (Q=1.0, mud cut)              │
-│   5. Compressor (2:1, -18 dB)       │
+│   5. Compressor 2:1 @ -18 dB        │
+│      (gentle glue)                  │
 │   6. PeakFilter +1.0 dB @ 3 kHz     │
-│      (Q=0.6, presence)              │
+│      (Q=0.6, broad presence)        │
 │   7. HighShelf -3.0 dB @ 7.5 kHz    │
 │      (de-harsh)                     │
 │   8. Convolution reverb (space)      │
