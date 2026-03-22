@@ -1,19 +1,49 @@
-"""F5-TTS preprocessing — character-aware chunking for F5-TTS's 30s context window.
+"""F5-TTS preprocessing — text normalization and character-aware chunking.
 
-F5-TTS infers ~8–10 seconds of audio per 300 characters at meditative speed (0.80).
+F5-TTS infers ~8–10 seconds of audio per 300 characters at meditative speed (0.88).
 The 300-character limit keeps every chunk safely within the model's context window
 with good headroom for quality.
 
-Key difference from kokoro_tts/preprocessor.py:
+Key differences from kokoro_tts/preprocessor.py:
 - No IPA phoneme injection (F5-TTS does its own G2P from raw text)
-- No text expansion (digits, abbreviations) — pass natural prose as-is
+- F5-specific punctuation normalization (colons, ellipses, em-dashes, hyphens)
 - Character-count chunking instead of token-count chunking
+- Shared digit/abbreviation expansion via core.text_utils
 """
 
+import logging
 import re
+
+from core.text_utils import expand_text
+
+logger = logging.getLogger(__name__)
 
 MAX_CHUNK_CHARS = 300
 _PARAGRAPH_PAUSE_SEC = 3.0
+
+
+def normalize_for_f5(text: str) -> str:
+    """Normalize text for F5-TTS's G2P and prosody model.
+
+    Applies shared digit/abbreviation expansion, then F5-specific fixes:
+    - Colons → commas (F5 ignores colons, producing no pause)
+    - Ellipses → periods (F5 does not create longer pauses from ellipses)
+    - Em-dashes → commas (not reliably handled by F5)
+    - Hyphens in compounds removed: 'well-being' → 'wellbeing' (hyphens cause
+      mispronunciation per F5-TTS GitHub issue #89)
+    """
+    # Shared expansion: digits → words, abbreviations → full forms
+    text = expand_text(text)
+
+    # F5-specific punctuation normalization
+    text = re.sub(r':', ',', text)              # colons → commas
+    text = re.sub(r'\.{2,}', '.', text)         # ellipses → single period
+    text = re.sub(r'—|–|--+', ',', text)        # em/en-dashes → commas
+    # Remove hyphens in compound words (not between digits — those are already
+    # handled by expand_text's hyphenated number expansion)
+    text = re.sub(r'(?<=[a-zA-Z])-(?=[a-zA-Z])', '', text)
+
+    return text
 
 
 def parse_script(script: str) -> list[dict]:
@@ -146,7 +176,8 @@ def prepare_segments(script: str) -> list[dict]:
         if seg['type'] == 'voice':
             current_voice = seg['voice']
         elif seg['type'] == 'speech':
-            chunks = split_into_chunks(seg['text'])
+            normalized = normalize_for_f5(seg['text'])
+            chunks = split_into_chunks(normalized)
             for c in chunks:
                 expanded.append({
                     'type': 'speech', 

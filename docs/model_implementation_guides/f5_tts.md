@@ -13,7 +13,7 @@ F5-TTS is the second TTS engine available in MoodScape, offering zero-shot voice
 | Native sample rate | 24 000 Hz (matches Kokoro / pipeline contract) |
 | Device | MPS (Apple Silicon) with CPU fallback |
 | Voice input | Reference audio + verbatim transcript (via VoiceRegistry) |
-| Key inference params | `nfe_step=32`, `sway_sampling_coef=-1.0`, `cfg_strength=1.0` |
+| Key inference params | `nfe_step=32`, `sway_sampling_coef=-1.0`, `cfg_strength=2.0` |
 
 **Why F5-TTS?**
 
@@ -139,20 +139,30 @@ This runs once per voice phase load (not per chunk), adding zero per-chunk overh
 
 ## 6. Preprocessing
 
-F5-TTS preprocessing ([preprocessor.py](../../core/f5_tts/preprocessor.py)) performs **character-count chunking** at a 300-character limit.
+F5-TTS preprocessing ([preprocessor.py](../../core/f5_tts/preprocessor.py)) performs **text normalization** and **character-count chunking** at a 300-character limit.
 
 ### Why Character-Count Chunking?
 
-F5-TTS has a hard ~30-second context window per `infer()` call. At a meditative pace of 0.80 speed, 300 characters = ~8-10 seconds of audio, safely within the window.
+F5-TTS has a hard ~30-second context window per `infer()` call. At a meditative pace of 0.88 speed, 300 characters = ~8-10 seconds of audio, safely within the window.
+
+### Text Normalization (`normalize_for_f5`)
+
+Shared digit/abbreviation expansion (via `core.text_utils`) plus F5-specific punctuation fixes:
+
+- **Digits → words**: `10` → `ten`, `4-7-8` → `four, seven, eight`
+- **Abbreviations**: `sec` → `seconds`, `min` → `minutes`
+- **Colons → commas**: F5 ignores colons, producing no pause
+- **Ellipses → periods**: F5 does not create longer pauses from ellipses
+- **Em/en-dashes → commas**: not reliably handled by F5
+- **Compound hyphens removed**: `well-being` → `wellbeing` (hyphens cause mispronunciation)
 
 ### What Preprocessing Does NOT Include
 
 Unlike Kokoro's preprocessor, F5-TTS preprocessing does **not**:
-- Expand digits to words
 - Inject IPA phonemes
 - Insert prosody commas
 
-F5-TTS performs its own G2P from raw prose. Write natural meditation prose.
+F5-TTS performs its own G2P from normalized prose.
 
 ### Pause Markers
 
@@ -182,18 +192,22 @@ Before passing text to F5's `infer()`:
 | Parameter | Value | Notes |
 |---|---|---|
 | `nfe_step` | 32 | Production quality. Use 16 for fast iteration. |
-| `cfg_strength` | 1.0 | Lowered from 2.0 — reduces high-frequency diffusion artefacts |
+| `cfg_strength` | 2.0 | F5-TTS official default. Enables classifier-free guidance for expressive output. Split-band de-esser handles any HF diffusion artefacts. |
 | `sway_sampling_coef` | -1.0 | Enables sway sampling for smoother meditative prosody |
-| `speed` | 1.0 (default) | Secondary control; mostly unused when `fix_duration` is active |
-| `fix_duration` | Calculated | Per-chunk: `ref_duration + (word_count / target_wpm * 60)` |
-| `target_wpm` | 110 (default) | Meditation pace. Controls `fix_duration` per chunk. |
+| `speed` | 0.88 (default) | Primary pacing control. ~95-100 WPM meditation pace with natural prosodic timing. |
+| `target_wpm` | None (default) | Natural rhythm mode (recommended). Set 90-150 for fixed WPM pacing. |
+| `fix_duration` | Only when `target_wpm` is set | Per-chunk: `ref_duration + (word_count / target_wpm * 60)` |
 | `remove_silence` | False | Engine handles silence trimming explicitly |
 
-### WPM-Based Pacing (fix_duration)
+### Pacing: Natural Rhythm vs. Fixed WPM
 
-F5-TTS's internal duration formula (`ref_audio_len / ref_text_len * gen_text_len / speed`) is unreliable for short reference clips — small variations in reference text vs. audio duration shift pacing significantly.
+**Default: Natural rhythm (`target_wpm=None`, `speed=0.88`)**
 
-The engine instead uses F5's `fix_duration` parameter to specify exact output duration per chunk:
+F5-TTS's core design advantage is implicit duration assignment — the paper states that avoiding explicit phoneme-level duration modelling "results in improved prosody and rhythm." The `speed` parameter gives the model ~14% more temporal room than natural speech, targeting ~95-100 WPM for meditation delivery while letting the model assign natural internal rhythm, pauses, and emphasis.
+
+**Optional: Fixed WPM pacing (`target_wpm=90-150`)**
+
+When `target_wpm` is set (via the Pacing slider in the UI), the engine calculates `fix_duration` per chunk:
 
 ```python
 word_count = len(gen_text.split())
@@ -201,17 +215,17 @@ target_speech_sec = word_count / target_wpm * 60.0
 fix_duration = ref_audio_duration_sec + target_speech_sec
 ```
 
-This decouples pacing from reference audio — the reference controls **voice quality and expression only**, while WPM controls **pacing precisely**. The reference audio duration is measured during `load_model()` and stored in `_phase_assets`.
+This provides precise pacing control but constrains the model's prosodic freedom. Use when consistent timing is more important than expressiveness (e.g., timed breathing exercises).
 
 ### Post-Inference Processing
 
 1. **Trailing silence trimming**: Remove samples below -45 dBFS, keep 50ms decay tail
 2. **Silero VAD**: Two-pass — crop trailing non-speech (100ms safety tail), attenuate interior gaps to 15% gain floor (`_VAD_GAIN_FLOOR=0.15`)
-3. **Assembly**: 0.4s silent gap + 300ms equal-power cosine crossfade between speech chunks; direct concatenation at pause boundaries
+3. **Assembly**: 0.4s room-tone gap + 300ms equal-power cosine crossfade between speech chunks; direct concatenation at pause boundaries
 
 ### Pauses and Silence
 
-Pauses and inter-chunk gaps use digital silence (`np.zeros`). Downstream convolution reverb provides natural tails on voice segments.
+Pauses use room-tone noise (bandpass 100-800 Hz, -55 dBFS, with cosine fades) for natural acoustic continuity between speech segments. The room-tone generator is shared with the Kokoro engine (`generate_room_tone()` from `core.kokoro_tts.postprocessor`). Downstream convolution reverb provides additional natural tails on voice segments.
 
 ---
 
@@ -228,25 +242,31 @@ Two-phase mastering engine ([postprocessor.py](../../core/f5_tts/postprocessor.p
 #### Split-Band De-Esser (Preprocessing)
 
 - Isolates 4-8 kHz sibilant band via 4th-order Butterworth bandpass
-- Compresses sibilant band: threshold -18 dB, ratio 4:1, attack 0.5ms, release 10ms
+- Compresses sibilant band: threshold -20 dB, ratio 4:1, attack 0.5ms, release 10ms
 - Recombines with untouched non-sibilant signal
+
+#### Tape Saturation
+
+After de-essing, subtle tape-style saturation (`np.tanh(audio * 1.08) / 1.08`) adds 2nd/3rd harmonics for perceived warmth without audible distortion. This bridges the gap between clinical TTS output and the warm, intimate quality of professional meditation narration.
 
 #### Mastering Chain
 
 ```
-NoiseGate(-50 dB, 1.5:1, 5ms/250ms)    -- safety gate for clean noise floor
+NoiseGate(-45 dB, 2:1, 5ms/250ms)       -- catch diffusion residual noise
 HighpassFilter(80 Hz)                    -- remove sub-bass rumble
 PeakFilter(300 Hz, -2 dB, Q=1.5)        -- anti-boxiness (cut low-mid mud)
 LowShelfFilter(200 Hz, +2 dB)           -- warmth
-PeakFilter(3.2 kHz, +1.5 dB, Q=0.8)    -- presence / intelligibility
-HighShelfFilter(10 kHz, +1.5 dB)        -- air shelf for clarity
-HighShelfFilter(8 kHz, -1.0 dB)         -- tame brightness without killing air
-LowpassFilter(13 kHz)                   -- remove ultrasonic content
-Compressor(-20 dB, 2.5:1, 15ms/100ms)  -- gentle, transparent leveling
+PeakFilter(3.0 kHz, -2.0 dB, Q=0.8)    -- anti-harshness subtractive cut
+HighShelfFilter(7.5 kHz, -3.0 dB)       -- de-harsh shelf (steep spectral tilt)
+HighShelfFilter(10 kHz, +1.0 dB)        -- air shelf for breathiness/intimacy
+LowpassFilter(12 kHz)                   -- preserve Vocos native bandwidth
+Compressor(-20 dB, 2.5:1, 15ms/200ms)  -- gentle, meditation-paced leveling
 Limiter(-1.5 dB, 80ms)                  -- safe ceiling
 ```
 
-**Why 13 kHz lowpass (vs. Kokoro's 9.5 kHz)?** Vocos has broader native bandwidth than Kokoro's ISTFTNet. 13 kHz preserves natural "air."
+**Why 12 kHz lowpass (vs. Kokoro's 9.5 kHz)?** Vocos has broader native bandwidth than Kokoro's ISTFTNet. 12 kHz preserves natural "air" and breathiness while cutting ultrasonic content.
+
+**Anti-harshness philosophy:** The 3 kHz zone is the primary locus of metallic resonance from the diffusion-based Vocos vocoder. The -2.0 dB subtractive cut (vs. the previous +1.5 dB presence boost) removes the core harshness, while the -3.0 dB shelf at 7.5 kHz enforces the steep spectral tilt characteristic of calm, breathy speech.
 
 **No algorithmic reverb in mastering.** Reverb is applied downstream via the user-controlled convolution reverb in `build_f5_voice_chain()`.
 
@@ -287,9 +307,10 @@ F5Engine is instantiated locally per `generate()` call. After synthesis: `tts.un
 | Setting | Value | Notes |
 |---|---|---|
 | `nfe_step` | 32 | Production quality. Use 16 for fast script iteration. |
+| `cfg_strength` | 2.0 | Enables classifier-free guidance for expressive output. |
 | `sway_sampling_coef` | -1.0 | Smoother, more natural prosody. Disable (set to 0) only for timing artefacts. |
-| `target_wpm` | 110 | Meditation pace; drives `fix_duration` per chunk. |
-| `speed` | 1.0 | Secondary fine-tuning (mostly unused with WPM pacing). |
+| `target_wpm` | None | Natural rhythm (recommended). Set 90-150 for fixed pacing. |
+| `speed` | 0.88 | Primary pacing control. ~95-100 WPM meditation pace. |
 | Device | MPS | Apple Silicon. CPU fallback for non-Apple hardware. |
 | Precision | fp16 | `ema_model.to(torch.float16)` -- prevents distortion artefacts seen in bf16. |
 | First-run | Slow | Model weights (~1.5 GB) downloaded from HuggingFace on first use. |

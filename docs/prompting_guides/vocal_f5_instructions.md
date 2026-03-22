@@ -26,7 +26,7 @@ Each speech block split into ≤300-character chunks at sentence boundaries
 For each "speech" chunk:
   - Normalise text (collapse whitespace, lowercase ALL_CAPS)
   - Select reference audio (always the static reference for consistent voice)
-  - Call F5TTS infer() with speed, nfe_step=32, cfg_strength=1.0, seed
+  - Call F5TTS infer() with speed=0.88, nfe_step=32, cfg_strength=2.0, seed
   - Trim trailing silence, build activity mask
 For each "pause" segment:
   - Insert digital silence
@@ -109,12 +109,13 @@ Back-to-back pauses are merged, keeping only the **longest** duration:
 | Voice | Pre-trained voice embeddings | Zero-shot cloned from reference audio |
 | G2P | External (misaki + espeak-ng) | Internal (F5's own G2P from raw text) |
 | IPA injection | Supported (`[word](/ˈaɪpə/)`) | Not supported — do not use |
-| Text expansion | Auto (digits, abbreviations) | Not applied — write natural prose |
+| Text expansion | Auto (digits, abbreviations) | Auto (digits, abbreviations, punctuation normalization) |
 | Chunk limit | 150 tokens | 300 characters |
 | Paragraph pause | 2.5 seconds | 3.0 seconds |
 | Inter-sentence gap | 0.8s (1.2s after `...`) | 0.4s silent gap + 300ms crossfade |
 | Breath sounds | Not supported | `[breath]`, `[inhale]`, `[exhale]` |
-| Speed default | 0.70 | 1.0 |
+| Speed default | 0.70 | 0.88 |
+| Pacing default | N/A | Natural rhythm (WPM disabled) |
 
 **Important:** Do not use IPA phoneme injection syntax with F5-TTS. It will not be parsed and will be spoken as literal text.
 
@@ -130,7 +131,7 @@ F5-TTS performs its own grapheme-to-phoneme conversion from raw text. Write natu
 - Keep sentences short (under 200 characters ideal, under 300 maximum)
 - Use explicit `[pause:Xs]` markers for precise timing control
 - Use `[breath]` markers between breathing instructions for natural rhythm
-- Use `...` (ellipsis) for trailing, drifting quality — the engine preserves these
+- Use `[pause:Xs]` instead of `...` for pauses — ellipses are normalized to periods by the preprocessor
 - Use commas for subtle micro-pauses within sentences
 - Write one clear idea per sentence
 
@@ -138,7 +139,7 @@ F5-TTS performs its own grapheme-to-phoneme conversion from raw text. Write natu
 
 - Do not use IPA injection syntax — F5 ignores it and speaks it literally
 - Do not use ALL CAPS for emphasis — the engine auto-lowercases them to prevent letter-by-letter G2P spelling
-- Do not write numbers as digits (write "four" not "4") — F5's G2P may stumble on digits
+- Digits are auto-expanded (10 → ten), but writing words is still preferred for clarity
 - Do not include stage directions or notes in the script — F5 will attempt to speak them
 - Do not write sentences longer than 300 characters — they will be split mid-sentence
 - Do not rely on single newlines for pauses — they are treated as spaces
@@ -170,24 +171,29 @@ The slug is derived from the filename (e.g. `your_voice_name.wav` → slug `your
 
 ## Speaking Speed
 
-### Pacing (WPM) — Primary Pacing Control
+### Speed — Primary Pacing Control
 
-The **Pacing (WPM)** slider in the F5-TTS settings controls output speed precisely using F5's `fix_duration` mechanism. Instead of relying on the reference audio to set pace (which is unreliable with short 10s clips), the engine calculates exact output duration per chunk based on word count and target WPM.
+The **speed** parameter (default 0.88) is the primary pacing control. At 0.88, F5-TTS produces meditation-pace delivery (~95-100 WPM) while preserving the model's natural prosodic timing — allowing it to insert natural pauses, emphasis, and rhythm variation.
+
+| Speed | Approximate WPM | Use Case |
+|---|---|---|
+| 0.80 | ~85-90 | Very slow, spacious delivery |
+| **0.88** | **~95-100** | **Meditation pace (default)** |
+| 0.95 | ~110-115 | Gentle narration |
+| 1.00 | ~120-130 | Natural speaking pace |
+
+### Pacing (WPM) — Optional Fixed Pacing
+
+The **Pacing (WPM)** slider (default: 0 = disabled) provides optional fixed pacing via F5's `fix_duration` mechanism. When set above 0, the engine calculates exact output duration per chunk based on word count and target WPM.
 
 | Use Case | WPM |
 |---|---|
 | Very slow, spacious delivery | 80 – 90 |
-| **Meditation pace (default)** | **110** |
+| Meditation pace | 100 – 110 |
 | Gentle narration | 120 – 130 |
 | Normal speaking pace | 140 – 150 |
 
-The reference audio now controls **voice quality and expression only** — not pacing. This means you can use a short, expressive reference clip without worrying about whether its speaking rate will transfer to the output.
-
-### Speed Slider — Secondary Fine-Tuning
-
-The `speed` slider (range 0.70–1.20, default 1.0) is a secondary control. When WPM pacing is active, the speed parameter has minimal effect because `fix_duration` overrides F5's internal duration estimation. It can be used for fine-tuning if WPM alone doesn't produce the desired feel.
-
-**Critical:** The WPM slider is the recommended way to control pacing. Lowering the speed parameter below 0.85 flattens pitch contours and expression.
+**Recommendation:** Leave WPM at 0 (natural rhythm) for most meditations. Fixed WPM is useful for timed breathing exercises where consistent pacing matters more than expressiveness. Fixed WPM constrains the model's prosodic freedom, which can flatten expression.
 
 ---
 
@@ -256,8 +262,8 @@ These are the recommended settings for top quality meditation audio generation w
 |---|---|---|
 | **TTS Voice Engine** | F5-TTS | Zero-shot voice cloning |
 | **Voice Personality** | (select your voice) | Choose from registered voices |
-| **Pacing (WPM)** | 110 | Meditation pace. 90 = very slow, 130 = gentle narration. |
-| **Speaking Speed** | 1.0 | Secondary fine-tuning. Leave at 1.0 when using WPM pacing. |
+| **Pacing (WPM)** | 0 | Natural rhythm (recommended). Set 90-110 for fixed meditation pacing. |
+| **Speaking Speed** | 0.88 | Primary pacing control. ~95-100 WPM meditation pace. |
 | **Voice Reverb** | 0.15 | Subtle room presence. Increase to 0.25 for spacious feel. |
 | **Reverb Space** | Warm Studio | Intimate, short decay — best for meditation. Use Wooden Hall for longer sessions. |
 | **Music Ducking** | -20 dB | Music drops 20 dB during speech. Use -25 dB if music is overpowering voice. |
@@ -373,7 +379,7 @@ Breathe in slowly through your nose. [pause:4s] Feel the cool air entering your 
 |---|---|---|
 | IPA injection `[word](/ˈaɪpə/)` | Spoken as literal text | Remove — F5 does its own G2P |
 | ALL CAPS words like "RELAX" | Auto-lowercased, but stylistically avoid | Write "relax" in normal case |
-| Digits ("breathe for 4 counts") | F5's G2P may stumble | Write "breathe for four counts" |
+| Digits ("breathe for 4 counts") | Auto-expanded, but words are clearer | Write "breathe for four counts" |
 | Sentences > 300 chars | Split mid-sentence at arbitrary point | Break into shorter sentences |
 | Stage directions in script | Spoken aloud by F5 | Remove all non-spoken text |
 | Single newline for pause | Treated as a space, no pause effect | Use `[pause:Xs]` or double newline |
@@ -427,7 +433,7 @@ Thank you for taking this time for yourself. [pause:3s]
 ```
 
 **What this script produces (approximately):**
-- At speed 1.0 with a slow reference, approximately 3–4 minutes of audio
+- At speed 0.88 with a calm reference, approximately 3–4 minutes of audio
 - Each `[pause:Xs]` creates silence of that exact duration
 - `[breath]` markers insert real breath audio samples (1.2s each)
 - Automatic 0.4s silent gaps + 300ms crossfades between speech chunks within the same paragraph
@@ -448,7 +454,7 @@ The F5-TTS engine outputs:
 
 ## Duration Estimation
 
-At the default 110 WPM pacing, F5-TTS generates approximately 8–10 seconds of audio per 300 characters of text (roughly 50–60 words).
+At the default speed of 0.88 (natural rhythm mode), F5-TTS generates approximately 8–10 seconds of audio per 300 characters of text (roughly 50–60 words).
 
 Rough rules of thumb:
 - **~100–130 words of speech** ≈ 1 minute of audio (before adding pauses)

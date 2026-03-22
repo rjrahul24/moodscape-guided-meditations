@@ -152,7 +152,7 @@ class MeditationPipeline:
         lyria_brightness: float = 0.3,
         tts_engine: str = "kokoro",
         f5_voice_slug: str | None = None,
-        f5_target_wpm: int | None = 110,
+        f5_target_wpm: int | None = None,
         reverb_ir: str = "warm_studio",
         do_stitch: bool = False,
     ) -> tuple[str, str | None, dict | None]:
@@ -256,7 +256,7 @@ class MeditationPipeline:
                 if tts_engine == "f5":
                     voice_audio, voice_activity = tts.synthesize(
                         segments, speed=speed, progress_cb=tts_progress,
-                        target_wpm=f5_target_wpm,
+                        target_wpm=f5_target_wpm if f5_target_wpm and f5_target_wpm > 0 else None,
                     )
                 else:
                     voice_audio, voice_activity = tts.synthesize(

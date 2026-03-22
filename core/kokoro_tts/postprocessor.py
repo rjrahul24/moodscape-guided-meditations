@@ -474,9 +474,12 @@ def build_voice_chain(reverb_amount: float = 0.08, ir_name: str = "warm_studio")
       4. Peak -2 dB @ 350 Hz (Q=1.0): single mud cut for ISTFTNet boxy
          resonance (replaces dual cuts at 300 Hz and 400 Hz)
       5. Compressor 2:1 @ -18 dB: gentle glue compression
-      6. Peak +1.0 dB @ 3 kHz (Q=0.6): broad presence for intelligibility
-      7. HiShelf -3.0 dB @ 7.5 kHz: single de-harsh shelf for vocoder
-         artifacts (replaces dual shelves at 7 kHz + 8 kHz = -5 dB)
+      6. Peak -2.5 dB @ 3 kHz (Q=0.8): subtractive cut targeting the
+         2-4 kHz metallic resonance zone — the primary source of the
+         "AI sound" in ISTFTNet output. Intelligibility is preserved
+         by the broad Q; only the harsh resonant peaks are attenuated.
+      7. HiShelf -4.0 dB @ 7.5 kHz: de-harsh shelf for vocoder artifacts;
+         enforces the steep spectral tilt of relaxed, breathy speech.
       8. Convolution reverb: real IR for natural room presence
       9. LPF 9.5 kHz: Nyquist masking AFTER reverb (so reverb tails are
          filtered too — previous chain applied this BEFORE reverb)
@@ -496,9 +499,9 @@ def build_voice_chain(reverb_amount: float = 0.08, ir_name: str = "warm_studio")
         PeakFilter(cutoff_frequency_hz=350, gain_db=-2.0, q=1.0),
         # ── Dynamics: gentle glue compression ──
         Compressor(threshold_db=-18, ratio=2.0, attack_ms=10.0, release_ms=100.0),
-        # ── Presence & de-harsh ──
-        PeakFilter(cutoff_frequency_hz=3000, gain_db=1.0, q=0.6),
-        HighShelfFilter(cutoff_frequency_hz=7500, gain_db=-3.0),
+        # ── Anti-harshness: subtractive EQ at primary metallic resonance ──
+        PeakFilter(cutoff_frequency_hz=3000, gain_db=-2.5, q=0.8),
+        HighShelfFilter(cutoff_frequency_hz=7500, gain_db=-4.0),
         # ── Space ──
         Convolution(
             impulse_response_filename=ir_path,
@@ -510,13 +513,32 @@ def build_voice_chain(reverb_amount: float = 0.08, ir_name: str = "warm_studio")
     ])
 
 
+# ── Tape saturation drive ─────────────────────────────────────────────────
+# Subtle 2nd/3rd harmonic enrichment via soft-clipping. tanh(x*drive)/drive
+# is near-identity at normal speech levels but gently rounds transient peaks,
+# adding perceived warmth without audible distortion. Slightly lower drive
+# than F5-TTS (1.05 vs 1.08) because ISTFTNet output is already smoother.
+_KOKORO_TAPE_DRIVE = 1.05
+
+
 def apply_fx(
     audio: np.ndarray,
     chain: Pedalboard,
     sample_rate: int = SAMPLE_RATE,
+    tape_saturation: bool = True,
 ) -> np.ndarray:
-    """Apply a Pedalboard FX chain to an audio array (1D or 2D float32)."""
+    """Apply tape saturation + Pedalboard FX chain to an audio array.
+
+    Tape saturation (tanh soft-clipping) runs before the Pedalboard chain,
+    adding subtle 2nd/3rd harmonics for perceived warmth. Disable with
+    tape_saturation=False for raw processing.
+    """
     audio = np.clip(audio.astype(np.float32), -1.0, 1.0)
+
+    # Tape saturation: subtle harmonic warmth
+    if tape_saturation:
+        audio = np.tanh(audio * _KOKORO_TAPE_DRIVE) / _KOKORO_TAPE_DRIVE
+
     is_1d = audio.ndim == 1
     if is_1d:
         audio_2d = audio.reshape(1, -1)

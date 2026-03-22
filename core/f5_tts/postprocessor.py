@@ -2,8 +2,9 @@
 
 F5-TTS uses the Vocos vocoder, which produces a cleaner signal than Kokoro's
 ISTFTNet. No neural denoising or spectral gating is needed. The mastering
-chain raises the lowpass ceiling to 10.5 kHz to preserve Vocos's broader native
-bandwidth (vs. Kokoro's 9.5 kHz cap which masks its 12 kHz Nyquist artefact).
+chain uses a 12 kHz lowpass to preserve Vocos's broader native bandwidth
+(vs. Kokoro's 9.5 kHz cap which masks its 12 kHz Nyquist artefact), with a
+10 kHz air shelf for breathiness and intimacy.
 """
 
 import numpy as np
@@ -57,7 +58,7 @@ def split_band_deess(
     sr: int,
     center_freq: float = 6000.0,
     bandwidth: float = 4000.0,
-    threshold_db: float = -18.0,
+    threshold_db: float = -20.0,
     ratio: float = 4.0,
 ) -> np.ndarray:
     """Dynamic split-band de-esser using scipy for crossover and Pedalboard for compression.
@@ -119,24 +120,22 @@ class F5MasteringEngine:
     def master_vocals(self, audio: np.ndarray, sr: int = 44100) -> np.ndarray:
         """Phase B: EQ, de-ess, and limit at the mix sample rate.
 
-        Signal chain (tuned for Vocos — lowpass raised to 10.5 kHz to preserve
-        broader native bandwidth, no algorithmic reverb since convolution
-        reverb is applied downstream in build_f5_voice_chain):
-
-            Phase A — split_band_deess(): dynamic sibilance control (preprocessing)
-            Phase B — master_vocals(): EQ / dynamics at mix sample rate.
-
         Signal chain (tuned for F5-TTS / Vocos meditation narration):
 
-            NoiseGate(-45 dB, 2:1)         — catch diffusion residual noise
-            HighpassFilter(80 Hz)          — remove sub-bass rumble
-            PeakFilter(300 Hz, -2 dB)      — anti-boxiness (cut low-mid mud)
-            LowShelfFilter(200 Hz, +2 dB)  — add warmth
-            PeakFilter(3.2 kHz, +1.5 dB)   — presence / intelligibility
-            HighShelfFilter(8 kHz, -4.0)   — tame brightness / diffusion hiss (QA: spectral flatness)
-            LowpassFilter(9 kHz)           — hard cut above Vocos useful bandwidth (~9 kHz)
-            Compressor(-20 dB, 2.5:1)      — gentle, transparent leveling
-            Limiter(-1.5 dB)               — safe, transparent ceiling
+            Phase A — split_band_deess(): dynamic sibilance control
+            Tape saturation: subtle harmonic warmth (drive=1.08)
+            Phase B — EQ / dynamics:
+
+            NoiseGate(-45 dB, 2:1)          — catch diffusion residual noise
+            HighpassFilter(80 Hz)           — remove sub-bass rumble
+            PeakFilter(300 Hz, -2 dB)       — anti-boxiness (cut low-mid mud)
+            LowShelfFilter(200 Hz, +2 dB)   — add warmth
+            PeakFilter(3.0 kHz, -2.0 dB)    — subtractive cut: metallic resonance
+            HighShelfFilter(7.5 kHz, -3.0 dB) — de-harsh shelf (steep spectral tilt)
+            HighShelfFilter(10 kHz, +1.0 dB) — air shelf for breathiness/intimacy
+            LowpassFilter(12 kHz)           — preserve Vocos native bandwidth
+            Compressor(-20 dB, 2.5:1)       — gentle, meditation-paced leveling
+            Limiter(-1.5 dB)                — safe, transparent ceiling
 
         The chain is rebuilt only when the sample rate changes between calls.
         """
@@ -146,16 +145,22 @@ class F5MasteringEngine:
                 HighpassFilter(cutoff_frequency_hz=80),
                 PeakFilter(cutoff_frequency_hz=300, gain_db=-2.0, q=1.5),
                 LowShelfFilter(cutoff_frequency_hz=200, gain_db=2.0),
-                PeakFilter(cutoff_frequency_hz=3200, gain_db=1.5, q=0.8),
-                HighShelfFilter(cutoff_frequency_hz=8000, gain_db=-4.0),
-                LowpassFilter(cutoff_frequency_hz=9000),
-                Compressor(threshold_db=-20, ratio=2.5, attack_ms=15, release_ms=100),
+                PeakFilter(cutoff_frequency_hz=3000, gain_db=-2.0, q=0.8),
+                HighShelfFilter(cutoff_frequency_hz=7500, gain_db=-3.0),
+                HighShelfFilter(cutoff_frequency_hz=10000, gain_db=1.0),
+                LowpassFilter(cutoff_frequency_hz=12000),
+                Compressor(threshold_db=-20, ratio=2.5, attack_ms=15, release_ms=200),
                 Limiter(threshold_db=-1.5, release_ms=80),
             ])
             self._master_chain_sr = sr
 
         # Phase A: Dynamic De-Essing (Preprocessing)
         audio = split_band_deess(audio, sr)
+
+        # Subtle tape saturation — adds 2nd/3rd harmonics for perceived warmth
+        # without audible distortion. tanh(x*1.08)/1.08 is near-identity for
+        # normal speech levels but gently rounds transient peaks.
+        audio = np.tanh(audio * 1.08) / 1.08
 
         audio_2d = audio.astype(np.float32).reshape(1, -1)
         processed = self._master_chain(audio_2d, sr)

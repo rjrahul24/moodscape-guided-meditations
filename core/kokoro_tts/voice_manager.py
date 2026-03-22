@@ -31,6 +31,10 @@ MEDITATION_PRESETS = {
         "description": "Male/female grounding blend",
         "blend": {"af_heart": 0.7, "am_adam": 0.3},
     },
+    "serene_sky": {
+        "description": "Maximum breathiness, deep relaxation (research-validated)",
+        "blend": {"af_sky": 0.65, "af_sarah": 0.35},
+    },
 }
 
 # Voices that require the British English pipeline (lang_code='b')

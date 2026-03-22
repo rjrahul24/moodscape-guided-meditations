@@ -66,14 +66,17 @@ Upsample → mix sample rate (soxr_vhq for all TTS engines)
 │      (Q=1.0, mud cut)              │
 │   5. Compressor 2:1 @ -18 dB        │
 │      (gentle glue)                  │
-│   6. PeakFilter +1.0 dB @ 3 kHz     │
-│      (Q=0.6, broad presence)        │
-│   7. HighShelf -3.0 dB @ 7.5 kHz    │
-│      (de-harsh)                     │
+│   6. PeakFilter -2.5 dB @ 3 kHz     │
+│      (Q=0.8, anti-harshness cut)   │
+│   7. HighShelf -4.0 dB @ 7.5 kHz    │
+│      (de-harsh, steep spectral tilt)│
 │   8. Convolution reverb (space)      │
 │   9. Lowpass 9.5 kHz (Nyquist mask, │
 │      after reverb)                  │
 │  10. Limiter -1 dBFS                 │
+│                                      │
+│  Tape saturation (drive=1.05) is     │
+│  applied before the chain.           │
 └──────────────────────────────────────┘
 ```
 
@@ -109,16 +112,17 @@ Upsample → mix sample rate (soxr_vhq)
 ┌──────────────────────────────────────┐
 │ Phase B: F5MasteringEngine           │
 │   1. Split-band de-esser (4–8 kHz)  │
-│   2. NoiseGate -50 dB               │
-│   3. Highpass 80 Hz                  │
-│   4. PeakFilter -2 dB @ 300 Hz      │
-│   5. LowShelf +2 dB @ 200 Hz        │
-│   6. PeakFilter +1.5 dB @ 2800 Hz   │
-│   7. HighShelf +1.5 dB @ 10 kHz     │
-│   8. Lowpass 13 kHz (preserves air) │
-│   9. Compressor (-24 dB, 2.5:1)     │
-│  10. Reverb (10% wet)               │
-│  11. Limiter -1.5 dB                │
+│   2. Tape saturation (drive 1.08)   │
+│   3. NoiseGate -45 dB               │
+│   4. Highpass 80 Hz                  │
+│   5. PeakFilter -2 dB @ 300 Hz      │
+│   6. LowShelf +2 dB @ 200 Hz        │
+│   7. PeakFilter -2.0 dB @ 3000 Hz   │
+│   8. HighShelf -3.0 dB @ 7.5 kHz    │
+│   9. HighShelf +1.0 dB @ 10 kHz     │
+│  10. Lowpass 12 kHz (preserves air) │
+│  11. Compressor (-20 dB, 2.5:1)     │
+│  12. Limiter -1.5 dB                │
 └──────────────────────────────────────┘
 ```
 
@@ -176,14 +180,15 @@ Export: 44.1 kHz or 48 kHz / 24-bit WAV | Target: -19 LUFS integrated
 
 ## 6. De-Essing Details
 
-### Kokoro: High-Shelf Sibilance Control (inside `build_voice_chain()`)
+### Kokoro: Anti-Harshness Subtractive EQ + High-Shelf (inside `build_voice_chain()`)
 ```
-HighShelfFilter(7.5 kHz, -3.0 dB)
+PeakFilter(3 kHz, -2.5 dB, Q=0.8)   — subtractive cut at primary metallic resonance zone
+HighShelfFilter(7.5 kHz, -4.0 dB)   — steep spectral tilt enforcement
 ```
-A gentle broadband HF rolloff avoids over-attenuation of natural consonants while the chain's 9.5 kHz LPF provides the final HF ceiling.
+The 3 kHz zone is the primary source of the "AI sound" in ISTFTNet output. A broadband subtractive cut removes metallic resonance while preserving intelligibility. The -4 dB shelf at 7.5 kHz enforces the steep spectral tilt characteristic of relaxed, breathy speech. The chain's 9.5 kHz LPF provides the final HF ceiling. Tape saturation (drive=1.05) adds harmonic warmth before the chain.
 
 ### F5-TTS: Split-Band De-Esser (before voice FX chain)
-Isolates 4–8 kHz sibilant band via 4th-order Butterworth bandpass, compresses aggressively (-18 dB threshold, 4:1 ratio, 0.5ms attack, 10ms release), recombines with non-sibilant signal.
+Isolates 4–8 kHz sibilant band via 4th-order Butterworth bandpass, compresses aggressively (-20 dB threshold, 4:1 ratio, 0.5ms attack, 10ms release), recombines with non-sibilant signal. Followed by subtle tape saturation (`tanh(x*1.08)/1.08`) for harmonic warmth.
 
 ---
 
@@ -242,7 +247,7 @@ After the master chain, `qa_monitor.run_qa_checks()` runs 7 automated checks:
 - [x] F5-TTS (Vocos): no spectral gating needed — clean vocoder output
 - [x] Voice FX chain EQ and limiting at mix sample rate (44.1 or 48 kHz), well below Nyquist
 - [x] Kokoro: 9.5 kHz lowpass masks 12 kHz Nyquist brick-wall
-- [x] F5-TTS: 13 kHz lowpass preserves Vocos native air bandwidth
+- [x] F5-TTS: 12 kHz lowpass preserves Vocos native air bandwidth
 - [x] Sub-bass below 80 Hz removed from voice (HighpassFilter)
 - [x] Subsonic below 30 Hz removed from master (HighpassFilter)
 - [x] Sidechain ducking: 75ms lookahead, 50ms attack, 500ms release

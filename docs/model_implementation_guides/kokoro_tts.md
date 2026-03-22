@@ -507,12 +507,14 @@ MoodScape uses a multi-stage postprocessing pipeline tailored to Kokoro's ISTFTN
 2. HighpassFilter (80 Hz) — removes sub-bass rumble and plosives
 3. LowShelfFilter (+2 dB @ 200 Hz) — warmth / proximity effect
 4. PeakFilter (-2 dB @ 350 Hz, Q=1.0) — mud cut
-5. Compressor (2:1, -18 dB threshold, 2ms/80ms) — dynamics control
-6. PeakFilter (+1.0 dB @ 3 kHz, Q=0.6) — presence
-7. HighShelfFilter (-3.0 dB @ 7.5 kHz) — de-harsh vocoder artifacts
+5. Compressor (2:1, -18 dB threshold, 10ms/100ms) — dynamics control
+6. PeakFilter (-2.5 dB @ 3 kHz, Q=0.8) — anti-harshness subtractive cut at the primary metallic resonance zone
+7. HighShelfFilter (-4.0 dB @ 7.5 kHz) — de-harsh shelf enforcing steep spectral tilt
 8. Convolution reverb — space (IR: warm_studio / wooden_hall / stone_chapel)
 9. LowpassFilter (9.5 kHz) — Nyquist masking (after reverb to catch reverb HF)
 10. Limiter (-1 dBFS) — protection
+
+Tape saturation (tanh soft-clipping, drive=1.05) is applied before the Pedalboard chain, adding subtle 2nd/3rd harmonics for perceived warmth.
 
 ### Quality Assurance (`core/qa_monitor.py`)
 Automated checks run after the master chain:
@@ -542,7 +544,7 @@ The Kokoro TTS implementation is a self-contained package at `core/kokoro_tts/`:
 | `core/kokoro_tts/engine.py` | `KokoroEngine` — model loading, dual-pipeline (US/British), synthesis with per-sentence speed variation, per-sentence voice jitter, room-tone pauses, spectral gating noise reduction |
 | `core/kokoro_tts/preprocessor.py` | Script parsing (`[pause:Xs]`, `[breath]`, `\n\n`), text expansion, contraction conversion, IPA phoneme injection (30+ Sanskrit/yoga terms), prosody punctuation enhancement, sensory ellipsis injection, sentence length variation, per-sentence speed annotation, token-aware chunking |
 | `core/kokoro_tts/postprocessor.py` | Per-chunk cleanup (artifact trim, RMS norm), crossfade assembly (300ms cos²), segment fades, spectral gating noise reduction, room-tone pause generation, unified voice FX chain (`build_voice_chain()`) |
-| `core/kokoro_tts/voice_manager.py` | Voice tensor loading from HuggingFace, SLERP blending, per-sentence voice micro-variation (jitter, amount=0.001), 5 meditation presets (`balanced_calm`, `deep_rest`, `soft_whisper`, `golden_hour`, `earth_root`), British voice detection |
+| `core/kokoro_tts/voice_manager.py` | Voice tensor loading from HuggingFace, SLERP blending, per-sentence voice micro-variation (jitter, amount=0.001), 6 meditation presets (`balanced_calm`, `deep_rest`, `soft_whisper`, `golden_hour`, `earth_root`, `serene_sky`), British voice detection |
 | `core/pipeline.py` | End-to-end orchestration: script → TTS → upsampling (soxr_vhq) → voice FX → music gen → mixing → master → export |
 | `core/qa_monitor.py` | Quality validation: clipping, LUFS, silence gaps, spectral balance, silence ratio |
 
@@ -609,7 +611,7 @@ The `preprocess_for_meditation()` pipeline applies these transforms in order:
 
 ### Voice FX Chain (`postprocessor.py`)
 
-The voice FX chain uses gentle glue compression (2:1 @ -18 dB) rather than aggressive parallel compression. The EQ is conservative: +2.0 dB low shelf @ 200 Hz for warmth, broad +1.0 dB presence @ 3 kHz (Q=0.6), -3.0 dB high shelf @ 7.5 kHz for de-harshness. This preserves the natural smoothness of Kokoro's neural vocoder output.
+The voice FX chain uses gentle glue compression (2:1 @ -18 dB) rather than aggressive parallel compression. The EQ is subtractive: +2.0 dB low shelf @ 200 Hz for warmth, -2.5 dB cut @ 3 kHz (Q=0.8) targeting metallic resonance, -4.0 dB high shelf @ 7.5 kHz for de-harshness. Tape saturation (drive=1.05) adds subtle harmonic warmth before the Pedalboard chain. This preserves the natural smoothness of Kokoro's neural vocoder output while actively removing harshness.
 
 ### Room-Tone Pauses (`postprocessor.py` + `engine.py`)
 

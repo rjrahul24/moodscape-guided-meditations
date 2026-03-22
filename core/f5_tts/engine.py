@@ -13,8 +13,9 @@ the slug is invalid or no voices are registered at all.
 
 Key settings:
     nfe_step=32           — production quality; use 16 for fast iteration
+    cfg_strength=2.0      — F5-TTS official default; enables classifier-free guidance
     sway_sampling_coef=-1 — enables sway sampling for smoother meditative prosody
-    speed=0.80            — meditation-ideal pace; Kokoro default is 0.70
+    speed=0.88            — meditation pace (~95-100 WPM); natural prosodic timing
 
 Device: MPS on Apple Silicon, CPU fallback elsewhere.
 """
@@ -138,10 +139,10 @@ def _apply_silero_vad(audio: np.ndarray, sr: int) -> np.ndarray:
 
 
 
-_DEFAULT_SPEED = 1.0  # natural speed — use slow reference audio for meditation pace
-_DEFAULT_TARGET_WPM = 110  # meditation pace (~110 WPM); set None to disable fix_duration
+_DEFAULT_SPEED = 0.88  # meditation pace (~95-100 WPM); lets model assign natural prosodic timing
+_DEFAULT_TARGET_WPM = None  # None = natural rhythm via speed param (recommended); set 90-150 for fixed WPM pacing
 _SWAY_COEF = -1.0   # enables sway sampling for smoother prosody
-_CFG_STRENGTH = 1.0  # lowered from 2.0 — reduces high-frequency diffusion artifacts
+_CFG_STRENGTH = 2.0  # F5-TTS official default; split-band de-esser handles HF diffusion artifacts
 
 # Reference audio conditioning targets
 _REF_TARGET_DBFS = -20.0  # RMS normalisation target for reference audio
@@ -435,10 +436,11 @@ class F5Engine(SpeechEngine):
                 chunks.append((arr, activity, "speech", gen_text))
 
             elif seg["type"] == "pause":
+                from core.kokoro_tts.postprocessor import generate_room_tone
                 n = int(seg["duration_sec"] * SAMPLE_RATE)
-                silence = np.zeros(n, dtype=np.float32)
-                silence_act = np.zeros(n, dtype=bool)
-                chunks.append((silence, silence_act, "pause", None))
+                room_tone = generate_room_tone(seg["duration_sec"], sr=SAMPLE_RATE)
+                silence_act = np.zeros(len(room_tone), dtype=bool)
+                chunks.append((room_tone, silence_act, "pause", None))
 
             elif seg["type"] == "breath":
                 from core.breath_sounds import load_breath

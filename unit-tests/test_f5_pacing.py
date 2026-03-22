@@ -54,7 +54,30 @@ def test_pacing():
     assert recorded_speeds[-1] == 0.5, f"speed=0.5 not passed to infer, got {recorded_speeds[-1]}"
     assert len(audio_05) == len(mask_05), "Audio and mask length mismatch at speed=0.5"
 
-    print("Test passed! (Speed is passed through correctly to infer)")
+    # Verify that fix_duration is NOT set when target_wpm=None (default)
+    print("Running synthesis with target_wpm=None (natural rhythm)...")
+    recorded_kwargs = {}
+    class MockModel2:
+        def infer(self, **kwargs):
+            recorded_kwargs.update(kwargs)
+            sr = 24000
+            audio = np.random.uniform(-0.1, 0.1, sr).astype(np.float32)
+            return audio, sr, None
+    engine._model = MockModel2()
+    engine.synthesize(segments, speed=0.88, target_wpm=None)
+    assert "fix_duration" not in recorded_kwargs, \
+        f"fix_duration should not be set when target_wpm=None, got {recorded_kwargs.get('fix_duration')}"
+    print("Verified: fix_duration not set when target_wpm=None (natural rhythm mode)")
+
+    # Verify fix_duration IS set when target_wpm is provided
+    print("Running synthesis with target_wpm=110...")
+    recorded_kwargs.clear()
+    engine.synthesize(segments, speed=0.88, target_wpm=110)
+    assert "fix_duration" in recorded_kwargs, \
+        "fix_duration should be set when target_wpm=110"
+    print(f"Verified: fix_duration={recorded_kwargs['fix_duration']} when target_wpm=110")
+
+    print("Test passed! (Speed passthrough + natural rhythm mode verified)")
 
 if __name__ == "__main__":
     try:

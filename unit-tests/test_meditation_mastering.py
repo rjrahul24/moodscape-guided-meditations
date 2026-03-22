@@ -34,16 +34,21 @@ def test_mastering():
     assert abs(peak_300.gain_db + 2.0) < 0.001
     assert peak_300.q == 1.5
     
-    # Verify Presence (3200Hz — Fletcher-Munson peak sensitivity)
-    peak_presence = next(e for e in chain if isinstance(e, PeakFilter) and e.cutoff_frequency_hz == 3200)
-    print(f"Presence (3200Hz) gain: {peak_presence.gain_db}")
-    assert abs(peak_presence.gain_db - 1.5) < 0.001
+    # Verify Anti-harshness PeakFilter (3000Hz — subtractive cut)
+    peak_3k = next(e for e in chain if isinstance(e, PeakFilter) and e.cutoff_frequency_hz == 3000)
+    print(f"Anti-harshness (3000Hz) gain: {peak_3k.gain_db}, q: {peak_3k.q}")
+    assert abs(peak_3k.gain_db + 2.0) < 0.001
+    assert abs(peak_3k.q - 0.8) < 0.001
 
-    # Verify Brightness Control Shelf (8kHz)
-    shelf_bright = next(e for e in chain if isinstance(e, HighShelfFilter))
-    print(f"Brightness shelf (8kHz) gain: {shelf_bright.gain_db}")
-    assert shelf_bright.cutoff_frequency_hz == 8000
-    assert abs(shelf_bright.gain_db + 1.0) < 0.001
+    # Verify Brightness Control Shelf (7500Hz) and Air Shelf (10kHz)
+    high_shelves = [e for e in chain if isinstance(e, HighShelfFilter)]
+    assert len(high_shelves) == 2, f"Expected 2 HighShelfFilters, got {len(high_shelves)}"
+    shelf_bright = next(e for e in high_shelves if e.cutoff_frequency_hz == 7500)
+    shelf_air = next(e for e in high_shelves if e.cutoff_frequency_hz == 10000)
+    print(f"De-harsh shelf (7500Hz) gain: {shelf_bright.gain_db}")
+    assert abs(shelf_bright.gain_db + 3.0) < 0.001
+    print(f"Air shelf (10kHz) gain: {shelf_air.gain_db}")
+    assert abs(shelf_air.gain_db - 1.0) < 0.001
     
     # Verify Compressor settings (-20 dB: gentle leveling for meditation)
     compressor = next(e for e in chain if isinstance(e, Compressor))

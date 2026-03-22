@@ -244,7 +244,7 @@ def generate_meditation(
                 lyria_brightness=float(lyria_brightness),
                 tts_engine=tts_engine,
                 f5_voice_slug=f5_voice_slug if tts_engine == "f5" else None,
-                f5_target_wpm=int(f5_wpm) if tts_engine == "f5" else None,
+                f5_target_wpm=int(f5_wpm) if tts_engine == "f5" and f5_wpm > 0 else None,
                 reverb_ir=reverb_ir_choice,
             )
             result_container["result"] = result
@@ -844,9 +844,9 @@ with gr.Blocks(
                         elem_classes="dropdown-container",
                     )
                     f5_wpm_slider = gr.Slider(
-                        80, 150, 110, step=5,
+                        0, 150, 0, step=5,
                         label="Pacing (WPM)",
-                        info="90-110 = meditation, 120-150 = narration",
+                        info="0 = natural rhythm (recommended), 90-110 = meditation, 120-150 = narration",
                     )
 
             # Section 2: Mix & Effects
