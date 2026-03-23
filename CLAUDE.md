@@ -18,35 +18,26 @@ python app.py                      # Gradio UI at http://localhost:7860
 
 IMPORTANT: Follow these steps for every task.
 
-1. **Read docs first** — Before touching any code, review relevant documentation in `docs/` to understand the current implementation context:
-   - `docs/model_implementation_guides/` — Engine-specific details (ACE-Step, Kokoro, F5-TTS, HeartMuLa, Lyria, Pedalboard)
-   - `docs/optimization_and_processing/` — Audio pipeline and post-processing
-   - `docs/prompting_guides/` — Prompt engineering for each engine (Kokoro, F5-TTS, ACE-Step, HeartMuLa)
-   - `docs/setup_and_execution/` — Environment and runtime setup
-2. **Explore codebase** — Find the relevant code sections before making changes
+1. **Use the Task-Routing Guide below** — find the relevant file(s) before scanning broadly
+2. **Read docs first** — each doc file has a QUICK-REF header; read that before the full doc
+   - `docs/model_implementation_guides/` — engine internals (ACE-Step, Kokoro, F5-TTS, HeartMuLa, Lyria, Pedalboard)
+   - `docs/optimization_and_processing/` — audio pipeline and post-processing
+   - `docs/prompting_guides/` — prompt engineering per engine
+   - `docs/ARCHITECTURE.md` — full technical deep-dive (FX params, QA thresholds, memory patterns)
 3. **Implement changes**
-4. **Update documentation** — Keep `docs/` in sync with any code changes. If a function signature, pipeline step, or engine behavior changes, update the corresponding doc file
-5. **Update README.md** — Only if the change is significant (new feature, removed capability, changed setup steps)
-6. **Run tests** — Unit tests for small changes, integration tests for large changes (see Build & Test below)
+4. **Update documentation** — keep `docs/` in sync; if a function signature or engine behavior changes, update the corresponding doc file
+5. **Update README.md** — only for significant changes (new feature, removed capability, changed setup)
+6. **Run tests** — unit tests for small changes, integration tests for large changes
 7. **Do NOT push to GitHub** unless explicitly asked
 8. **Update this CLAUDE.md** if you discover new development patterns worth noting
 
 ## Build & Test
 
 ```bash
-# Run all unit tests
-.venv/bin/python -m pytest unit-tests/ -v
-
-# Run a specific test file
-.venv/bin/python -m pytest unit-tests/test_mixer.py -v
-
-# Run a specific test
+.venv/bin/python -m pytest unit-tests/ -v                                    # all unit tests
+.venv/bin/python -m pytest unit-tests/test_mixer.py -v                       # single file
 .venv/bin/python -m pytest unit-tests/test_meditation_mastering.py::test_mastering -v
-
-# Integration tests (slower, use for large changes)
-.venv/bin/python -m pytest integration-tests/ -v
-
-# CLI batch generation
+.venv/bin/python -m pytest integration-tests/ -v                             # slower, full pipeline
 python scripts/generate.py <script_file> --voice <voice_name> --output <output.wav>
 ```
 
@@ -56,25 +47,152 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <output.w
 - **Commit directly to main** — no feature branches (solo developer)
 - **Never push** unless the user explicitly asks
 
+---
+
 ## Architecture
 
-**Pipeline flow** (`core/pipeline.py`):
+**Pipeline flow** (`core/pipeline.py` — `MeditationPipeline.generate()`):
+
 ```
-Script text → TTS (Kokoro/F5) → Music (HeartMuLa/ACE-Step/Lyria) → Audio FX (Pedalboard) → Mixer → WAV/MP3
+app.py / scripts/generate.py
+  → core/pipeline.py :: MeditationPipeline.generate()
+     1. parse script     kokoro_tts/preprocessor.py :: prepare_segments()
+                         f5_tts/preprocessor.py :: prepare_segments()      [if f5]
+     2. TTS synthesis    KokoroEngine.synthesize()  → 24 kHz mono float32
+                         F5Engine.synthesize()       → 24 kHz mono float32
+     3. unload TTS, load music engine
+     4. music gen        AceStepEngine.generate()   → 48 kHz mono float32
+                         HeartMulaEngine.generate()  → 48 kHz mono float32
+                         LyriaEngine.generate()      → 48 kHz mono float32
+     5. stem sep         StemSeparator.remove_drums_and_vocals()            [optional]
+     6. TTS upsample     audio_processor.upsample_audio() 24 kHz → 48 kHz
+     7. voice FX         kokoro_tts/postprocessor :: build_voice_chain() + apply_fx()
+     8. music FX         audio_processor :: make_{engine}_music_chain() + make_vocal_pocket_chain()
+     9. mix              mixer.mix() → apply_envelope_ducking() + overlay + fades
+    10. master           audio_processor :: make_master_chain()
+    11. QA              qa_monitor :: run_qa_checks()
+    12. export           mixer.export_audio() → WAV/MP3 at −19 LUFS
 ```
 
-- **Sequential engine loading**: Each engine is loaded, used, then unloaded to fit within 36 GB memory. Never load two engines simultaneously.
-- **Audio contract**: All TTS engines output 24,000 Hz mono float32 (enforced by `core/speech_engine.py` ABC). All music engines output 48 kHz natively. TTS audio is upsampled to 48 kHz for mixing.
-- **Key modules**: `core/pipeline.py` (orchestration), `core/mixer.py` (ducking/fades/export), `core/audio_processor.py` (Pedalboard FX chains), `core/session_config.py` (immutable generation config), `core/qa_monitor.py` (output validation)
+**Sequential engine loading**: Load TTS → synthesize → unload TTS → load music → generate → unload music. Never load two engines simultaneously (36 GB unified RAM constraint).
 
-**TTS engines** (`core/kokoro_tts/`, `core/f5_tts/`):
-- Kokoro: Forced to CPU on Apple Silicon (MPS causes bus errors). Uses `trf=True` for transformer G2P.
-- F5-TTS: Zero-shot voice cloning with Silero VAD (15% gain floor). Voice assets in `core/f5_tts/assets/`. WPM-based pacing via `fix_duration` (default 110 WPM). 300-char chunk limit. Multi-phase voices via `voices.toml`.
+## Audio Contracts
 
-**Music engines** (`core/heart_mula/`, `core/acestep_engine.py`, `core/lyria/`):
-- ACE-Step **(default, recommended for Apple Silicon)**: Must use `compile_model=True` to avoid timeouts. Uses MLX backend on Apple Silicon. ~5–10 min for a 5-min track at 48 kHz native.
-- HeartMuLa: 3B LM + HeartCodec (12.5 Hz codec), MLX primary with MPS fallback. Manual lazy loading (load LM → generate → unload → load codec → detokenize → unload). 48 kHz native. Max 240s per call; segment-and-crossfade for long-form. ~8–20 min per 4-min segment on MPS.
-- Lyria RealTime: Cloud API (Google), fastest (~1–3 min), requires `GOOGLE_API_KEY`.
+| Engine | Native SR | Mix SR | Output |
+|--------|-----------|--------|--------|
+| Kokoro TTS | 24 kHz | → upsampled to 48 kHz | mono float32 |
+| F5-TTS | 24 kHz | → upsampled to 48 kHz | mono float32 |
+| ACE-Step 1.5 | 48 kHz | 48 kHz | mono float32 |
+| HeartMuLa | 48 kHz | 48 kHz | mono float32 |
+| Lyria RealTime | 48 kHz | 48 kHz | mono float32 |
+
+Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa soxr_vhq`.
+
+## Component Registry
+
+**TTS:**
+
+| Component | File | Class | Key Methods |
+|-----------|------|-------|-------------|
+| TTS contract | `core/speech_engine.py` | `SpeechEngine(ABC)` | `load_model`, `unload_model`, `synthesize`, `get_available_voices` |
+| Kokoro engine | `core/kokoro_tts/engine.py` | `KokoroEngine` | `load_model()`, `synthesize()` |
+| Kokoro preproc | `core/kokoro_tts/preprocessor.py` | — | `parse_script()`, `prepare_segments()`, `merge_sentences_to_chunks()` |
+| Kokoro postproc | `core/kokoro_tts/postprocessor.py` | — | `process_chunk()`, `crossfade_chunks()`, `build_voice_chain()`, `apply_fx()` |
+| Kokoro voices | `core/kokoro_tts/voice_manager.py` | — | `MEDITATION_PRESETS`, `blend_voices()`, `slerp_blend()`, `BRITISH_VOICES` |
+| F5 engine | `core/f5_tts/engine.py` | `F5Engine` | `load_model()`, `synthesize()` |
+| F5 preproc | `core/f5_tts/preprocessor.py` | — | `parse_script()`, `normalize_for_f5()`, `split_into_chunks()` |
+| F5 voice registry | `core/f5_tts/voice_registry.py` | `VoiceRegistry` | `scan()`, `get_voice()` |
+
+**Music & Pipeline:**
+
+| Component | File | Class | Key Methods |
+|-----------|------|-------|-------------|
+| Pipeline | `core/pipeline.py` | `MeditationPipeline` | `generate()`, `_enhance_heartmula_prompt()`, `_enhance_acestep_prompt()` |
+| ACE-Step | `core/acestep_engine.py` | `AceStepEngine` | `load_model()`, `generate()`, `_generate_infinite()`, `_enhance_prompt()` |
+| HeartMuLa | `core/heart_mula/engine.py` | `HeartMulaEngine` | `load_model()`, `generate()`, `_generate_mlx()`, `_generate_mps()` |
+| Lyria | `core/lyria/engine.py` | `LyriaEngine` | `load_model()`, `generate()`, `_run_session()` |
+| Lyria prompts | `core/lyria/prompts.py` | — | `parse_weighted_prompts()` |
+| Audio FX | `core/audio_processor.py` | — | `make_{engine}_music_chain()`, `make_vocal_pocket_chain()`, `make_master_chain()`, `upsample_audio()` |
+| Mixer | `core/mixer.py` | — | `apply_envelope_ducking()`, `overlay_tracks()`, `mix()`, `normalize_loudness()`, `export_audio()` |
+| QA monitor | `core/qa_monitor.py` | — | `run_qa_checks()`, `compute_composite_score()` |
+| Stem separator | `core/stem_separator.py` | `StemSeparator` | `remove_drums_and_vocals()` |
+| Session config | `core/session_config.py` | `SessionConfig` | `to_json()`, `from_json()` |
+| Text utils | `core/text_utils.py` | — | `expand_text()`, `ABBREV_MAP` |
+| Breath sounds | `core/breath_sounds.py` | — | `load_breath()` |
+
+## Key Constants
+
+| Constant | Value | File | Note |
+|----------|-------|------|------|
+| TTS output SR | 24 000 Hz | `core/speech_engine.py` | All TTS engines |
+| Mix SR (all engines) | 48 000 Hz | `core/pipeline.py:213` | ACE-Step / HeartMuLa / Lyria / F5 paths |
+| Fallback mix SR | 44 100 Hz | `core/pipeline.py:213` | Only when no music engine selected |
+| Export LUFS target | −19.0 | `core/pipeline.py` | Unified target |
+| Kokoro crossfade | 7 200 samples | `core/kokoro_tts/postprocessor.py` | 300ms at 24 kHz |
+| Kokoro max tokens | 150 | `core/kokoro_tts/preprocessor.py` | Per chunk |
+| F5 max chars | 300 | `core/f5_tts/preprocessor.py` | Per chunk |
+| ACE-Step CFG | 3.0 | `core/acestep_engine.py` | `_GUIDANCE_SCALE` |
+| ACE-Step steps | 50 | `core/acestep_engine.py` | `_INFERENCE_STEPS` |
+| ACE-Step LM temp | 0.7 | `core/acestep_engine.py` | `_LM_TEMPERATURE` |
+| HeartMuLa CFG | 3.0 | `core/heart_mula/engine.py` | `_LM_CFG_SCALE` |
+| HeartMuLa temp | 0.9 | `core/heart_mula/engine.py` | `_LM_TEMPERATURE` |
+| HeartMuLa max seg | 240 s | `core/heart_mula/engine.py` | `MAX_SEGMENT_SEC` |
+| Lyria max session | 570 s | `core/lyria/engine.py` | `_MAX_SESSION_SEC` (9.5 min cap) |
+| MPS watermark | 0.7 | `core/heart_mula/engine.py` | `PYTORCH_MPS_HIGH_WATERMARK_RATIO` |
+
+## Checkpoint Locations
+
+| Engine | Backend | Path |
+|--------|---------|------|
+| ACE-Step 1.5 | MLX + MPS | `./ACE-Step-1.5/checkpoints/` |
+| HeartMuLa LM | MPS | `./ckpt/HeartMuLa-oss-3B/` |
+| HeartCodec | MPS | `./ckpt/HeartCodec-oss/` |
+| HeartMuLa LM | MLX | `./ckpt-mlx/heartmula/` |
+| HeartCodec | MLX | `./ckpt-mlx/heartcodec/` |
+| Kokoro-82M | HF hub (auto) | `~/.cache/huggingface/` |
+| F5-TTS | HF hub (auto) | `~/.cache/huggingface/` |
+| HT Demucs | torch hub (auto) | `~/.cache/torch/hub/` |
+| Convolution IRs | local | `assets/impulse_responses/{warm_studio,wooden_hall,stone_chapel}.wav` |
+| F5 voice assets | local | `core/f5_tts/assets/reference_audio/` · `.../reference_transcript/` · `.../voices.toml` |
+
+## Task-Routing Guide
+
+| Task | Primary file | Secondary |
+|------|-------------|-----------|
+| TTS chunk splitting | `core/kokoro_tts/preprocessor.py` | `core/f5_tts/preprocessor.py` |
+| Voice blend presets | `core/kokoro_tts/voice_manager.py` | — |
+| Add / edit F5 voice | `core/f5_tts/assets/` (audio + transcript) | `core/f5_tts/voice_registry.py` |
+| Kokoro prosody / punctuation | `core/kokoro_tts/preprocessor.py` | — |
+| Voice FX chain (EQ, reverb, compression) | `core/kokoro_tts/postprocessor.py :: build_voice_chain()` | `core/f5_tts/postprocessor.py` |
+| Music FX chain (per engine) | `core/audio_processor.py :: make_{engine}_music_chain()` | — |
+| Vocal pocket / intelligibility EQ | `core/audio_processor.py :: make_vocal_pocket_chain()` | — |
+| Ducking behavior | `core/mixer.py :: apply_envelope_ducking()` | `core/pipeline.py` (`duck_amount_db`) |
+| LUFS target | `core/pipeline.py` | `core/mixer.py :: export_audio()` |
+| ACE-Step generation params | `core/acestep_engine.py` (module-level constants) | — |
+| HeartMuLa generation params | `core/heart_mula/engine.py` (module-level constants) | — |
+| Prompt enhancement logic | `core/pipeline.py :: _enhance_heartmula_prompt()` | `core/acestep_engine.py :: _enhance_prompt()` |
+| QA checks / thresholds | `core/qa_monitor.py` | `docs/ARCHITECTURE.md#qa-checks` |
+| Stem separation behavior | `core/stem_separator.py` | `scripts/separate_worker.py` |
+| Export format / sample rate | `core/mixer.py :: export_audio()` | `core/pipeline.py` (`export_sr`) |
+| Master chain (final limiter/EQ) | `core/audio_processor.py :: make_master_chain()` | — |
+| Session reproducibility | `core/session_config.py` | — |
+| Text normalization (digits, abbrevs) | `core/text_utils.py` | — |
+
+## FX Chain Summary
+
+| Chain function | Applied to | Key plugins (in order) |
+|----------------|-----------|------------------------|
+| `build_voice_chain()` | Kokoro voice | NoiseGate(−42dB) → HPF(80Hz) → LowShelf(+2dB@200Hz) → Peak(−2dB@350Hz) → Compressor(2:1@−18dB) → Peak(−2.5dB@3kHz) → HiShelf(−4dB@7.5kHz) → ConvReverb(IR) → LPF(9.5kHz) → Limiter(−1dB) |
+| `build_f5_voice_chain()` | F5-TTS voice | De-esser(4–8kHz) → NoiseGate → HPF → EQ chain → Compressor → Limiter — see `core/f5_tts/postprocessor.py` |
+| `make_heartmula_music_chain()` | HeartMuLa 48kHz | NoiseGate(−55dB) → HPF(60Hz) → LowShelf(+1.5dB@100Hz) → Peak(−1dB@220Hz) → Peak(−2dB@4kHz) → HiShelf(−2dB@9.5kHz) → Compressor(2:1@−20dB) → Limiter(−0.5dB) |
+| `make_acestep_music_chain()` | ACE-Step 48kHz | NoiseGate(−50dB) → HPF(60Hz) → LowShelf(+2dB@200Hz) → Peak(−4.5dB@3kHz) → Peak(−2.5dB@4kHz) → Peak(−2dB@6kHz) → HiShelf(+0.5dB@8kHz) → HiShelf(−2.5dB@10kHz) → LPF(16kHz) → Compressor(2.5:1@−20dB) → Limiter(−0.5dB) |
+| `make_lyria_music_chain()` | Lyria 48kHz | HPF(60Hz) → Peak(−1.5dB@250Hz) → HiShelf(−2.5dB@9kHz) → Compressor(2:1@−18dB) → Limiter(−0.5dB) |
+| `make_vocal_pocket_chain()` | Music (all engines) | HPF(30Hz) → Peak(−3dB@300Hz) → Peak(−2dB@1kHz) → Peak(−4dB@3kHz) → LPF(12kHz) |
+| `make_master_chain()` | Final mix | HPF(30Hz) → Limiter(−1.5dB, 200ms) |
+
+All chains in `core/audio_processor.py`. IRs in `assets/impulse_responses/` (default: `warm_studio`). Full parameter tables → `docs/ARCHITECTURE.md#fx-chains`.
+
+---
 
 ## Code Conventions
 
@@ -87,10 +205,12 @@ Script text → TTS (Kokoro/F5) → Music (HeartMuLa/ACE-Step/Lyria) → Audio F
 ## Common Gotchas
 
 - **MPS bus error on exit**: `atexit.register(lambda: os._exit(0))` in `app.py` — do not remove
-- **ACE-Step timeout**: Always pass `compile_model=True` to `initialize_service()` — without it, generation takes ~9s/step and times out
+- **ACE-Step timeout**: Always pass `compile_model=True` to `initialize_service()` — without it, generation takes ~9s/step and times out (~135s JIT overhead on first run, then ~4× faster per step)
 - **transformers version**: Pinned to `>=4.51.0,<4.58.0` for ACE-Step compatibility — do not upgrade
-- **Kokoro on CPU**: Intentionally forced to CPU — MPS causes deallocation bus errors
-- **HeartMuLa lazy loading**: The engine manually loads/unloads LM and codec sequentially to avoid OOM. MLX `from_pretrained()` loads both models at once — never use it directly; the engine handles the lifecycle. MPS uses `lazy_load=True`. Peak usage ~6-8 GB per phase.
-- **HeartCodec dtype**: Always use fp32 — bf16 degrades audio quality with metallic artifacts. MLX path passes `mx.float32` to HeartCodec; MPS path passes `{"codec": torch.float32}`.
-- **HeartMuLa MPS watermark**: `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7` (set in engine.py). Lower values (e.g. 0.4) cause OOM during 3B LM generation.
-- **HeartMuLa checkpoints**: Must be present at `./ckpt/HeartMuLa-oss-3B/` and `./ckpt/HeartCodec-oss/` (MPS) or `./ckpt-mlx/heartmula/` and `./ckpt-mlx/heartcodec/` (MLX) before selecting HeartMuLa in the UI
+- **Kokoro on CPU**: Intentionally forced to CPU — MPS causes deallocation bus errors. British voices (`bf_*`, `bm_*`) require `KPipeline(lang_code="b")`
+- **HeartMuLa lazy loading**: Never load LM and codec simultaneously (OOM). MLX: load LM (bf16) → generate → `del` + `gc.collect()` + `mx.clear_cache()` → load codec (fp32) → decode → unload. MPS: `lazy_load=True` handles lifecycle internally.
+- **HeartCodec dtype**: Always fp32 — bf16 causes metallic artifacts. MLX passes `mx.float32`; MPS passes `{"codec": torch.float32}`.
+- **HeartMuLa MPS watermark**: `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7` (set in `engine.py`). Values below 0.5 cause OOM during 3B LM generation.
+- **HeartMuLa checkpoints**: Must be present before selecting HeartMuLa — see Checkpoint Locations table above.
+- **Active ducking function**: `mixer.mix()` calls `apply_envelope_ducking()` — NOT `apply_rms_ducking()`. Both exist; only the envelope version is used in production.
+- **Mix sample rate**: All music engine paths use `mix_sr = 48000` (`pipeline.py:213`). The 44.1 kHz fallback is only used when no music engine is active.

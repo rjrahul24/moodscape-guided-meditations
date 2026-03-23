@@ -1,3 +1,13 @@
+<!-- QUICK-REF ──────────────────────────────────────────────────────── -->
+**Files:** `core/pipeline.py` · `core/audio_processor.py` · `core/mixer.py`
+**Key functions:** `upsample_audio()` · `apply_envelope_ducking()` · `normalize_loudness()` · `export_audio()`
+**Mix SR:** 48 kHz for all music engine paths (ACE-Step / HeartMuLa / Lyria / F5) — see `pipeline.py:213`
+**Active ducking:** `apply_envelope_ducking()` — called inside `mix()`; `apply_rms_ducking()` exists but is NOT used
+**Upsample method:** `librosa soxr_vhq` (highest accuracy, zero-crossing safe)
+**Export:** 20s chunk streaming via Pedalboard AudioFile; LUFS pre-computed as single scalar
+**See also:** `docs/ARCHITECTURE.md#pipeline-phase-breakdown` · `docs/model_implementation_guides/pedalboard.md`
+<!-- ────────────────────────────────────────────────────────────────── -->
+
 # Audio Processing & Memory Optimization Guide
 
 This document outlines the core architectural logic that powers the generation, standardizations, and export memory management of MoodScape's audio.
@@ -10,7 +20,7 @@ Generative AI audio models operate at different native rates:
 |--------|-------------|-------|
 | Kokoro TTS | 24 kHz | CPU-only on Apple Silicon |
 | F5-TTS | 24 kHz | MPS (Apple Silicon GPU) |
-| HeartMuLa | 44.1 kHz | MPS on Apple Silicon / CPU fallback |
+| HeartMuLa | 48 kHz | MPS on Apple Silicon / MLX primary |
 | ACE-Step 1.5 | **48 kHz** stereo | MLX backend |
 | Lyria RealTime | 48 kHz stereo | Cloud WebSocket API |
 
@@ -18,9 +28,8 @@ Generative AI audio models operate at different native rates:
 
 All audio is upsampled to a *mix sample rate* before Pedalboard FX and mixing. The mix rate depends on the music engine selected:
 
-- **ACE-Step / Lyria path**: mix at **48 kHz** (preserves native fidelity of the music engine).
-- **HeartMuLa path**: mix at **44.1 kHz** (HeartMuLa's native 44.1 kHz output requires no upsampling).
-- The mix sample rate is also the export rate (configurable in the UI via "48 kHz Output" checkbox).
+- **All music engine paths** (ACE-Step, HeartMuLa, Lyria): mix at **48 kHz** — see `pipeline.py:213`.
+- The mix sample rate is also the default export rate (configurable in the UI via "48 kHz Output" checkbox).
 - TTS audio (24 kHz) is upsampled to the mix rate using high-accuracy resampling for all engines:
   - All TTS engines: `librosa.resample(res_type="soxr_vhq")` — highest accuracy mode, minimises zero-crossing errors
 - **Rule**: never downsample then re-upsample. Always upsample from the lower-rate source.

@@ -1,3 +1,17 @@
+<!-- QUICK-REF ──────────────────────────────────────────────────────── -->
+**Files:** `core/acestep_engine.py`
+**Class:** `AceStepEngine` — `load_model()` / `generate()` / `_generate_infinite()` / `_enhance_prompt()`
+**Constants:** `_GUIDANCE_SCALE=3.0` · `_INFERENCE_STEPS=50` · `_LM_TEMPERATURE=0.7` · `_USE_ADG=True` · `_STORY_CROSSFADE_SEC=6.0`
+**Contract:** Output — 48 kHz mono float32 · Checkpoints — `./ACE-Step-1.5/checkpoints/`
+**MANDATORY:** `compile_model=True` to `initialize_service()` — without it, ~9s/step → timeout
+**Tasks:**
+- Tune generation params → module-level constants at top of `acestep_engine.py`
+- Change prompt enhancement → `_enhance_prompt()` (MESA framework: Mood/Elements/Structure/Application)
+- Adjust FX chain → `core/audio_processor.py :: make_acestep_music_chain()`
+- Long-form behavior → `_generate_infinite()` (three-phase: genesis + continuation + smoothing)
+**See also:** `docs/ARCHITECTURE.md#acestepenginecoreacestepenginepy` · `docs/prompting_guides/ace_step_instructions.md`
+<!-- ────────────────────────────────────────────────────────────────── -->
+
 # ACE-Step 1.5 Implementation Guide for Meditation Audio
 ### A Complete Reference for Moodscape
 

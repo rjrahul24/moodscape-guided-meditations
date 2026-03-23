@@ -1,3 +1,13 @@
+<!-- QUICK-REF ──────────────────────────────────────────────────────── -->
+**Engine files:** `core/pipeline.py :: _enhance_heartmula_prompt()`
+**Framework:** Eight Pillars — Genre (95%) > Timbre (50%) > Mood (32%) > Instrument (25%) > Scene
+**Tag limit:** 7–9 tags max · comma-separated style tags (not sentences)
+**Structural lyrics:** `[interlude]` only (suppresses vocal bias) · `[intro]`/`[outro]` for structure
+**Auto-appended:** `no drums, instrumental`
+**Duration scaling:** ≤90s → "extremely slow" · ≤300s → "long soft pads that barely move" · >300s → "soundscape stays flat"
+**See also:** `docs/model_implementation_guides/heartmula.md` · `CLAUDE.md#task-routing-guide`
+<!-- ────────────────────────────────────────────────────────────────── -->
+
 # HeartMuLa Prompting Guide
 
 ## Tag Syntax

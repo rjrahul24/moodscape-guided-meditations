@@ -1,3 +1,13 @@
+<!-- QUICK-REF ──────────────────────────────────────────────────────── -->
+**Engine files:** `core/kokoro_tts/preprocessor.py` · `core/kokoro_tts/engine.py`
+**Script tags:** `[pause:Xs]` · `[breath]` (1.2s) · `\n\n` paragraph break (6.5s) · speed range 0.65–1.0
+**Chunk limit:** 150 tokens (auto-split at sentence boundaries)
+**Speed floor:** 0.65 — below this Kokoro produces distorted output
+**Prosody auto-applied:** comma injection at breath boundaries, sensory ellipses, IPA for Sanskrit/yoga terms
+**Voice selection:** 6 presets or custom blend — see `voice_manager.py :: MEDITATION_PRESETS`
+**See also:** `docs/model_implementation_guides/kokoro_tts.md` · `CLAUDE.md#task-routing-guide`
+<!-- ────────────────────────────────────────────────────────────────── -->
+
 # MoodScape — Vocal Script Instructions for Kokoro TTS
 
 This document is the authoritative reference for writing meditation vocal scripts for MoodScape. It is intended to be given to an LLM to generate complete, production-ready vocal scripts that the app can process without errors or degraded audio quality.

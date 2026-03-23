@@ -1,3 +1,13 @@
+<!-- QUICK-REF ──────────────────────────────────────────────────────── -->
+**Engine files:** `core/acestep_engine.py :: _enhance_prompt()` · `core/pipeline.py :: _enhance_acestep_prompt()`
+**Framework:** MESA — Mood + Elements + Structure + Application
+**Structural lyrics tags:** `[Intro]` `[Verse]` `[Bridge]` `[Outro]` (standard ACE-Step training vocab)
+**Auto-prepended:** `ambient, meditation, calm, peaceful, warm, spacious, soft dynamics, gentle, soothing, high fidelity, studio quality, clean production`
+**Auto-appended:** `no vocals, instrumental`
+**Story mode:** provide comma-separated `music_prompt_stages` in UI for multi-arc meditations
+**See also:** `docs/model_implementation_guides/ace-step.md` · `CLAUDE.md#task-routing-guide`
+<!-- ────────────────────────────────────────────────────────────────── -->
+
 # MoodScape — ACE-Step 1.5 Prompt Instructions
 
 This document is the authoritative reference for writing background music prompts for MoodScape when using the **ACE-Step 1.5** music engine. It is intended to be given to an LLM to generate prompts that feed directly into the Gradio UI's **Music Style Prompt** field.

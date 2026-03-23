@@ -1,3 +1,13 @@
+<!-- QUICK-REF ──────────────────────────────────────────────────────── -->
+**Engine files:** `core/f5_tts/preprocessor.py` · `core/f5_tts/engine.py` · `core/f5_tts/voice_registry.py`
+**Script tags:** `[pause:Xs]` · `[breath]` · `\n\n` paragraph break (3.0s) · `[voice:phase_name]` for multi-phase
+**Chunk limit:** 300 chars (auto-split at sentence boundaries)
+**F5-specific text rules:** colons → commas · ellipses → periods · em-dashes → commas · hyphens in compounds removed
+**Voice assets:** `core/f5_tts/assets/reference_audio/*.wav` (24kHz mono, ~10s) + matching `.txt` transcripts
+**Multi-phase:** defined in `voices.toml` — opening / body / closing phases with different reference audio
+**See also:** `docs/model_implementation_guides/f5_tts.md` · `CLAUDE.md#task-routing-guide`
+<!-- ────────────────────────────────────────────────────────────────── -->
+
 # MoodScape — Vocal Script Instructions for F5-TTS
 
 This document is the authoritative reference for writing meditation vocal scripts when using F5-TTS in MoodScape. It is intended to be given to an LLM to generate complete, production-ready vocal scripts that the app can process without errors or degraded audio quality.

@@ -1,3 +1,17 @@
+<!-- QUICK-REF ──────────────────────────────────────────────────────── -->
+**Files:** `core/audio_processor.py` · `core/mixer.py` · `core/kokoro_tts/postprocessor.py` · `core/f5_tts/postprocessor.py`
+**Key functions:** `make_heartmula_music_chain()` · `make_acestep_music_chain()` · `make_lyria_music_chain()` · `make_vocal_pocket_chain()` · `make_master_chain()` · `build_voice_chain()` · `apply_fx()`
+**Mix defaults:** `music_volume_db=−17.0` · `duck_amount_db=−21.0` · `target_lufs=−19.0` · export streamed in 20s chunks
+**Active ducking:** `mixer.mix()` calls `apply_envelope_ducking()` — NOT `apply_rms_ducking()` (which exists but is unused in production)
+**IR files:** `assets/impulse_responses/{warm_studio,wooden_hall,stone_chapel}.wav` · default: `warm_studio`
+**Tasks:**
+- See full plugin-by-plugin parameter tables → `docs/ARCHITECTURE.md#fx-chains--full-parameter-tables`
+- Change ducking params → `mixer.py :: apply_envelope_ducking()` (attack/release/lookahead/depth)
+- Change LUFS target → `pipeline.py` (`target_lufs`) + `mixer.py :: export_audio()`
+- Change master limiter → `audio_processor.py :: make_master_chain()`
+**See also:** `docs/ARCHITECTURE.md#fx-chains--full-parameter-tables` · `docs/optimization_and_processing/audio_processing.md`
+<!-- ────────────────────────────────────────────────────────────────── -->
+
 # Pedalboard Implementation Guide for MoodScape
 ### Complete reference for MoodScape — audio processing, ducking, mixing, and normalization
 

@@ -1,3 +1,18 @@
+<!-- QUICK-REF ──────────────────────────────────────────────────────── -->
+**Files:** `core/f5_tts/engine.py` · `core/f5_tts/preprocessor.py` · `core/f5_tts/voice_registry.py` · `core/f5_tts/postprocessor.py`
+**Class:** `F5Engine` — `load_model()` / `synthesize()` · zero-shot voice cloning · voice resolved at construction
+**Constants:** `_NFE_STEPS=32` · `MAX_CHUNK_CHARS=300` · `_VAD_GAIN_FLOOR=0.15` · `_CFG_STRENGTH=2.0` · `_DEFAULT_SPEED=0.88`
+**Contract:** Output — 24 kHz mono float32 · Voice assets `core/f5_tts/assets/`
+**Voice assets:** `reference_audio/*.wav` (24kHz mono, ~10s) + `reference_transcript/*.txt` + `voices.toml` (multi-phase)
+**Tasks:**
+- Add new voice → drop `.wav` + `.txt` in assets dirs (auto-discovered by `VoiceRegistry.scan()`)
+- Multi-phase voice → edit `voices.toml`
+- Tune chunking → `preprocessor.py :: MAX_CHUNK_CHARS`
+- Tune VAD behavior → `engine.py :: _apply_silero_vad()`
+- Tune voice FX → `postprocessor.py :: build_f5_voice_chain()`
+**See also:** `docs/ARCHITECTURE.md#f5engine-specifics` · `docs/prompting_guides/vocal_f5_instructions.md`
+<!-- ────────────────────────────────────────────────────────────────── -->
+
 # F5-TTS Implementation Guide
 
 F5-TTS is the second TTS engine available in MoodScape, offering zero-shot voice cloning. Unlike Kokoro (which uses a fixed set of pre-trained voice embeddings), F5-TTS clones any voice from a short reference audio clip at inference time. This makes it ideal for studios or creators who want the meditation narrated in a specific human voice.

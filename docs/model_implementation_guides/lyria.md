@@ -1,3 +1,18 @@
+<!-- QUICK-REF ──────────────────────────────────────────────────────── -->
+**Files:** `core/lyria/engine.py` · `core/lyria/prompts.py`
+**Class:** `LyriaEngine` — `load_model()` / `generate()` / `_run_session()` · cloud WebSocket API
+**Constants:** `_MAX_SESSION_SEC=570.0` (9.5 min) · `_DEFAULT_BPM=70` · `_DEFAULT_DENSITY=0.2` · `_DEFAULT_BRIGHTNESS=0.3` · `_DEFAULT_GUIDANCE=4.0`
+**Contract:** Output — 48 kHz mono float32 · Requires `GOOGLE_API_KEY` in `.env`
+**SynthID watermark** embedded — do not strip or time-stretch (Google ToS)
+**Weighted prompt syntax:** `"Hang Drum: 1.5, Piano: 0.8, Ambient Pads: 1.0"` → `prompts.py :: parse_weighted_prompts()`
+**Tasks:**
+- Tune default BPM/density/brightness → module-level constants in `engine.py`
+- Change session crossfade → `_CROSSFADE_SEC` constant
+- Adjust FX chain → `core/audio_processor.py :: make_lyria_music_chain()`
+- Multi-session splitting → `generate()` (auto-splits durations > 570s)
+**See also:** `docs/ARCHITECTURE.md#lyriaengine` · `docs/prompting_guides/` (no dedicated guide; use weighted syntax)
+<!-- ────────────────────────────────────────────────────────────────── -->
+
 # Lyria RealTime — Implementation Guide
 
 ## What Is Lyria RealTime?
