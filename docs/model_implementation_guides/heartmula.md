@@ -1,3 +1,18 @@
+<!-- QUICK-REF ──────────────────────────────────────────────────────── -->
+**Files:** `core/heart_mula/engine.py`
+**Class:** `HeartMulaEngine` — `load_model()` / `generate()` / `_generate_mlx()` / `_generate_mps()`
+**Constants:** `_LM_CFG_SCALE=3.0` · `_LM_TEMPERATURE=0.9` · `_LM_TOP_K=45` · `MAX_SEGMENT_SEC=240.0` · `CROSSFADE_SEC=8.0`
+**Contract:** Output — 48 kHz mono float32 · MPS ckpts `./ckpt/` · MLX ckpts `./ckpt-mlx/`
+**CRITICAL:** HeartCodec always fp32 (bf16 → metallic artifacts) · `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7`
+**Lazy-load sequence (MLX):** Load LM (bf16) → generate → `del + gc + mx.clear_cache()` → load codec (fp32) → decode → unload
+**Tasks:**
+- Tune generation params → module-level constants at top of `engine.py`
+- Change prompt enhancement → `core/pipeline.py :: _enhance_heartmula_prompt()` (Eight Pillars tags)
+- Adjust FX chain → `core/audio_processor.py :: make_heartmula_music_chain()`
+- Memory issues → check `PYTORCH_MPS_HIGH_WATERMARK_RATIO` and lazy-load sequence
+**See also:** `docs/ARCHITECTURE.md#heartmulaengine` · `docs/prompting_guides/heartmula_instructions.md`
+<!-- ────────────────────────────────────────────────────────────────── -->
+
 # HeartMuLa Implementation Guide
 
 ## Overview

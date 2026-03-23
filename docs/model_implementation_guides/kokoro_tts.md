@@ -1,3 +1,18 @@
+<!-- QUICK-REF ──────────────────────────────────────────────────────── -->
+**Files:** `core/kokoro_tts/engine.py` · `core/kokoro_tts/preprocessor.py` · `core/kokoro_tts/postprocessor.py` · `core/kokoro_tts/voice_manager.py`
+**Class:** `KokoroEngine` — `load_model()` / `synthesize()` · forced CPU on Apple Silicon (MPS → SIGBUS)
+**Constants:** `MAX_CHUNK_TOKENS=150` · `CROSSFADE_SAMPLES=7200` (300ms@24kHz) · `INTER_SENTENCE_PAUSE_SEC=0.8` · `MIN_SPEED=0.65`
+**Contract:** Output — 24 kHz mono float32 · Models from HF hub `hexgrad/Kokoro-82M`
+**British voices** (`bf_*`, `bm_*`): require separate `KPipeline(lang_code="b")`
+**6 presets:** `balanced_calm`, `deep_rest`, `soft_whisper`, `golden_hour`, `earth_root`, `serene_sky`
+**Tasks:**
+- Tune chunking/pauses → `preprocessor.py` (constants at top)
+- Tune prosody/punctuation rules → `preprocessor.py :: enhance_prosody_punctuation()`
+- Tune voice FX → `postprocessor.py :: build_voice_chain()`
+- Add/edit voice blends → `voice_manager.py :: MEDITATION_PRESETS`
+**See also:** `docs/ARCHITECTURE.md#phase-2--tts-synthesis` · `docs/prompting_guides/vocal_kokoro_instructions.md`
+<!-- ────────────────────────────────────────────────────────────────── -->
+
 # Kokoro TTS — Guided Meditation Implementation Research
 
 ---
