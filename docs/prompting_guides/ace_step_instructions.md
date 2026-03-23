@@ -31,9 +31,11 @@ Even for instrumental music, ACE-Step uses section tags from the lyrics field to
 
 | Duration | Structure generated |
 |----------|---------------------|
-| ≤ 90s | `[Instrumental]`, Intro, Verse, Outro |
-| 90s – 300s | `[Instrumental]`, Intro, Verse, Bridge, Verse, Outro |
-| > 300s | `[Instrumental]`, Intro, Verse, Bridge, Interlude, Verse, Bridge, Outro |
+| ≤ 90s | `[Instrumental]`, Intro, Instrumental, Outro |
+| 90s – 300s | `[Instrumental]`, Intro, Instrumental ×3, Outro |
+| > 300s | `[Instrumental]`, Intro, Instrumental ×5, Outro |
+
+All section tags use `[Instrumental]` (the proper training-vocabulary token for instrumental tracks) instead of `[Verse]`/`[Bridge]` which carry implicit vocal bias from training data. Each tag includes descriptive cues after a dash to guide the LM planner's structural decisions.
 
 **You can append extra structural hints** via the `lyrics` parameter if needed (see [Story Mode](#story-mode-multi-stage-generation)), but for standard single-prompt use the auto-generated structural tags are sufficient and optimal.
 
@@ -56,10 +58,13 @@ ACE-Step 1.5 uses a **two-component architecture** on Apple Silicon (MLX):
 
 | Parameter | Value | Effect |
 |-----------|-------|--------|
-| `guidance_scale` | `5.0` | SFT optimal range 5–7; balances prompt adherence with smooth ambient texture |
+| `guidance_scale` | `5.0` | SFT sweet spot (4–6); strong prompt adherence for ambient texture control |
 | `inference_steps` | `50` (SFT) / `8` (Turbo) | Max for SFT without error accumulation |
-| `lm_temperature` | `0.85` | Richer tonal palettes while maintaining structural coherence |
+| `lm_temperature` | `0.4` | Conservative, consistent tonal output; reduces unexpected bright timbres |
 | `use_adg` | `True` | Adaptive Dual Guidance — reduces spectral noise without additional inference cost |
+| `cfg_interval_end` | `0.6` | Release CFG guidance at 60% — late steps refine freely for organic textures |
+| `shift` | `3.0` | Higher timestep shift = stronger semantic conditioning, cleaner harmonics |
+| `infer_method` | `"ode"` | Deterministic ODE for smooth, reproducible output |
 | `instrumental` | `True` | **Always forced** — vocals are categorically disabled |
 | `thinking` | `True` | Enables Chain-of-Thought reasoning in the LM planner |
 | `use_cot_metas` | `True` | CoT planning includes musical metadata (tempo, key, timbre tags) |

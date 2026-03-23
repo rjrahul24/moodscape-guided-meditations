@@ -138,7 +138,7 @@ class MeditationPipeline:
         progress_cb=None,
         seed: int | None = None,
         do_export_stems: bool = False,
-        upsample_48k: bool = False,
+        upsample_48k: bool = True,
         generation_mode: str = "Instrumental + Vocal",
         instrumental_duration_m: float = 3.0,
         music_model: str = "heartmula",
@@ -198,8 +198,11 @@ class MeditationPipeline:
         if seed is None:
             seed = int(time.time()) % (2**31)
 
-        # Unified LUFS target for all meditation sessions
-        target_lufs = -19.0
+        # Unified LUFS target for all meditation sessions.
+        # -16 LUFS matches Apple Music natively; Spotify applies minimal +2 dB
+        # boost.  The previous -19 LUFS caused platforms to boost and apply their
+        # own limiter, degrading quality.
+        target_lufs = -16.0
 
         is_instrumental = generation_mode == "Instrumental Only"
         is_vocals = generation_mode == "Vocals Only"
@@ -527,6 +530,13 @@ class MeditationPipeline:
                 else:
                     raise ValueError(f"No premix LUFS for: {music_model}")
                 music_audio = normalize_loudness(music_audio, mix_sr, target_lufs=premix_lufs)
+
+                # ACE-Step pre-EQ processing: spectral repair + tape saturation
+                if use_acestep:
+                    from core.audio_processor import reduce_music_noise, apply_tape_saturation
+                    music_audio = reduce_music_noise(music_audio, mix_sr)
+                    music_audio = apply_tape_saturation(music_audio)
+
                 if use_lyria:
                     from core.audio_processor import make_lyria_music_chain
                     music_chain = make_lyria_music_chain()
@@ -539,6 +549,11 @@ class MeditationPipeline:
                 else:
                     raise ValueError(f"No music FX chain for: {music_model}")
                 music_audio = apply_audio_fx(music_audio, music_chain, mix_sr)
+
+                # ACE-Step post-EQ: add organic noise floor for analog warmth
+                if use_acestep:
+                    from core.audio_processor import add_organic_noise_floor
+                    music_audio = add_organic_noise_floor(music_audio, mix_sr)
 
                 # Carve vocal pocket for intelligibility
                 from core.audio_processor import make_vocal_pocket_chain

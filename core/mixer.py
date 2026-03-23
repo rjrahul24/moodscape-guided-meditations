@@ -553,8 +553,8 @@ def export_audio(
         # Apply normalization gain
         chunk = chunk * mix_lufs_gain
         
-        # Ensure true peak safety -1.5 dBFS via clipping (limiter already ran during mastering)
-        chunk = np.clip(chunk, -0.84, 0.84) # -1.5 dBFS ≈ 0.841
+        # Ensure true peak safety -1.0 dBFS via clipping (limiter already ran during mastering)
+        chunk = np.clip(chunk, -0.891, 0.891)  # -1.0 dBFS = 10^(-1/20) ≈ 0.891
             
         # write directly as float32. Pedalboard expects (channels, samples).
         if chunk.ndim == 1:

@@ -50,9 +50,9 @@ class TestAceStepEngine(unittest.TestCase):
 
 
     def test_guidance_scale_value(self):
-        """Task 4: _GUIDANCE_SCALE should be 3.0 for smoother spectral output."""
+        """_GUIDANCE_SCALE should be 5.0 (SFT sweet spot for ambient texture control)."""
         from core.acestep_engine import _GUIDANCE_SCALE
-        self.assertEqual(_GUIDANCE_SCALE, 3.0)
+        self.assertEqual(_GUIDANCE_SCALE, 5.0)
 
     def test_enhance_prompt_anti_harshness_tags(self):
         """Task 2: enhanced caption must include anti-harshness tokens."""

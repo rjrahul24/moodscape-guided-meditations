@@ -103,11 +103,14 @@ python -c "from acestep.llm_inference import LLMHandler; print('LLM Handler OK')
 
 | Parameter | Value | Rationale |
 |-----------|-------|-----------|
-| `_GUIDANCE_SCALE` | `3.0` | Lower CFG gives the DiT more freedom to settle into smooth natural distributions; reduces algorithmic spectral roughness |
+| `_GUIDANCE_SCALE` | `5.0` | SFT sweet spot (4–6); strong prompt adherence for ambient texture control without rigidity |
 | `_INFERENCE_STEPS` | `50` | SFT max without error accumulation |
 | `_INFERENCE_STEPS_REPAINT` | `50` | Matches base steps for consistency |
-| `_LM_TEMPERATURE` | `0.7` | Conservative tonal choices for smooth, warm meditation output; reduces unexpected bright or harsh timbres |
+| `_LM_TEMPERATURE` | `0.4` | Conservative, consistent tonal output; reduces unexpected bright or harsh timbres |
 | `_USE_ADG` | `True` | Adaptive Dual Guidance reduces spectral noise |
+| `_CFG_INTERVAL_END` | `0.6` | Release CFG at 60% — late denoising steps refine freely for organic textures |
+| `_SHIFT` | `3.0` | Higher timestep shift = stronger semantic conditioning, cleaner harmonics |
+| `_INFER_METHOD` | `"ode"` | Deterministic ODE for smooth, reproducible output |
 | `instrumental` | `True` | Always — meditation tracks must never have vocals |
 | `thinking` | `True` | Enables Chain-of-Thought planning for coherent structure |
 | `vocal_language` | `"unknown"` | Best practice for instrumental tracks |
@@ -327,8 +330,8 @@ pip install git+https://github.com/ace-step/ACE-Step-1.5.git
 
 ### Audio Quality Issues
 - Verify MLX backend is active (check logs for "MLX" or "mps")
-- Increase `_GUIDANCE_SCALE` if output doesn't match prompt (max 7.0)
-- Decrease `_LM_TEMPERATURE` if output is too unpredictable
+- Increase `_GUIDANCE_SCALE` if output doesn't match prompt (max 7.0; currently 5.0)
+- Decrease `_LM_TEMPERATURE` if output is too unpredictable (currently 0.4; minimum ~0.2)
 
 ### Long-Form Seam Artifacts
 - The three-phase pipeline (cover + boundary smoothing) should eliminate seams

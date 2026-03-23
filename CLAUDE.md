@@ -72,7 +72,7 @@ Script text → TTS (Kokoro/F5) → Music (HeartMuLa/ACE-Step/Lyria) → Audio F
 - F5-TTS: Zero-shot voice cloning with Silero VAD (15% gain floor). Voice assets in `core/f5_tts/assets/`. WPM-based pacing via `fix_duration` (default 110 WPM). 300-char chunk limit. Multi-phase voices via `voices.toml`.
 
 **Music engines** (`core/heart_mula/`, `core/acestep_engine.py`, `core/lyria/`):
-- ACE-Step **(default, recommended for Apple Silicon)**: Must use `compile_model=True` to avoid timeouts. Uses MLX backend on Apple Silicon. ~5–10 min for a 5-min track at 48 kHz native.
+- ACE-Step **(default, recommended for Apple Silicon)**: Must use `compile_model=True` to avoid timeouts. Uses MLX backend on Apple Silicon. ~5–10 min for a 5-min track at 48 kHz native. Music post-processing: noisereduce spectral repair → tape saturation → 12-stage Pedalboard EQ (Fletcher-Munson compensated) → organic noise floor. Story mode uses STFT crossfades for seamless transitions.
 - HeartMuLa: 3B LM + HeartCodec (12.5 Hz codec), MLX primary with MPS fallback. Manual lazy loading (load LM → generate → unload → load codec → detokenize → unload). 48 kHz native. Max 240s per call; segment-and-crossfade for long-form. ~8–20 min per 4-min segment on MPS.
 - Lyria RealTime: Cloud API (Google), fastest (~1–3 min), requires `GOOGLE_API_KEY`.
 

@@ -26,10 +26,10 @@ TARGET_SAMPLE_RATE = 48000       # Preserve native 48 kHz through the pipeline
 
 # ── Generation quality knobs ──────────────────────────────────────────────────
 # guidance_scale: CFG strength for the SFT model.
-# 3.0 gives the diffusion model more freedom to settle into mathematically
-# smooth, natural audio distributions rather than over-indexing on prompt
-# tokens — reduces algorithmic "crackle" and spectral roughness.
-_GUIDANCE_SCALE = 3.0
+# 5.0 sits in the SFT sweet spot (4–6) for ambient music — strong enough
+# for reliable prompt adherence and texture control, without the rigidity
+# and spectral artifacts that appear above 6.0.
+_GUIDANCE_SCALE = 5.0
 
 # inference_steps: SFT supports up to 50 steps. Going higher causes error
 # accumulation that degrades output quality. 50 is maximum detail without
@@ -38,13 +38,30 @@ _INFERENCE_STEPS = 50
 _INFERENCE_STEPS_REPAINT = 50
 
 # lm_temperature: Controls LM planner creativity.
-# 0.85 allows richer tonal palettes for ambient while maintaining coherence.
-_LM_TEMPERATURE = 0.7
+# 0.4 produces conservative, consistent tonal output ideal for meditation —
+# reduces unexpected bright timbres and rhythmic surprises while retaining
+# enough variation for organic-sounding ambient textures.
+_LM_TEMPERATURE = 0.4
 
 # Enable Adaptive Dual Guidance for the base (non-turbo) model.
 # ADG applies two complementary CFG branches that reinforce each other:
 # this significantly reduces spectral noise without increasing inference time.
 _USE_ADG = True
+
+# cfg_interval_end: Release CFG guidance at 60% of denoising steps.
+# Late steps refine micro-detail freely without prompt constraint, producing
+# smoother, more organic sustained tones and pad textures.
+_CFG_INTERVAL_END = 0.6
+
+# shift: Timestep shift factor for the DiT scheduler.
+# 3.0 concentrates more denoising budget on high-noise (semantic) steps,
+# producing cleaner harmonic structure and stronger tonal conditioning.
+_SHIFT = 3.0
+
+# infer_method: Diffusion inference method ("ode" or "sde").
+# ODE is deterministic — smoother, more reproducible output for meditation.
+# SDE adds stochastic micro-variations (organic but less predictable).
+_INFER_METHOD = "ode"
 
 # Story mode: crossfade duration between adjacent stages (seconds).
 # 6 seconds gives a natural, unhurried transition between tonal worlds
@@ -574,6 +591,9 @@ class AceStepEngine:
             use_cot_metas=True,
             use_cot_caption=True,
             enable_normalization=True,
+            cfg_interval_end=_CFG_INTERVAL_END,
+            shift=_SHIFT,
+            infer_method=_INFER_METHOD,
         )
         config = GenerationConfig(
             batch_size=1,
@@ -643,6 +663,9 @@ class AceStepEngine:
             thinking=False,
             lm_temperature=_LM_TEMPERATURE,
             enable_normalization=True,
+            cfg_interval_end=_CFG_INTERVAL_END,
+            shift=_SHIFT,
+            infer_method=_INFER_METHOD,
         )
         config = GenerationConfig(
             batch_size=1,
@@ -711,6 +734,9 @@ class AceStepEngine:
             use_cot_metas=True,
             use_cot_caption=True,
             enable_normalization=True,
+            cfg_interval_end=_CFG_INTERVAL_END,
+            shift=_SHIFT,
+            infer_method=_INFER_METHOD,
         )
         config = GenerationConfig(batch_size=1, audio_format="wav")
 
@@ -779,6 +805,9 @@ class AceStepEngine:
             thinking=False,
             lm_temperature=_LM_TEMPERATURE,
             enable_normalization=True,
+            cfg_interval_end=_CFG_INTERVAL_END,
+            shift=_SHIFT,
+            infer_method=_INFER_METHOD,
         )
         config = GenerationConfig(batch_size=1, audio_format="wav")
 
@@ -939,11 +968,94 @@ class AceStepEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _stft_crossfade(
+        tail: np.ndarray,
+        head: np.ndarray,
+    ) -> np.ndarray:
+        """STFT overlap-add crossfade in log-magnitude domain.
+
+        Interpolates magnitudes in dB (perceptually linear) and switches
+        phase at the midpoint.  Produces smoother transitions than time-domain
+        cosine² for sustained drones and singing bowls.
+
+        Falls back to cosine² crossfade if STFT produces anomalous results.
+        """
+        from scipy.signal import stft, istft
+        import math
+
+        overlap = len(tail)
+        n_fft = 2048
+        hop = 512
+
+        if overlap < n_fft:
+            # Too short for STFT — use cosine² fallback
+            t = np.linspace(0.0, math.pi / 2.0, overlap, dtype=np.float32)
+            return tail * np.cos(t) ** 2 + head * np.sin(t) ** 2
+
+        try:
+            _, _, S1 = stft(tail, fs=TARGET_SAMPLE_RATE, nperseg=n_fft, noverlap=n_fft - hop)
+            _, _, S2 = stft(head, fs=TARGET_SAMPLE_RATE, nperseg=n_fft, noverlap=n_fft - hop)
+
+            # Align frame counts (stft may produce slightly different lengths)
+            n_frames = min(S1.shape[1], S2.shape[1])
+            S1 = S1[:, :n_frames]
+            S2 = S2[:, :n_frames]
+
+            mag1_db = 20.0 * np.log10(np.abs(S1) + 1e-8)
+            mag2_db = 20.0 * np.log10(np.abs(S2) + 1e-8)
+
+            # Linear fade in dB domain (perceptually smooth)
+            fade = np.linspace(0.0, 1.0, n_frames, dtype=np.float32)[np.newaxis, :]
+            mag_blend_db = mag1_db * (1.0 - fade) + mag2_db * fade
+            mag_blend = 10.0 ** (mag_blend_db / 20.0)
+
+            # Phase: use outgoing for first half, incoming for second half
+            mid = n_frames // 2
+            phase = np.empty_like(S1)
+            phase[:, :mid] = np.angle(S1[:, :mid])
+            phase[:, mid:] = np.angle(S2[:, mid:])
+
+            S_blend = mag_blend * np.exp(1j * phase)
+            _, blended = istft(S_blend, fs=TARGET_SAMPLE_RATE, nperseg=n_fft, noverlap=n_fft - hop)
+
+            # Trim or pad to exact overlap length
+            if len(blended) >= overlap:
+                blended = blended[:overlap]
+            else:
+                blended = np.pad(blended, (0, overlap - len(blended)))
+
+            # Energy anomaly check: >3 dB deviation from expected → fallback
+            expected_rms = np.sqrt(
+                0.5 * np.mean(tail ** 2) + 0.5 * np.mean(head ** 2)
+            )
+            actual_rms = np.sqrt(np.mean(blended ** 2))
+            if expected_rms > 1e-8:
+                db_diff = abs(20.0 * np.log10(max(actual_rms, 1e-10) / expected_rms))
+                if db_diff > 3.0:
+                    logger.warning(
+                        "[AceStepEngine] STFT crossfade energy anomaly (%.1f dB) — "
+                        "falling back to cosine²", db_diff
+                    )
+                    raise ValueError("energy anomaly")
+
+            return blended.astype(np.float32)
+
+        except Exception:
+            # Fallback: cosine² crossfade
+            t = np.linspace(0.0, math.pi / 2.0, overlap, dtype=np.float32)
+            return (tail * np.cos(t) ** 2 + head * np.sin(t) ** 2).astype(np.float32)
+
+    @staticmethod
     def _crossfade_stages(
         segments: list[np.ndarray],
         crossfade_sec: float,
     ) -> np.ndarray:
-        """Join story mode segments with equal-power cosine crossfades.
+        """Join story mode segments with STFT crossfades in log-magnitude domain.
+
+        STFT crossfading interpolates magnitudes in dB (perceptually linear)
+        for smoother transitions on sustained drones and singing bowls compared
+        to time-domain cosine² blending.  Falls back to cosine² automatically
+        if the STFT produces energy anomalies.
 
         Args:
             segments:      List of mono float32 arrays at TARGET_SAMPLE_RATE.
@@ -956,18 +1068,16 @@ class AceStepEngine:
         if len(segments) == 1:
             return segments[0]
 
-        import math
         fade_samples = int(crossfade_sec * TARGET_SAMPLE_RATE)
         result = segments[0]
 
         for seg in segments[1:]:
             overlap = min(fade_samples, len(result), len(seg))
-            # Equal-power (cosine²) fade prevents energy dips at the seam
-            t = np.linspace(0.0, math.pi / 2.0, overlap, dtype=np.float32)
-            fade_out = np.cos(t) ** 2
-            fade_in  = np.cos(math.pi / 2.0 - t) ** 2
 
-            blended = result[-overlap:] * fade_out + seg[:overlap] * fade_in
+            blended = AceStepEngine._stft_crossfade(
+                result[-overlap:].copy(),
+                seg[:overlap].copy(),
+            )
             result = np.concatenate([result[:-overlap], blended, seg[overlap:]])
 
         return result
@@ -1042,17 +1152,20 @@ class AceStepEngine:
     ) -> str:
         """Build structural lyrics with section tags.
 
-        Uses standard training-vocabulary tags ([Intro], [Verse], [Bridge],
-        [Outro]) with descriptors.  Section count scales with duration to
-        maintain coherent structure.
+        Uses [Instrumental] as the primary section tag — this is the proper
+        training-vocabulary token for instrumental tracks.  [Verse]/[Bridge]
+        carry implicit vocal bias from training data.  [Intro] and [Outro]
+        are kept as they have clear semantic meaning for beginnings/endings.
+        Descriptive cues after the dash guide the LM planner's structural
+        decisions.  Section count scales with duration.
         """
         # Short tracks (up to 90s): minimal structure
         if duration_hint <= 90.0:
             return (
                 "[Instrumental]\n\n"
-                "[Intro - Gentle ambient texture emerging softly]\n\n"
-                "[Verse - Main theme, warm and meditative, slowly developing]\n\n"
-                "[Outro - Gradual fade, dissolving into stillness]"
+                "[Intro - Gentle ambient texture emerging softly from silence]\n\n"
+                "[Instrumental - Main harmonic landscape, warm and meditative]\n\n"
+                "[Outro - Dissolving gently into stillness]"
             )
 
         # Medium tracks (90s - 300s): full journey structure
@@ -1060,9 +1173,9 @@ class AceStepEngine:
             return (
                 "[Instrumental]\n\n"
                 "[Intro - Soft ambient texture fading in from silence, establishing space]\n\n"
-                "[Verse - Primary harmonic landscape, slow and contemplative]\n\n"
-                "[Bridge - Subtle tonal shift, deeper warmth, new colors emerge]\n\n"
-                "[Verse - Return to main theme with gentle enrichment]\n\n"
+                "[Instrumental - Primary harmonic landscape, slow and contemplative]\n\n"
+                "[Instrumental - Subtle tonal shift, deeper warmth, new colors emerge]\n\n"
+                "[Instrumental - Return to main theme with gentle enrichment]\n\n"
                 "[Outro - Extended fade, all elements dissolving gently into silence]"
             )
 
@@ -1070,11 +1183,11 @@ class AceStepEngine:
         return (
             "[Instrumental]\n\n"
             "[Intro - Barely audible ambient wash fading in from pure silence]\n\n"
-            "[Verse - Primary harmonic landscape establishes slowly, warm and grounding]\n\n"
-            "[Bridge - Texture deepens, tonal palette shifts to richer colors]\n\n"
-            "[Interlude - Spacious minimal passage, stillness and breath]\n\n"
-            "[Verse - Main theme returns, enriched with new harmonic layers]\n\n"
-            "[Bridge - Gentle upward shift, lighter textures, approaching resolution]\n\n"
+            "[Instrumental - Primary landscape establishes slowly, warm and grounding]\n\n"
+            "[Instrumental - Texture deepens, tonal palette shifts to richer colors]\n\n"
+            "[Instrumental - Spacious minimal passage, stillness and breath]\n\n"
+            "[Instrumental - Main theme returns, enriched with new harmonic layers]\n\n"
+            "[Instrumental - Lighter textures, approaching resolution]\n\n"
             "[Outro - Long extended fade, everything dissolving into peaceful silence]"
         )
 

@@ -100,33 +100,28 @@ def make_heartmula_music_chain() -> Pedalboard:
 def make_acestep_music_chain() -> Pedalboard:
     """FX chain tailored for ACE-Step 1.5 clean VAE output for meditation use.
 
-    Tuned for the clean postprocess chain (no tanh/kernel pre-filtering) and
-    the -14 LUFS pre-mix target:
+    Applied after noisereduce spectral repair and tape saturation (handled in
+    pipeline.py).  Tuned for the -14 LUFS pre-mix target with Fletcher-Munson
+    psychoacoustic compensation for low-volume headphone listening:
+
       1. Noise gate — gentle expander (-50 dB threshold, 2:1 ratio) catches
-         diffusion residual noise that the compressor would otherwise amplify
-         during quiet ambient passages.
-      2. Sub-bass HPF at 60 Hz — removes diffusion noise rumble (30–60 Hz band)
-      3. Low-shelf warmth at 200 Hz (+2.0 dB) — enveloping warmth; conservative
-         increment to avoid low-mid muddiness at the hotter -14 LUFS premix level
-      4. Midrange cut at 3 kHz (-4.5 dB, Q=1.5) — deepened surgical bell EQ cut
-         targeting the primary AI diffusion artifact zone. Narrow Q keeps the cut
-         focused without affecting 2 kHz warmth below or 5 kHz presence above.
-      5. Upper-mid cut at 4 kHz (-2.5 dB, Q=0.8) — deepened; removes upper-mid
-         diffusion artifacts in the 3–5 kHz band more aggressively.
-      6. Gap fill at 6 kHz (-2.0 dB, Q=1.0) — addresses the 5–7 kHz AI harshness
-         zone that sits between the 4 kHz cut and the 8 kHz shelf. This is the
-         prime source of perceived "digital edge" in ACE-Step output.
-      7. Air shelf at 8 kHz (+0.5 dB) — reduced from +1.5; retains gentle air
-         without counteracting the 6 kHz cut above.
-      8. HF rolloff at 10 kHz (-2.5 dB) — deepened from -1.0; significantly
-         smoother high-end rolloff; removes the "digital" upper octave.
-      9. Ultrasonic LPF at 16 kHz — hard rolloff for diffusion noise above 16 kHz.
-         Meditation content (pads, bowls, drones) has no musical information there.
-     10. Glue compressor — threshold -20 dB / 2.5:1 / 80ms attack / 800ms release.
-         Lower threshold (-20 dB) ensures engagement on quieter ambient passages;
-         2.5:1 ratio gives tighter macro-dynamic control without squashing pads;
-         800ms release is slower and more meditative.
-     11. Limiter at -0.5 dBFS
+         diffusion residual noise that the compressor would otherwise amplify.
+      2. Sub-bass HPF at 60 Hz — removes diffusion noise rumble (30–60 Hz band).
+      3. Low-shelf warmth at 200 Hz (+2.5 dB) — Fletcher-Munson bass compensation
+         for perceived warmth at meditation volumes (~50–60 dBA SPL).
+      4. Midrange cut at 3 kHz (-4.5 dB, Q=1.5) — surgical cut targeting the
+         primary AI diffusion artifact zone.
+      5. Upper-mid cut at 4 kHz (-2.5 dB, Q=0.8) — removes upper-mid diffusion
+         artifacts in the 3–5 kHz band.
+      6. Gap fill at 6 kHz (-2.0 dB, Q=1.0) — addresses the 5–7 kHz "digital
+         edge" zone in ACE-Step output.
+      7. Air shelf at 8 kHz (+0.5 dB) — retains gentle air.
+      8. HF rolloff at 10 kHz (-2.5 dB) — smooth high-end rolloff.
+      9. Treble recovery at 12 kHz (+1.0 dB) — Fletcher-Munson compensation for
+         perceived treble loss at quiet listening levels; restores headphone "air".
+     10. Ultrasonic LPF at 16 kHz — hard rolloff for diffusion noise.
+     11. Glue compressor — -20 dB / 2.5:1 / 80ms attack / 800ms release.
+     12. Limiter at -0.5 dBFS.
     """
     return Pedalboard([
         NoiseGate(
@@ -136,13 +131,14 @@ def make_acestep_music_chain() -> Pedalboard:
             release_ms=100.0,
         ),
         HighpassFilter(cutoff_frequency_hz=60.0),
-        LowShelfFilter(cutoff_frequency_hz=200, gain_db=2.0),
+        LowShelfFilter(cutoff_frequency_hz=200, gain_db=2.5),         # Fletcher-Munson: bass warmth for low-volume listening
         PeakFilter(cutoff_frequency_hz=3000, gain_db=-4.5, q=1.5),    # deepened: was -3.0
         PeakFilter(cutoff_frequency_hz=4000, gain_db=-2.5, q=0.8),    # deepened: was -1.5
-        PeakFilter(cutoff_frequency_hz=6000, gain_db=-2.0, q=1.0),    # NEW: 5-7 kHz gap fill
+        PeakFilter(cutoff_frequency_hz=6000, gain_db=-2.0, q=1.0),    # 5-7 kHz gap fill
         HighShelfFilter(cutoff_frequency_hz=8000.0, gain_db=0.5),     # reduced: was +1.5
         HighShelfFilter(cutoff_frequency_hz=10000.0, gain_db=-2.5),   # deepened: was -1.0
-        LowpassFilter(cutoff_frequency_hz=16000.0),                   # NEW: ultrasonic cutoff
+        HighShelfFilter(cutoff_frequency_hz=12000.0, gain_db=1.0),    # Fletcher-Munson: treble recovery for headphone air
+        LowpassFilter(cutoff_frequency_hz=16000.0),                   # ultrasonic cutoff
         Compressor(
             threshold_db=-20.0,
             ratio=2.5,
@@ -223,11 +219,125 @@ def make_master_chain() -> Pedalboard:
     here would cascade with the voice chain's compressor, crushing transients
     and creating an unnatural envelope. The HPF catches any DC/subsonic from
     the voice+music mix, and the limiter is the final safety net.
+
+    Limiter at -1.0 dBFS (not -1.5) with 400ms release — appropriate for
+    meditation audio where transparent limiting of sustained pads is critical.
+    Faster release times (e.g. 200ms) cause audible pumping on drones.
     """
     return Pedalboard([
         HighpassFilter(cutoff_frequency_hz=30.0),
-        Limiter(threshold_db=-1.5, release_ms=200.0),
+        Limiter(threshold_db=-1.0, release_ms=400.0),
     ])
+
+
+def reduce_music_noise(
+    audio: np.ndarray,
+    sample_rate: int = 48000,
+    prop_decrease: float = 0.65,
+    n_fft: int = 2048,
+) -> np.ndarray:
+    """Stationary noise reduction for ACE-Step diffusion artifacts.
+
+    Targets the 60 Hz diffusion noise floor and broadband artifacts produced
+    by the 1D VAE.  More aggressive than the Kokoro TTS noise reduction
+    (prop_decrease=0.6) because music has a more stable noise profile.
+
+    Must be applied BEFORE the EQ chain so that artifact energy is removed
+    before the compressor amplifies quiet passages.
+    """
+    import noisereduce as nr
+
+    if audio.shape[-1] < int(sample_rate * 0.5):
+        return audio  # Too short for reliable noise profile estimation
+
+    try:
+        cleaned = nr.reduce_noise(
+            y=audio,
+            sr=sample_rate,
+            stationary=True,
+            prop_decrease=prop_decrease,
+            n_fft=n_fft,
+            freq_mask_smooth_hz=300,
+        )
+        return cleaned.astype(np.float32)
+    except Exception:
+        return audio
+
+
+def apply_tape_saturation(
+    audio: np.ndarray,
+    drive: float = 0.3,
+    bias: float = 0.15,
+) -> np.ndarray:
+    """Asymmetric soft clipping with even-order harmonic bias.
+
+    Transforms clinical AI output into warmer, more natural-sounding audio
+    by adding subtle harmonic distortion weighted toward even-order harmonics
+    (2nd, 4th — octave relationships that the ear perceives as richness).
+
+    Args:
+        audio: float32 array.
+        drive: Saturation amount (0.0–1.0). 0.3 is subtle warmth.
+        bias: DC offset bias for even-order harmonics (0.0–0.5).
+    """
+    peak_in = np.abs(audio).max()
+    if peak_in < 1e-8:
+        return audio
+
+    x = audio * (1.0 + drive)
+    saturated = np.tanh(x + bias) - np.tanh(np.float32(bias))
+
+    # Preserve original peak level
+    peak_out = np.abs(saturated).max()
+    if peak_out > 1e-8:
+        saturated = saturated * (peak_in / peak_out)
+
+    return saturated.astype(np.float32)
+
+
+def add_organic_noise_floor(
+    audio: np.ndarray,
+    sample_rate: int = 48000,
+    noise_db: float = -58.0,
+    lpf_hz: float = 8000.0,
+) -> np.ndarray:
+    """Add shaped pink noise floor for analog warmth.
+
+    AI-generated audio has an unnaturally clean noise floor that sounds
+    clinical.  Adding pink noise at -58 dB (subliminally present, consciously
+    inaudible) emulates the character of analog recording equipment.
+    Real 1/4" tape measures ~-65 dB RMS; -58 dB is slightly warmer.
+    """
+    from scipy.signal import butter, sosfilt
+
+    n_samples = audio.shape[-1]
+    rng = np.random.default_rng(42)
+
+    # Generate pink noise via cumulative sum of white noise (1/f approximation)
+    white = rng.standard_normal(n_samples).astype(np.float32)
+    pink = np.cumsum(white)
+    pink = pink - np.mean(pink)
+    peak = np.abs(pink).max()
+    if peak > 1e-6:
+        pink = pink / peak
+
+    # LPF to remove harsh high frequencies
+    sos = butter(4, lpf_hz, btype="low", fs=sample_rate, output="sos")
+    pink = sosfilt(sos, pink).astype(np.float32)
+
+    # Re-normalize after filtering
+    peak = np.abs(pink).max()
+    if peak > 1e-6:
+        pink = pink / peak
+
+    # Scale to target dB relative to audio peak
+    audio_peak = np.abs(audio).max()
+    if audio_peak < 1e-8:
+        return audio
+    noise_level = audio_peak * (10.0 ** (noise_db / 20.0))
+    pink = pink * noise_level
+
+    return (audio + pink).astype(np.float32)
 
 
 def apply_fx(

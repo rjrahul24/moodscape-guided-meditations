@@ -129,7 +129,14 @@ Upsample → mix sample rate (soxr_vhq)
 ### Shared Path (Both Engines)
 
 ```
+ACE-Step Pre-EQ (ACE-Step only — see audio_processing.md §3)
+  • Spectral repair: noisereduce (stationary, prop_decrease=0.65)
+  • Tape saturation: asymmetric soft clipping (drive=0.3, bias=0.15)
+
 Music FX Chain (engine-specific EQ — see audio_processing.md §3)
+
+ACE-Step Post-EQ (ACE-Step only)
+  • Organic noise floor: pink noise at -58 dB, LPF 8 kHz
 
 Vocal Pocket Carving (applied to music before mixing)
   • HPF 30 Hz | -3 dB @ 300 Hz | -2 dB @ 1 kHz | -4 dB @ 3 kHz | LPF 12 kHz
@@ -144,10 +151,10 @@ Mixer
 QA checks (7 metrics — see §9)
 
 Master Chain
-  • HPF 30 Hz → Limiter (-1.5 dB)
+  • HPF 30 Hz → Limiter (-1.0 dB, 400ms release)
   Applied per-chunk in export_audio() to avoid memory spikes
 
-Export: 44.1 kHz or 48 kHz / 24-bit WAV | Target: -19 LUFS integrated
+Export: 44.1 kHz or 48 kHz / 24-bit WAV | Target: -16 LUFS integrated
 ```
 
 ---

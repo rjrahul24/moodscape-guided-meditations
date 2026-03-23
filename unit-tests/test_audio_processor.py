@@ -27,12 +27,13 @@ class TestAudioProcessor(unittest.TestCase):
         self.assertIsNotNone(mac)
 
     def test_acestep_chain_has_expected_effects(self):
-        """Verify the ACE-Step chain contains all 11 expected effects."""
+        """Verify the ACE-Step chain contains all 12 expected effects."""
         chain = make_acestep_music_chain()
-        # 11 effects: NoiseGate, HPF, LowShelf, PeakFilter(3kHz), PeakFilter(4kHz),
-        #             PeakFilter(6kHz), HighShelf(8kHz), HighShelf(10kHz),
-        #             LowpassFilter(16kHz), Compressor, Limiter
-        self.assertEqual(len(chain), 11, f"Expected 11 effects, got {len(chain)}")
+        # 12 effects: NoiseGate, HPF, LowShelf(200Hz), PeakFilter(3kHz),
+        #             PeakFilter(4kHz), PeakFilter(6kHz), HighShelf(8kHz),
+        #             HighShelf(10kHz), HighShelf(12kHz), LowpassFilter(16kHz),
+        #             Compressor, Limiter
+        self.assertEqual(len(chain), 12, f"Expected 12 effects, got {len(chain)}")
 
     def test_acestep_chain_midrange_and_air_filters(self):
         """Verify 3 kHz midrange cut, 6 kHz gap fill, and 8 kHz air shelf filters."""

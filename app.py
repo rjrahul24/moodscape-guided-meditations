@@ -898,7 +898,7 @@ with gr.Blocks(
                     seed_input = gr.Number(label="Seed", value=0, precision=0)
                 with gr.Row():
                     upsample_checkbox = gr.Checkbox(
-                        label="Hi-Fi (48kHz)", value=False,
+                        label="Hi-Fi (48kHz)", value=True,
                         elem_classes="toggle-switch",
                     )
                     stems_checkbox = gr.Checkbox(
