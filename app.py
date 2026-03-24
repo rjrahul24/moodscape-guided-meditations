@@ -291,77 +291,80 @@ def generate_meditation(
     yield output_path, _render_status("Generation Complete", 1.0, detail, elapsed=elapsed)
 
 
-# CSS — Minimal Dark (Inspired by Linear / Raycast / Google Stitch)
+# CSS — The Ethereal Void (Lumina Night Design System)
 CUSTOM_CSS = """
 /* ── FONTS ────────────────────────────────────────────────── */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
 /* ── DESIGN TOKENS ────────────────────────────────────────── */
 :root {
-    --bg-primary:     #0a0a0f;
-    --bg-surface:     rgba(255,255,255,0.025);
-    --bg-elevated:    rgba(255,255,255,0.04);
-    --border-subtle:  rgba(255,255,255,0.08);
-    --border-focus:   rgba(124,58,237,0.5);
-    --accent:         #7c3aed;
-    --accent-hover:   #8b5cf6;
-    --accent-glow:    rgba(124,58,237,0.15);
-    --text-primary:   #f0f0f3;
-    --text-secondary: #a1a1aa;
-    --text-tertiary:  #71717a;
-    --text-muted:     #52525b;
-    --radius-sm:      6px;
-    --radius-md:      10px;
-    --radius-lg:      14px;
-    --radius-xl:      20px;
-    --font-sans:      'Inter', system-ui, -apple-system, sans-serif;
-    --font-mono:      'JetBrains Mono', ui-monospace, monospace;
+    --bg-primary: #131318;
+    --surface: #131318;
+    --surface-container-lowest: #0e0e13;
+    --surface-container-low: #1b1b20;
+    --surface-container-high: #2a292f;
+    --surface-variant: rgba(53,52,58,0.4); /* #35343a at 40% */
+    --surface-bright: #39383e;
+    
+    --primary: #d2bbff;
+    --primary-container: #7c3aed;
+    --primary-gradient: linear-gradient(135deg, #d2bbff 0%, #7c3aed 100%);
+    
+    --outline-variant: rgba(74,68,85,0.15); /* #4a4455 at 15% */
+    --text-display: #e4e1e9;
+    --text-primary: #e4e1e9;
+    --text-secondary: #ccc3d8; /* on_surface_variant */
+    --text-tertiary: #958da1; /* outline */
+    
+    --radius-sm: 8px;
+    --radius-md: 24px;
+    --radius-full: 9999px;
+    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 }
 
 /* ── BASE ─────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
-body { background: var(--bg-primary) !important; }
+body { background: var(--bg-primary) !important; color: var(--text-primary) !important; }
 
 .gradio-container {
     min-height: 100vh !important;
     font-family: var(--font-sans) !important;
-    background:
-        radial-gradient(ellipse at 0% 0%, rgba(124,58,237,0.07) 0%, transparent 60%),
-        var(--bg-primary) !important;
+    background: var(--bg-primary) !important;
 }
 
 /* ── HEADER ───────────────────────────────────────────────── */
 .app-header {
-    padding: 2.5rem 0.5rem 1.5rem;
+    padding: 3rem 1rem 2rem;
+    text-align: left;
 }
 
 .app-header h1 {
     font-family: var(--font-sans) !important;
-    font-size: clamp(1.8rem, 4vw, 2.4rem) !important;
+    font-size: 3.5rem !important; /* display-lg */
     font-weight: 600 !important;
-    background: linear-gradient(135deg, #ffffff 0%, #e0d4ff 50%, #c4b5fd 100%);
-    -webkit-background-clip: text !important;
-    -webkit-text-fill-color: transparent !important;
-    letter-spacing: -0.03em !important;
-    margin-bottom: 0.3rem !important;
+    color: var(--primary) !important;
+    letter-spacing: -0.02em !important;
+    margin-bottom: 0.5rem !important;
+    text-shadow: 0 0 24px rgba(210,187,255,0.4) !important;
 }
 
 .app-header p {
-    font-size: 0.9rem !important;
+    font-size: 1.0rem !important; /* body-lg */
     color: var(--text-secondary) !important;
-    font-weight: 300 !important;
-    line-height: 1.5 !important;
+    font-weight: 400 !important;
+    letter-spacing: 0.01em !important;
     margin: 0 !important;
 }
 
 /* ── CANVAS ZONE (left column) ───────────────────────────── */
 .canvas-zone {
-    background: var(--bg-surface) !important;
-    backdrop-filter: blur(12px) !important;
-    -webkit-backdrop-filter: blur(12px) !important;
-    border: 1px solid var(--border-subtle) !important;
-    border-radius: var(--radius-xl) !important;
-    padding: 1.5rem !important;
+    background: var(--surface-variant) !important;
+    backdrop-filter: blur(24px) !important;
+    -webkit-backdrop-filter: blur(24px) !important;
+    border: 1px solid var(--outline-variant) !important;
+    border-radius: var(--radius-md) !important;
+    padding: 2rem !important;
 }
 
 /* ── SETTINGS SIDEBAR (right column) ─────────────────────── */
@@ -374,56 +377,50 @@ body { background: var(--bg-primary) !important; }
 /* ── PILL RADIO BUTTONS ──────────────────────────────────── */
 .pill-radio .wrap {
     display: flex !important;
-    gap: 3px !important;
-    background: var(--bg-surface) !important;
-    border: 1px solid var(--border-subtle) !important;
-    border-radius: var(--radius-lg) !important;
-    padding: 3px !important;
+    gap: 4px !important;
+    background: var(--surface-container-lowest) !important;
+    border: 1px solid var(--outline-variant) !important;
+    border-radius: var(--radius-full) !important;
+    padding: 4px !important;
 }
 
 .pill-radio label {
     flex: 1 !important;
     text-align: center !important;
-    padding: 7px 12px !important;
-    border-radius: var(--radius-md) !important;
-    font-size: 0.8rem !important;
+    padding: 10px 16px !important;
+    border-radius: var(--radius-full) !important;
+    font-size: 0.85rem !important;
     font-weight: 500 !important;
     color: var(--text-tertiary) !important;
     cursor: pointer !important;
-    transition: all 0.2s ease !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
     border: none !important;
     background: transparent !important;
 }
 
 .pill-radio label.selected,
 .pill-radio label:has(input:checked) {
-    background: var(--accent) !important;
-    color: white !important;
-    box-shadow: 0 2px 8px var(--accent-glow) !important;
+    background: rgba(57, 56, 62, 0.2) !important; /* surface_bright at 20% */
+    color: var(--text-primary) !important;
+    box-shadow: inset 0 0 0 1px var(--outline-variant) !important;
 }
 
-.pill-radio input[type="radio"] {
-    display: none !important;
-}
+.pill-radio input[type="radio"] { display: none !important; }
 
-.pill-radio .wrap > label > span {
-    cursor: pointer !important;
-}
+.pill-radio .wrap > label > span { cursor: pointer !important; }
 
 /* ── TOGGLE SWITCHES ─────────────────────────────────────── */
 .toggle-switch input[type="checkbox"] {
     appearance: none !important;
     -webkit-appearance: none !important;
-    width: 36px !important;
-    height: 20px !important;
-    background: var(--bg-elevated) !important;
-    border: 1px solid var(--border-subtle) !important;
-    border-radius: 10px !important;
+    width: 44px !important;
+    height: 24px !important;
+    background: var(--surface-container-lowest) !important;
+    border: 1px solid var(--outline-variant) !important;
+    border-radius: var(--radius-full) !important;
     position: relative !important;
     cursor: pointer !important;
-    transition: background 0.2s ease, border-color 0.2s ease !important;
-    background-image: none !important;
-    flex-shrink: 0 !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
 }
 
 .toggle-switch input[type="checkbox"]::after {
@@ -431,154 +428,132 @@ body { background: var(--bg-primary) !important; }
     position: absolute !important;
     top: 2px !important;
     left: 2px !important;
-    width: 14px !important;
-    height: 14px !important;
-    border-radius: 50% !important;
+    width: 18px !important;
+    height: 18px !important;
+    border-radius: var(--radius-full) !important;
     background: var(--text-tertiary) !important;
-    transition: transform 0.2s ease, background 0.2s ease !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
 }
 
 .toggle-switch input[type="checkbox"]:checked {
-    background: var(--accent) !important;
-    border-color: var(--accent) !important;
-    background-image: none !important;
+    background: var(--primary-gradient) !important;
+    border-color: transparent !important;
 }
 
 .toggle-switch input[type="checkbox"]:checked::after {
-    transform: translateX(16px) !important;
-    background: white !important;
+    transform: translateX(20px) !important;
+    background: var(--bg-primary) !important;
 }
 
 /* ── ACCORDION SECTIONS ──────────────────────────────────── */
 .accordion-section {
-    border: 1px solid var(--border-subtle) !important;
-    border-radius: var(--radius-lg) !important;
-    background: var(--bg-surface) !important;
-    margin-bottom: 8px !important;
+    border: 1px solid var(--outline-variant) !important;
+    border-radius: var(--radius-md) !important;
+    background: var(--surface) !important;
+    margin-bottom: 1.4rem !important;
     overflow: hidden !important;
+    transition: background 400ms cubic-bezier(0.4, 0, 0.2, 1) !important;
 }
 
 .accordion-section > .label-wrap {
-    padding: 12px 16px !important;
+    padding: 16px 20px !important;
     font-family: var(--font-sans) !important;
-    font-weight: 500 !important;
-    font-size: 0.85rem !important;
-    color: var(--text-secondary) !important;
-    letter-spacing: 0.01em !important;
-    background: transparent !important;
-    border-bottom: none !important;
-}
-
-.accordion-section > .label-wrap:hover {
+    font-weight: 600 !important;
+    font-size: 1.1rem !important;
     color: var(--text-primary) !important;
+    background: transparent !important;
+    border: none !important;
 }
 
 .accordion-section > .content {
-    padding: 0 16px 16px !important;
+    padding: 0 20px 20px !important;
 }
 
 /* ── INPUTS & TEXTAREAS ──────────────────────────────────── */
-textarea, input[type="text"], input[type="number"] {
-    background: var(--bg-elevated) !important;
-    border: 1px solid var(--border-subtle) !important;
+textarea {
+    background: var(--surface-container-lowest) !important;
+    border: 1px solid var(--outline-variant) !important;
     border-radius: var(--radius-md) !important;
-    padding: 10px 14px !important;
+    padding: 16px 20px !important;
     color: var(--text-primary) !important;
     font-family: var(--font-sans) !important;
-    font-size: 0.875rem !important;
+    font-size: 1.05rem !important;
+    line-height: 1.7 !important;
+    transition: all 0.3s ease !important;
+}
+
+input[type="text"], input[type="number"] {
+    background: var(--surface-container-lowest) !important;
+    border: 1px solid var(--outline-variant) !important;
+    border-radius: var(--radius-sm) !important;
+    padding: 6px 12px !important;
+    color: var(--text-primary) !important;
+    font-family: var(--font-sans) !important;
+    font-size: 0.95rem !important;
+    transition: all 0.3s ease !important;
 }
 
 textarea:focus, input[type="text"]:focus, input[type="number"]:focus {
-    border-color: var(--accent) !important;
-    box-shadow: 0 0 0 2px var(--accent-glow) !important;
-    background: rgba(255,255,255,0.05) !important;
+    border-color: var(--primary-container) !important;
+    box-shadow: 0 0 12px rgba(124,58,237,0.15) !important;
+    background: var(--surface-container-low) !important;
 }
 
 /* ── DROPDOWNS ───────────────────────────────────────────── */
 .gradio-dropdown {
-    background: var(--bg-elevated) !important;
-    border: 1px solid var(--border-subtle) !important;
-    border-radius: var(--radius-md) !important;
-    padding: 2px 4px !important;
-    transition: border-color 0.2s ease !important;
+    background: var(--surface-container-lowest) !important;
+    border: 1px solid var(--outline-variant) !important;
+    border-radius: var(--radius-sm) !important;
+    transition: all 0.3s ease !important;
 }
 
 .gradio-dropdown:focus-within {
-    border-color: var(--accent) !important;
-    box-shadow: 0 0 0 2px var(--accent-glow) !important;
-}
-
-.dropdown-options {
-    background: rgba(10, 10, 15, 0.95) !important;
-    border: 1px solid var(--border-subtle) !important;
-    border-radius: var(--radius-md) !important;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5) !important;
-    margin-top: 4px !important;
-    z-index: 9999 !important;
-}
-
-.dropdown-option {
-    padding: 8px 14px !important;
-    font-family: var(--font-sans) !important;
-    font-size: 0.85rem !important;
-    color: var(--text-secondary) !important;
-    transition: background 0.15s ease !important;
-}
-
-.dropdown-option:hover {
-    background: rgba(124, 58, 237, 0.12) !important;
-    color: var(--text-primary) !important;
-}
-
-.dropdown-option.selected {
-    background: rgba(124, 58, 237, 0.2) !important;
-    color: white !important;
-    font-weight: 500 !important;
+    border-color: var(--primary-container) !important;
+    box-shadow: 0 0 12px rgba(124,58,237,0.15) !important;
 }
 
 /* ── GENERATE BUTTON ─────────────────────────────────────── */
 .primary-btn {
-    background: linear-gradient(135deg, var(--accent) 0%, #6d28d9 100%) !important;
+    background: var(--primary-gradient) !important;
     border: none !important;
-    border-radius: var(--radius-md) !important;
-    font-weight: 500 !important;
-    font-size: 0.9rem !important;
+    border-radius: var(--radius-full) !important;
+    font-weight: 600 !important;
+    font-size: 1.1rem !important;
     letter-spacing: 0.02em !important;
-    padding: 14px 24px !important;
-    color: white !important;
-    box-shadow: 0 4px 12px rgba(124,58,237,0.2) !important;
-    transition: opacity 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease !important;
+    padding: 16px 32px !important;
+    color: var(--bg-primary) !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
 }
 
 .primary-btn:hover {
-    opacity: 0.92 !important;
-    transform: translateY(-1px) !important;
-    box-shadow: 0 6px 16px rgba(124,58,237,0.3) !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 0 24px rgba(210,187,255,0.4) !important;
 }
 
 .primary-btn:active {
     transform: translateY(0) !important;
+    box-shadow: 0 0 12px rgba(210,187,255,0.2) !important;
 }
 
 /* ── AUDIO PLAYER ────────────────────────────────────────── */
 .music-player-glass {
-    background: rgba(10, 10, 15, 0.8) !important;
-    backdrop-filter: blur(16px) !important;
-    -webkit-backdrop-filter: blur(16px) !important;
-    border: 1px solid var(--border-subtle) !important;
-    border-radius: var(--radius-lg) !important;
-    padding: 12px !important;
-    margin-top: 12px !important;
+    background: var(--surface-variant) !important;
+    backdrop-filter: blur(32px) !important;
+    -webkit-backdrop-filter: blur(32px) !important;
+    border: 1px solid var(--outline-variant) !important;
+    border-radius: var(--radius-md) !important;
+    padding: 16px !important;
+    margin-top: 20px !important;
 }
 
 .music-player-glass audio {
-    opacity: 0.85 !important;
+    opacity: 0.9 !important;
     width: 100% !important;
 }
 
 /* ── SLIDERS ─────────────────────────────────────────────── */
 input[type="range"] {
-    accent-color: var(--accent) !important;
+    accent-color: var(--primary-container) !important;
 }
 
 /* ── STATUS BAR ──────────────────────────────────────────── */
@@ -591,7 +566,7 @@ input[type="range"] {
 
 .status-msg {
     font-family: var(--font-sans);
-    font-size: 0.8rem;
+    font-size: 0.85rem;
     font-weight: 400;
     color: var(--text-secondary);
 }
@@ -604,39 +579,39 @@ input[type="range"] {
 
 .status-pct {
     font-family: var(--font-mono);
-    font-size: 0.85rem;
+    font-size: 0.9rem;
     color: var(--text-primary);
     font-weight: 500;
 }
 
 .status-elapsed {
     font-family: var(--font-mono);
-    font-size: 0.75rem;
+    font-size: 0.8rem;
     color: var(--text-tertiary);
     font-weight: 400;
 }
 
 .progress-track {
     width: 100%;
-    height: 3px;
+    height: 4px;
     background: rgba(255,255,255,0.05);
-    border-radius: 1.5px;
+    border-radius: 2px;
     overflow: hidden;
     margin: 8px 0;
 }
 
 .progress-fill {
     height: 100%;
-    background: var(--accent);
-    box-shadow: 0 0 8px var(--accent-glow);
+    background: var(--primary-gradient);
+    box-shadow: 0 0 12px rgba(210,187,255,0.4);
     transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-    border-radius: 1.5px;
+    border-radius: 2px;
 }
 
 .status-detail {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    margin-top: 2px;
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+    margin-top: 4px;
     padding: 0 2px;
 }
 
@@ -649,8 +624,8 @@ input[type="range"] {
 }
 
 .status-check {
-    color: #4ade80;
-    font-size: 0.85rem;
+    color: var(--primary);
+    font-size: 0.9rem;
     font-weight: 600;
 }
 
@@ -660,24 +635,21 @@ input[type="range"] {
 
 /* ── STATUS: ERROR ────────────────────────────────────────── */
 .status-error {
-    color: #f87171 !important;
+    color: #ffb4ab !important;
 }
 
 /* ── LABELS ──────────────────────────────────────────────── */
 .block-label, .block-title {
     font-family: var(--font-sans) !important;
-    font-weight: 400 !important;
-    font-size: 0.75rem !important;
+    font-weight: 500 !important;
+    font-size: 0.75rem !important; /* label-md */
     color: var(--text-tertiary) !important;
-    text-transform: none !important;
-    letter-spacing: 0.01em !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
 }
 
-/* ── OVERFLOW FIX (for dropdowns) ────────────────────────── */
-.canvas-zone, .settings-sidebar, .accordion-section,
-.gradio-row, .gradio-container {
-    overflow: visible !important;
-}
+/* ── OVERFLOW FIX REMOVED ────────────────────────────────── */
+/* Removing overflow: visible to allow native Gradio dropdown scrolling */
 
 /* ── SECTION SPACING ─────────────────────────────────────── */
 .dropdown-container {
@@ -687,10 +659,12 @@ input[type="range"] {
 /* ── MARKDOWN INSIDE ACCORDIONS ──────────────────────────── */
 .accordion-section h4 {
     font-family: var(--font-sans) !important;
-    font-size: 0.8rem !important;
-    font-weight: 500 !important;
+    font-size: 0.85rem !important;
+    font-weight: 600 !important;
     color: var(--text-secondary) !important;
-    margin-bottom: 0.5rem !important;
+    letter-spacing: 0.05em !important;
+    text-transform: uppercase !important;
+    margin-bottom: 0.75rem !important;
 }
 """
 
@@ -704,32 +678,32 @@ theme = gr.themes.Base(
     ],
     font_mono=[gr.themes.GoogleFont("JetBrains Mono"), "ui-monospace", "monospace"],
 ).set(
-    body_background_fill="#0a0a0f",
-    body_text_color="#f0f0f3",
-    body_text_color_subdued="#a1a1aa",
-    block_background_fill="rgba(255,255,255,0.025)",
-    block_border_color="rgba(255,255,255,0.08)",
+    body_background_fill="#131318",
+    body_text_color="#e4e1e9",
+    body_text_color_subdued="#ccc3d8",
+    block_background_fill="#1b1b20",
+    block_border_color="rgba(74,68,85,0.15)",
     block_border_width="1px",
-    block_label_text_color="#71717a",
+    block_label_text_color="#958da1",
     block_label_background_fill="transparent",
-    block_title_text_weight="500",
+    block_title_text_weight="600",
     block_title_text_size="12px",
-    block_title_text_color="#71717a",
-    input_background_fill="rgba(255,255,255,0.04)",
-    input_border_color="rgba(255,255,255,0.08)",
-    input_border_color_focus="rgba(124,58,237,0.5)",
-    input_placeholder_color="#52525b",
-    button_primary_background_fill="linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)",
-    button_primary_background_fill_hover="linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)",
-    button_primary_text_color="white",
+    block_title_text_color="#958da1",
+    input_background_fill="#0e0e13",
+    input_border_color="rgba(74,68,85,0.15)",
+    input_border_color_focus="#7c3aed",
+    input_placeholder_color="#4a4455",
+    button_primary_background_fill="linear-gradient(135deg, #d2bbff 0%, #7c3aed 100%)",
+    button_primary_background_fill_hover="linear-gradient(135deg, #eaddff 0%, #d2bbff 100%)",
+    button_primary_text_color="#131318",
     button_primary_border_color="transparent",
-    button_secondary_background_fill="rgba(255,255,255,0.04)",
-    button_secondary_border_color="rgba(255,255,255,0.08)",
-    button_secondary_text_color="#a1a1aa",
+    button_secondary_background_fill="#1b1b20",
+    button_secondary_border_color="rgba(74,68,85,0.15)",
+    button_secondary_text_color="#ccc3d8",
 ).set(
-    body_background_fill_dark="#0a0a0f",
-    block_background_fill_dark="rgba(255,255,255,0.025)",
-    input_background_fill_dark="rgba(255,255,255,0.04)",
+    body_background_fill_dark="#131318",
+    block_background_fill_dark="#1b1b20",
+    input_background_fill_dark="#0e0e13",
 )
 
 # ── Build the Gradio UI ────────────────────────────────────────────────────
