@@ -68,11 +68,12 @@ app.py / scripts/generate.py
      5. stem sep         StemSeparator.remove_drums_and_vocals()            [optional]
      6. TTS upsample     audio_processor.upsample_audio() 24 kHz → 48 kHz
      7. voice FX         kokoro_tts/postprocessor :: build_voice_chain() + apply_fx()
+    7b. voice norm       mixer.normalize_loudness() → −18 LUFS pre-mix
      8. music FX         audio_processor :: make_{engine}_music_chain() + make_vocal_pocket_chain()
-     9. mix              mixer.mix() → apply_envelope_ducking() + overlay + fades
-    10. master           audio_processor :: make_master_chain()
+     9. mix              mixer.mix() → apply_multiband_ducking() + overlay + exponential fades
+    10. master           audio_processor :: make_master_chain() [HPF → bus comp → limiter@−1.5dBTP]
     11. QA              qa_monitor :: run_qa_checks()
-    12. export           mixer.export_audio() → WAV/MP3 at −19 LUFS
+    12. export           mixer.export_audio() → WAV/MP3 at −16 LUFS, −1.5 dBTP ceiling
 ```
 
 **Sequential engine loading**: Load TTS → synthesize → unload TTS → load music → generate → unload music. Never load two engines simultaneously (36 GB unified RAM constraint).
@@ -114,8 +115,8 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 | Lyria | `core/lyria/engine.py` | `LyriaEngine` | `load_model()`, `generate()`, `_run_session()` |
 | Lyria prompts | `core/lyria/prompts.py` | — | `parse_weighted_prompts()` |
 | Audio FX | `core/audio_processor.py` | — | `make_{engine}_music_chain()`, `make_vocal_pocket_chain()`, `make_master_chain()`, `upsample_audio()` |
-| Mixer | `core/mixer.py` | — | `apply_envelope_ducking()`, `overlay_tracks()`, `mix()`, `normalize_loudness()`, `export_audio()` |
-| QA monitor | `core/qa_monitor.py` | — | `run_qa_checks()`, `compute_composite_score()` |
+| Mixer | `core/mixer.py` | — | `apply_envelope_ducking()`, `apply_multiband_ducking()`, `overlay_tracks()`, `mix()`, `normalize_loudness()`, `export_audio()` |
+| QA monitor | `core/qa_monitor.py` | — | `run_qa_checks()`, `compute_composite_score()`, `check_voice_music_ratio()`, `check_ducking_smoothness()` |
 | Stem separator | `core/stem_separator.py` | `StemSeparator` | `remove_drums_and_vocals()` |
 | Session config | `core/session_config.py` | `SessionConfig` | `to_json()`, `from_json()` |
 | Text utils | `core/text_utils.py` | — | `expand_text()`, `ABBREV_MAP` |
@@ -172,7 +173,8 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 | Voice FX chain (EQ, reverb, compression) | `core/kokoro_tts/postprocessor.py :: build_voice_chain()` | `core/f5_tts/postprocessor.py` |
 | Music FX chain (per engine) | `core/audio_processor.py :: make_{engine}_music_chain()` | — |
 | Vocal pocket / intelligibility EQ | `core/audio_processor.py :: make_vocal_pocket_chain()` | — |
-| Ducking behavior | `core/mixer.py :: apply_envelope_ducking()` | `core/pipeline.py` (`duck_amount_db`) |
+| Ducking behavior (fullband) | `core/mixer.py :: apply_envelope_ducking()` | `core/pipeline.py` (`duck_amount_db`) |
+| Ducking behavior (multiband) | `core/mixer.py :: apply_multiband_ducking()` | `core/mixer.py :: mix(multiband=True)` |
 | LUFS target | `core/pipeline.py` | `core/mixer.py :: export_audio()` |
 | ACE-Step generation params | `core/acestep_engine.py` (module-level constants) | — |
 | ACE-Step reference audio (melody conditioning) | `core/pipeline.py` (`melody_audio_path` param) | `core/acestep_engine.py :: _prepare_reference_audio()` |
@@ -195,7 +197,7 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 | `make_acestep_music_chain()` | ACE-Step 48kHz | NoiseGate(−50dB) → HPF(60Hz) → LowShelf(+2.5dB@200Hz) → Peak(−2dB@3kHz) → Peak(−1.5dB@4kHz) → Peak(−2dB@6kHz) → HiShelf(+0.5dB@8kHz) → HiShelf(−2.5dB@10kHz) → HiShelf(+1dB@12kHz) → LPF(16kHz) → Compressor(2.0:1@−20dB) → Limiter(−0.5dB) |
 | `make_lyria_music_chain()` | Lyria 48kHz | HPF(60Hz) → Peak(−1.5dB@250Hz) → HiShelf(−2.5dB@9kHz) → Compressor(2:1@−18dB) → Limiter(−0.5dB) |
 | `make_vocal_pocket_chain()` | Music (all engines) | HPF(30Hz) → Peak(−3dB@300Hz) → Peak(−2dB@1kHz) → Peak(−2dB@3kHz) → LPF(12kHz) |
-| `make_master_chain()` | Final mix | HPF(30Hz) → Limiter(−1.0dB, 400ms) |
+| `make_master_chain()` | Final mix | HPF(30Hz) → Compressor(1.5:1@−22dB, 40ms/300ms) → Limiter(−1.5dB, 400ms) |
 
 All chains in `core/audio_processor.py`. IRs in `assets/impulse_responses/` (default: `warm_studio`). Full parameter tables → `docs/ARCHITECTURE.md#fx-chains`.
 
@@ -219,5 +221,5 @@ All chains in `core/audio_processor.py`. IRs in `assets/impulse_responses/` (def
 - **HeartCodec dtype**: Always fp32 — bf16 causes metallic artifacts. MLX passes `mx.float32`; MPS passes `{"codec": torch.float32}`.
 - **HeartMuLa MPS watermark**: `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7` (set in `engine.py`). Values below 0.5 cause OOM during 3B LM generation.
 - **HeartMuLa checkpoints**: Must be present before selecting HeartMuLa — see Checkpoint Locations table above.
-- **Active ducking function**: `mixer.mix()` calls `apply_envelope_ducking()` — NOT `apply_rms_ducking()`. Both exist; only the envelope version is used in production.
+- **Active ducking function**: `mixer.mix()` calls `apply_multiband_ducking()` by default (`multiband=True`). Falls back to `apply_envelope_ducking()` when `multiband=False`. `apply_rms_ducking()` exists but is not used in production.
 - **Mix sample rate**: All music engine paths use `mix_sr = 48000` (`pipeline.py:213`). The 44.1 kHz fallback is only used when no music engine is active.

@@ -233,21 +233,28 @@ def make_vocal_pocket_chain() -> Pedalboard:
 
 
 def make_master_chain() -> Pedalboard:
-    """Final mastering chain: subsonic HPF → peak limiter.
+    """Final mastering chain: subsonic HPF → gentle bus compression → peak limiter.
 
-    Intentionally minimal — voice audio already has proper dynamics control
-    from its engine-specific chain (Kokoro or F5). Adding another compressor
-    here would cascade with the voice chain's compressor, crushing transients
-    and creating an unnatural envelope. The HPF catches any DC/subsonic from
-    the voice+music mix, and the limiter is the final safety net.
+    The bus compressor provides subtle 'glue' that bonds voice and music into
+    a cohesive mix.  At 1.5:1 ratio with slow 40ms attack it lets transients
+    through and only shaves ~1-2 dB of gain reduction on sustained content —
+    well below the threshold where cascading with voice-chain compression
+    becomes audible.
 
-    Limiter at -1.0 dBFS (not -1.5) with 400ms release — appropriate for
-    meditation audio where transparent limiting of sustained pads is critical.
-    Faster release times (e.g. 200ms) cause audible pumping on drones.
+    Limiter at -1.5 dBTP with 400ms release — the extra 0.5 dB headroom vs
+    the previous -1.0 provides safety margin for lossy codec encoding
+    (AAC/MP3) without sacrificing anything, since meditation audio doesn't
+    need loud peaks.  400ms release prevents audible pumping on drones.
     """
     return Pedalboard([
         HighpassFilter(cutoff_frequency_hz=30.0),
-        Limiter(threshold_db=-1.0, release_ms=400.0),
+        Compressor(
+            threshold_db=-22.0,
+            ratio=1.5,
+            attack_ms=40.0,
+            release_ms=300.0,
+        ),
+        Limiter(threshold_db=-1.5, release_ms=400.0),
     ])
 
 

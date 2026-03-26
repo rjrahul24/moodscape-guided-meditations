@@ -551,6 +551,13 @@ class MeditationPipeline:
                         voice_activity, np.zeros(pad, dtype=bool)
                     ])
 
+                # Pre-normalize voice to -18 LUFS before mixing.
+                # This ensures a consistent voice-to-music ratio regardless of
+                # TTS engine output level.  We use -18 (not -16) because the
+                # final mix targets -16 LUFS and we need headroom for the
+                # music underneath.
+                voice_audio = normalize_loudness(voice_audio, mix_sr, target_lufs=-18.0)
+
             if not is_vocals:
                 # ── Step 8: Apply music FX ──────────────────────────────────────
                 _progress(progress_cb, 0.77, "Applying music effects...")
