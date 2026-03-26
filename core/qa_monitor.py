@@ -535,6 +535,85 @@ def compute_composite_score(
     return round(score, 4)
 
 
+def check_voice_music_ratio(
+    voice_audio: np.ndarray,
+    music_ducked: np.ndarray,
+    voice_activity: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+    min_ratio_db: float = 15.0,
+) -> dict:
+    """Verify that music is sufficiently below voice during speech sections.
+
+    The W3C accessibility standard requires background audio ≥20 dB below
+    speech (measured RMS).  For meditation we target a more practical 15 dB
+    minimum — still clearly intelligible but allowing the music to be felt.
+
+    Args:
+        voice_audio:    Aligned voice array (post-FX).
+        music_ducked:   Aligned music array after ducking.
+        voice_activity: Boolean mask where voice is active.
+        min_ratio_db:   Minimum acceptable voice-over-music ratio (dB).
+
+    Returns:
+        Dict with 'passed', 'ratio_db', and 'min_ratio_db'.
+    """
+    # Only measure during voiced sections
+    active_mask = voice_activity[:min(len(voice_activity), len(voice_audio))]
+    if not np.any(active_mask):
+        return {"passed": True, "ratio_db": float("inf"), "min_ratio_db": min_ratio_db}
+
+    n = len(active_mask)
+    voice_active = voice_audio[:n][active_mask]
+    music_active = music_ducked[:n][active_mask]
+
+    voice_rms = np.sqrt(np.mean(voice_active ** 2) + 1e-10)
+    music_rms = np.sqrt(np.mean(music_active ** 2) + 1e-10)
+
+    ratio_db = 20.0 * np.log10(voice_rms / music_rms)
+    return {
+        "passed": ratio_db >= min_ratio_db,
+        "ratio_db": round(float(ratio_db), 1),
+        "min_ratio_db": min_ratio_db,
+    }
+
+
+def check_ducking_smoothness(
+    music_ducked: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+    window_ms: float = 100.0,
+    max_rate_db_per_sec: float = 30.0,
+) -> dict:
+    """Detect pumping artifacts by checking how fast the music envelope changes.
+
+    Rapid gain changes (>30 dB/s) indicate audible pumping that breaks the
+    calm atmosphere.  Meditation ducking should never exceed ~12 dB/s.
+
+    Args:
+        max_rate_db_per_sec: Maximum acceptable envelope change rate (dB/s).
+
+    Returns:
+        Dict with 'passed', 'max_rate_db_per_sec_measured', 'threshold'.
+    """
+    window_samples = max(1, int(window_ms * sample_rate / 1000.0))
+    # Compute windowed RMS envelope of the music
+    kernel = np.ones(window_samples) / window_samples
+    rms_env = np.sqrt(np.convolve(music_ducked ** 2, kernel, mode="same") + 1e-10)
+    db_env = 20.0 * np.log10(rms_env)
+
+    # Rate of change in dB per second
+    diff = np.abs(np.diff(db_env))
+    rate_db_per_sample = diff
+    rate_db_per_sec = rate_db_per_sample * sample_rate
+
+    # Use 99th percentile to avoid outliers from transients
+    peak_rate = float(np.percentile(rate_db_per_sec, 99))
+    return {
+        "passed": peak_rate <= max_rate_db_per_sec,
+        "max_rate_db_per_sec_measured": round(peak_rate, 1),
+        "threshold": max_rate_db_per_sec,
+    }
+
+
 def run_qa_checks(
     audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,

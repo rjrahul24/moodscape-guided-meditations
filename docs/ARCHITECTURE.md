@@ -151,11 +151,14 @@ make_vocal_pocket_chain()    →  apply_audio_fx()   # carves 300Hz/1kHz/3kHz la
 ### Phase 8 — Mix
 
 `mixer.mix()` sequence:
-1. `overlay_tracks(voice, music, sr)` — `music_pre_roll_sec=4.0`, `music_post_roll_sec=8.0`, `music_volume_db=−17.0`
-2. `apply_envelope_ducking(voice, music, ...)` — active ducking function (NOT `apply_rms_ducking`):
+1. `overlay_tracks(voice, music, sr)` — `music_pre_roll_sec=8.0`, `music_post_roll_sec=15.0`, `music_volume_db=−17.0`
+2. `apply_multiband_ducking(voice, music, ...)` — default when `multiband=True`:
+   - 3-band Linkwitz-Riley crossover: low (<250 Hz, 25% duck), mid (250–4 kHz, full duck), high (>4 kHz, 50% duck)
    - `duck_amount_db` (configurable, default −12.0 in pipeline)
-   - `attack_ms=40.0`, `release_ms=800.0`, `lookahead_ms=60.0`, `window_ms=50.0`
-3. `apply_fades(audio, sr, fade_in_sec, fade_out_sec)` — linear
+   - `attack_ms=80.0`, `release_ms=1000.0`, `hold_ms=1200.0`, `lookahead_ms=60.0`, `window_ms=50.0`
+   - Hold time bridges inter-phrase gaps — prevents per-sentence pumping
+   - Falls back to `apply_envelope_ducking()` when `multiband=False`
+3. `apply_fades(audio, sr, fade_in_sec, fade_out_sec, curve="exponential")` — natural DAW-style curves
 
 `apply_rms_ducking()` also exists in `mixer.py` (vectorized offline lookahead, 75ms shift) but is NOT called by `mix()`.
 
@@ -165,22 +168,23 @@ make_vocal_pocket_chain()    →  apply_audio_fx()   # carves 300Hz/1kHz/3kHz la
 
 `make_master_chain()` applied inside `export_audio()` via 20-second chunk streaming:
 - `HighpassFilter(30 Hz)` — subsonic removal
-- `Limiter(−1.5 dBFS, 200ms)` — true-peak safety
-- True-peak clip at 0.84 linear (−1.5 dBFS) applied after chain
+- `Compressor(1.5:1 @ −22 dB, 40ms attack, 300ms release)` — gentle bus glue (~1-2 dB GR)
+- `Limiter(−1.5 dBTP, 400ms release)` — true-peak safety
+- True-peak clip at ±0.841 linear (−1.5 dBTP) applied after chain
 
 ---
 
 ### Phase 10 — QA Checks
 
-`run_qa_checks(audio, sr)` runs 11 checks (was 7 originally; added spectral smoothness, harmonic stability, onset density, dynamic range); `compute_composite_score()` used by music engines for retry/A-B selection (up to 3 attempts).
+`run_qa_checks(audio, sr)` runs 11 checks (was 7 originally; added spectral smoothness, harmonic stability, onset density, dynamic range); `compute_composite_score()` used by music engines for retry/A-B selection (up to 3 attempts). Two additional stem-level checks available: `check_voice_music_ratio()` (≥15 dB during speech) and `check_ducking_smoothness()` (≤30 dB/s envelope rate).
 
 ---
 
 ### Phase 11 — Export
 
 `export_audio(audio, sample_rate, output_format, target_sample_rate)`:
-1. Pre-compute LUFS gain scalar (target −19.0 LUFS)
-2. Stream in 20s chunks: apply master chain → resample to `target_sample_rate` → normalize → clip at 0.84 linear → write via Pedalboard `AudioFile`
+1. Pre-compute LUFS gain scalar (target −16.0 LUFS)
+2. Stream in 20s chunks: apply master chain → resample to `target_sample_rate` → normalize → clip at ±0.841 linear (−1.5 dBTP) → write via Pedalboard `AudioFile`
 3. WAV (lossless) or MP3; `target_sample_rate` = `export_sr` from `pipeline.py`
 
 ---
@@ -262,7 +266,8 @@ Applied to music after engine-specific chain to carve spectral room for voice.
 | # | Plugin | Key params |
 |---|--------|-----------|
 | 1 | HighpassFilter | cutoff=30 Hz |
-| 2 | Limiter | threshold=−1.5 dBFS, release=200ms |
+| 2 | Compressor | threshold=−22 dB, ratio=1.5:1, attack=40ms, release=300ms (gentle bus glue, ~1-2 dB GR) |
+| 3 | Limiter | threshold=−1.5 dBTP, release=400ms |
 
 ### Convolution Reverb IR Catalog (`assets/impulse_responses/`)
 

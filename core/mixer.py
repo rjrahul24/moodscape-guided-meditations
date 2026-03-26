@@ -7,6 +7,8 @@ import pyloudnorm as pyln
 import torch
 import torchaudio
 import math
+from scipy.ndimage import maximum_filter1d
+from scipy.signal import sosfiltfilt, butter
 from pedalboard import Pedalboard
 
 SAMPLE_RATE = 24000
@@ -109,12 +111,17 @@ def apply_envelope_ducking(
     sample_rate: int = SAMPLE_RATE,
     duck_amount_db: float = -10.0,
     threshold_db: float = -35.0,
-    attack_ms: float = 10.0,
-    release_ms: float = 800.0,
+    attack_ms: float = 80.0,
+    release_ms: float = 1000.0,
     lookahead_ms: float = 20.0,
     window_ms: float = 50.0,
+    hold_ms: float = 1200.0,
 ) -> np.ndarray:
     """Sidechain ducker using a smooth RMS envelope follower with asymmetric A/R.
+
+    Meditation-optimised: the hold parameter keeps music ducked across phrase
+    gaps so it only rises during extended pauses (>1-2 s), preventing the
+    per-sentence pumping that breaks a calm atmosphere.
 
     Args:
         voice_audio:    1D float32 voice array.
@@ -122,10 +129,13 @@ def apply_envelope_ducking(
         sample_rate:    Sample rate (Hz).
         duck_amount_db: Target attenuation depth (e.g. -10 dB).
         threshold_db:   Voice level (dBFS) above which ducking triggers.
-        attack_ms:      Attack time constant (ms).
-        release_ms:     Release time constant (ms).
+        attack_ms:      Attack time constant (ms). 80ms = smooth, breath-like.
+        release_ms:     Release time constant (ms). 1000ms = gentle recovery.
         lookahead_ms:   Time (ms) to shift the envelope forward.
         window_ms:      RMS analysis window (ms).
+        hold_ms:        Hold time (ms) to bridge inter-phrase gaps. Keeps music
+                        ducked for this duration after voice goes silent,
+                        preventing pumping between sentences.
 
     Returns:
         Ducked music array.
@@ -139,41 +149,198 @@ def apply_envelope_ducking(
     window_samples = int((window_ms / 1000.0) * sample_rate)
     window = np.ones(window_samples) / window_samples
     ms_env = np.convolve(voice**2, window, mode='same')
-    
+
     # 2. Convert to RMS and then dBFS (clip to avoid log of zero)
     rms_env = np.sqrt(np.maximum(ms_env, 1e-10))
     db_env = 20.0 * np.log10(rms_env)
 
-    # 3. Calculate target gain reduction in dB
+    # 3. Apply hold time — extend voice-active regions forward to bridge
+    #    inter-phrase gaps.  Uses scipy maximum_filter1d for efficiency:
+    #    each sample becomes the max of itself and the next hold_samples,
+    #    keeping the "voice active" signal high across short pauses.
+    hold_samples = int(hold_ms * sample_rate / 1000.0)
+    if hold_samples > 1:
+        # Voice is "active" where db_env > threshold_db.  We dilate this
+        # forward in time by hold_samples so that the release phase doesn't
+        # begin until hold_ms after the last voiced sample.
+        voice_active = (db_env > threshold_db).astype(np.float32)
+        voice_active_held = maximum_filter1d(voice_active, size=hold_samples,
+                                             origin=-(hold_samples // 2))
+        # Where voice_active_held is 1.0, force db_env above threshold so
+        # the proportional gain logic below still triggers full ducking.
+        db_env = np.where(voice_active_held > 0.5,
+                          np.maximum(db_env, threshold_db + 1.0),
+                          db_env)
+
+    # 4. Calculate target gain reduction in dB
     # Gain reduction only applies when db_env > threshold_db
     # Proportionally scale reduction up to duck_amount_db
-    # Simple knee logic: reduction = min(0, (threshold_db - db_env)) 
-    # then clamped to duck_amount_db
     target_reduction_db = np.clip(threshold_db - db_env, duck_amount_db, 0.0)
     target_gain_linear = 10.0 ** (target_reduction_db / 20.0)
 
-    # 4. Asymmetric Smoothing (EMA)
-    # y[n] = alpha * y[n-1] + (1 - alpha) * x[n]
+    # 5. Asymmetric Smoothing (EMA)
     attack_alpha = math.exp(-1.0 / (attack_ms * sample_rate / 1000.0))
     release_alpha = math.exp(-1.0 / (release_ms * sample_rate / 1000.0))
-    
+
     smoothed_gain = np.ones(total_samples, dtype=np.float64)
     current = 1.0
     for i in range(total_samples):
         target = target_gain_linear[i]
-        if target < current: # Attack phase (gain dropping)
+        if target < current:  # Attack phase (gain dropping)
             current = attack_alpha * current + (1.0 - attack_alpha) * target
-        else: # Release phase (gain rising)
+        else:  # Release phase (gain rising)
             current = release_alpha * current + (1.0 - release_alpha) * target
         smoothed_gain[i] = current
 
-    # 5. Lookahead shift
+    # 6. Lookahead shift
     lookahead_samples = int((lookahead_ms / 1000.0) * sample_rate)
     if lookahead_samples > 0:
         smoothed_gain = np.roll(smoothed_gain, -lookahead_samples)
         smoothed_gain[-lookahead_samples:] = 1.0
 
     return (music_audio * smoothed_gain).astype(np.float32)
+
+
+def _compute_ducking_gain(
+    voice_audio: np.ndarray,
+    total_samples: int,
+    sample_rate: int,
+    duck_amount_db: float,
+    threshold_db: float,
+    attack_ms: float,
+    release_ms: float,
+    lookahead_ms: float,
+    window_ms: float,
+    hold_ms: float,
+) -> np.ndarray:
+    """Compute the sample-rate ducking gain curve (shared by fullband and multiband).
+
+    Returns a float64 gain array of length ``total_samples`` where 1.0 means no
+    ducking and values < 1.0 represent attenuation.
+    """
+    voice = np.zeros(total_samples, dtype=np.float32)
+    v_len = min(len(voice_audio), total_samples)
+    voice[:v_len] = voice_audio[:v_len]
+
+    window_samples = int((window_ms / 1000.0) * sample_rate)
+    win = np.ones(window_samples) / window_samples
+    ms_env = np.convolve(voice ** 2, win, mode="same")
+    rms_env = np.sqrt(np.maximum(ms_env, 1e-10))
+    db_env = 20.0 * np.log10(rms_env)
+
+    hold_samples = int(hold_ms * sample_rate / 1000.0)
+    if hold_samples > 1:
+        voice_active = (db_env > threshold_db).astype(np.float32)
+        voice_active_held = maximum_filter1d(
+            voice_active, size=hold_samples, origin=-(hold_samples // 2)
+        )
+        db_env = np.where(
+            voice_active_held > 0.5,
+            np.maximum(db_env, threshold_db + 1.0),
+            db_env,
+        )
+
+    target_reduction_db = np.clip(threshold_db - db_env, duck_amount_db, 0.0)
+    target_gain_linear = 10.0 ** (target_reduction_db / 20.0)
+
+    attack_alpha = math.exp(-1.0 / (attack_ms * sample_rate / 1000.0))
+    release_alpha = math.exp(-1.0 / (release_ms * sample_rate / 1000.0))
+
+    smoothed = np.ones(total_samples, dtype=np.float64)
+    current = 1.0
+    for i in range(total_samples):
+        target = target_gain_linear[i]
+        if target < current:
+            current = attack_alpha * current + (1.0 - attack_alpha) * target
+        else:
+            current = release_alpha * current + (1.0 - release_alpha) * target
+        smoothed[i] = current
+
+    lookahead_samples = int((lookahead_ms / 1000.0) * sample_rate)
+    if lookahead_samples > 0:
+        smoothed = np.roll(smoothed, -lookahead_samples)
+        smoothed[-lookahead_samples:] = 1.0
+
+    return smoothed
+
+
+def apply_multiband_ducking(
+    voice_audio: np.ndarray,
+    music_audio: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+    duck_amount_db: float = -10.0,
+    threshold_db: float = -35.0,
+    attack_ms: float = 80.0,
+    release_ms: float = 1000.0,
+    lookahead_ms: float = 20.0,
+    window_ms: float = 50.0,
+    hold_ms: float = 1200.0,
+    low_crossover_hz: float = 250.0,
+    high_crossover_hz: float = 4000.0,
+    low_duck_ratio: float = 0.25,
+    high_duck_ratio: float = 0.50,
+) -> np.ndarray:
+    """Frequency-selective sidechain ducking preserving bass warmth and HF shimmer.
+
+    Splits music into three bands using Linkwitz-Riley (4th-order Butterworth
+    applied forward+backward) crossover filters.  Each band is ducked by a
+    different amount so that only the mid-range where voice lives (250-4000 Hz)
+    receives full ducking, while bass warmth and high-frequency shimmer (singing
+    bowls, ambient texture) are preserved.
+
+    Args:
+        low_crossover_hz:  Low/mid crossover frequency (Hz).
+        high_crossover_hz: Mid/high crossover frequency (Hz).
+        low_duck_ratio:    Fraction of duck_amount_db applied to low band.
+                           0.25 → -3 dB when main duck is -12 dB.
+        high_duck_ratio:   Fraction of duck_amount_db applied to high band.
+                           0.50 → -6 dB when main duck is -12 dB.
+        (other args):      Same as apply_envelope_ducking().
+
+    Returns:
+        Ducked music array (float32).
+    """
+    total_samples = music_audio.shape[-1]
+
+    # 1. Compute the fullband gain curve once from the voice signal
+    gain_full = _compute_ducking_gain(
+        voice_audio, total_samples, sample_rate,
+        duck_amount_db, threshold_db, attack_ms, release_ms,
+        lookahead_ms, window_ms, hold_ms,
+    )
+
+    # 2. Derive per-band gain curves by scaling the attenuation depth.
+    #    gain_full is in [duck_linear .. 1.0].  We rescale the *reduction*
+    #    portion: reduction = 1.0 - gain_full, then apply band ratios.
+    reduction = 1.0 - gain_full  # 0.0 = no duck, positive = ducked
+    gain_low = (1.0 - reduction * low_duck_ratio).astype(np.float32)
+    gain_mid = gain_full.astype(np.float32)  # full ducking
+    gain_high = (1.0 - reduction * high_duck_ratio).astype(np.float32)
+
+    # 3. Split music into 3 bands using Linkwitz-Riley crossovers.
+    #    LR4 = 2nd-order Butterworth applied twice (sosfiltfilt = forward+backward).
+    nyquist = sample_rate / 2.0
+    # Guard crossover frequencies against Nyquist
+    low_xo = min(low_crossover_hz, nyquist * 0.9)
+    high_xo = min(high_crossover_hz, nyquist * 0.9)
+
+    sos_lp_low = butter(2, low_xo / nyquist, btype="low", output="sos")
+    sos_hp_low = butter(2, low_xo / nyquist, btype="high", output="sos")
+    sos_lp_high = butter(2, high_xo / nyquist, btype="low", output="sos")
+    sos_hp_high = butter(2, high_xo / nyquist, btype="high", output="sos")
+
+    music_f32 = music_audio.astype(np.float64)
+    low_band = sosfiltfilt(sos_lp_low, music_f32).astype(np.float32)
+    high_band = sosfiltfilt(sos_hp_high, music_f32).astype(np.float32)
+    # Mid = full signal minus low and high to guarantee perfect reconstruction
+    mid_band = (music_audio - low_band - high_band).astype(np.float32)
+
+    # 4. Apply per-band ducking
+    ducked_low = low_band * gain_low
+    ducked_mid = mid_band * gain_mid
+    ducked_high = high_band * gain_high
+
+    return (ducked_low + ducked_mid + ducked_high).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -249,22 +416,60 @@ def overlay_tracks(
 # Fades
 # ---------------------------------------------------------------------------
 
+def _exponential_curve(n_samples: int, rising: bool, steepness: float = 4.0) -> np.ndarray:
+    """Generate an exponential fade curve.
+
+    For fade-in (rising=True): slow start, accelerating towards unity — feels
+    like music gently emerging.  For fade-out (rising=False): slow initial
+    descent then faster drop to silence — the natural tail of a meditation.
+
+    Uses ``(exp(k*t) - 1) / (exp(k) - 1)`` which maps [0,1] → [0,1] with
+    adjustable steepness *k*.  Matches professional DAW exponential curves.
+    """
+    t = np.linspace(0.0, 1.0, n_samples, dtype=np.float64)
+    if steepness == 0.0:
+        curve = t
+    else:
+        curve = (np.exp(steepness * t) - 1.0) / (np.exp(steepness) - 1.0)
+    if not rising:
+        curve = curve[::-1]
+    return curve.astype(np.float32)
+
+
 def apply_fades(
     audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
     fade_in_sec: float = 3.0,
     fade_out_sec: float = 5.0,
+    curve: str = "exponential",
 ) -> np.ndarray:
-    """Apply linear fade-in and fade-out to audio."""
+    """Apply fade-in and fade-out to audio.
+
+    Args:
+        curve: Fade shape — "exponential" (default, natural for meditation),
+               "linear" (legacy), or "cosine" (equal-power).
+    """
     result = audio.copy()
 
     fade_in_samples = int(fade_in_sec * sample_rate)
     if 0 < fade_in_samples < result.shape[-1]:
-        result[..., :fade_in_samples] *= np.linspace(0.0, 1.0, fade_in_samples, dtype=np.float32)
+        if curve == "exponential":
+            fade_in = _exponential_curve(fade_in_samples, rising=True)
+        elif curve == "cosine":
+            fade_in = ((1.0 - np.cos(np.linspace(0.0, np.pi, fade_in_samples))) / 2.0).astype(np.float32)
+        else:  # linear
+            fade_in = np.linspace(0.0, 1.0, fade_in_samples, dtype=np.float32)
+        result[..., :fade_in_samples] *= fade_in
 
     fade_out_samples = int(fade_out_sec * sample_rate)
     if 0 < fade_out_samples < result.shape[-1]:
-        result[..., -fade_out_samples:] *= np.linspace(1.0, 0.0, fade_out_samples, dtype=np.float32)
+        if curve == "exponential":
+            fade_out = _exponential_curve(fade_out_samples, rising=False)
+        elif curve == "cosine":
+            fade_out = ((1.0 + np.cos(np.linspace(0.0, np.pi, fade_out_samples))) / 2.0).astype(np.float32)
+        else:  # linear
+            fade_out = np.linspace(1.0, 0.0, fade_out_samples, dtype=np.float32)
+        result[..., -fade_out_samples:] *= fade_out
 
     return result
 
@@ -335,27 +540,32 @@ def mix(
     sample_rate: int = SAMPLE_RATE,
     duck_amount_db: float = -3.0,
     music_volume_db: float = -17.0,
-    music_pre_roll_sec: float = 4.0,
-    music_post_roll_sec: float = 8.0,
+    music_pre_roll_sec: float = 8.0,
+    music_post_roll_sec: float = 15.0,
     fade_in_sec: float = 3.0,
-    fade_out_sec: float = 6.0,
+    fade_out_sec: float = 8.0,
     target_lufs: float = -19.0,
     stereo_output: bool = False,
+    multiband: bool = True,
 ) -> np.ndarray:
     """Full mix pipeline: align → level → duck → overlay → fades → normalize.
 
     Args:
         duck_amount_db: Additional dB reduction during speech on top of
-            music_volume_db. -20 dB makes music nearly inaudible during
-            narration — the primary meditation requirement.
+            music_volume_db. -12 dB is the recommended default for meditation.
         music_volume_db: Baseline music level in dB (applied before ducking).
             -17.0 dB keeps the music present and audible during pauses without
-            competing with silence. During speech it drops by an additional
-            duck_amount_db → -38 dB total, nearly inaudible behind the voice.
+            competing with silence.
         music_pre_roll_sec: Music plays alone for this many seconds before
-            the voice begins (intro). Default 4.0s.
+            the voice begins (intro). Default 8.0s — gives listeners time to
+            settle, put on headphones, and close their eyes.
         music_post_roll_sec: Music plays alone for this many seconds after
-            the voice ends (outro), before the fade-out. Default 8.0s.
+            the voice ends (outro), before the fade-out. Default 15.0s.
+        fade_out_sec: Fade-out duration. Default 8.0s — longer tail for a
+            natural, calming exit.
+        multiband: If True (default), use frequency-selective ducking that
+            preserves bass warmth and high-frequency shimmer. Only the mid-range
+            (250-4000 Hz) where voice conflicts exist receives full ducking.
 
     Called after voice FX and music FX have already been applied.
     Returns mixed float32 array (mono or stereo) ready for master chain + export.
@@ -392,24 +602,30 @@ def mix(
         ], axis=-1)
     aligned_music = aligned_music[..., :target_len]
 
-    # 4. Apply envelope-follower sidechain ducking
-    # Meditation defaults:
-    # attack_ms=40.0: gradual, breath-like music fade at voice onset (10ms was
-    #   too snappy — sounded mechanical and introduced click artifacts).
-    # release_ms=800.0: music returns gently, feeling calming.
-    # lookahead_ms=60.0: 60ms pre-duck gives a smooth lead-in before first syllable.
-    # duck_amount_db: -12 dB default (configurable via duck_amount_db argument).
-
-    ducked_music = apply_envelope_ducking(
-        aligned_voice,
-        aligned_music,
+    # 4. Apply sidechain ducking
+    # Meditation-tuned parameters:
+    #   attack_ms=80:     smooth, breath-like music fade at voice onset
+    #   release_ms=1000:  music returns gently over ~1s, feeling calming
+    #   hold_ms=1200:     bridges inter-phrase gaps — prevents per-sentence pumping
+    #   lookahead_ms=60:  60ms pre-duck gives a smooth lead-in before first syllable
+    _duck_kwargs = dict(
         sample_rate=sample_rate,
         duck_amount_db=duck_amount_db,
         threshold_db=-35.0,
-        attack_ms=40.0,
-        release_ms=800.0,
+        attack_ms=80.0,
+        release_ms=1000.0,
         lookahead_ms=60.0,
+        hold_ms=1200.0,
     )
+
+    if multiband:
+        ducked_music = apply_multiband_ducking(
+            aligned_voice, aligned_music, **_duck_kwargs,
+        )
+    else:
+        ducked_music = apply_envelope_ducking(
+            aligned_voice, aligned_music, **_duck_kwargs,
+        )
 
     # 5. Stereo upmix (opt-in): Haas effect on music, center-pan voice
     if stereo_output:
@@ -420,7 +636,7 @@ def mix(
     # 6. Sum voice + ducked music
     mixed = aligned_voice + ducked_music
 
-    # 7. Apply fades
+    # 7. Apply fades (exponential curves for natural meditation feel)
     mixed = apply_fades(mixed, sample_rate, fade_in_sec, fade_out_sec)
 
     # 8. Do not normalize loudness here, as we will chunk-stream the mix through
@@ -561,8 +777,9 @@ def export_audio(
         # Apply normalization gain
         chunk = chunk * mix_lufs_gain
         
-        # Ensure true peak safety -1.0 dBFS via clipping (limiter already ran during mastering)
-        chunk = np.clip(chunk, -0.891, 0.891)  # -1.0 dBFS = 10^(-1/20) ≈ 0.891
+        # Ensure true peak safety -1.5 dBTP via clipping (limiter already ran during mastering).
+        # -1.5 dBTP provides safety margin for lossy codec encoding (AAC/MP3).
+        chunk = np.clip(chunk, -0.841, 0.841)  # -1.5 dBFS = 10^(-1.5/20) ≈ 0.841
             
         # write directly as float32. Pedalboard expects (channels, samples).
         if chunk.ndim == 1:
