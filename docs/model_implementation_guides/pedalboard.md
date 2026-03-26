@@ -1,7 +1,7 @@
 <!-- QUICK-REF ──────────────────────────────────────────────────────── -->
 **Files:** `core/audio_processor.py` · `core/mixer.py` · `core/kokoro_tts/postprocessor.py` · `core/f5_tts/postprocessor.py`
 **Key functions:** `make_heartmula_music_chain()` · `make_acestep_music_chain()` · `make_lyria_music_chain()` · `make_vocal_pocket_chain()` · `make_master_chain()` · `build_voice_chain()` · `apply_fx()`
-**Mix defaults:** `music_volume_db=−17.0` · `duck_amount_db=−21.0` · `target_lufs=−19.0` · export streamed in 20s chunks
+**Mix defaults:** `music_volume_db=−17.0` · `duck_amount_db=−12.0` · `target_lufs=−19.0` · export streamed in 20s chunks
 **Active ducking:** `mixer.mix()` calls `apply_envelope_ducking()` — NOT `apply_rms_ducking()` (which exists but is unused in production)
 **IR files:** `assets/impulse_responses/{warm_studio,wooden_hall,stone_chapel}.wav` · default: `warm_studio`
 **Tasks:**
@@ -184,10 +184,10 @@ Algorithm:
 **Key parameter values:**
 | Parameter | Value | Rationale |
 |---|---|---|
-| `duck_amount_db` | -9 dB | Firmly ducks music during narration |
-| `attack_ms` | 150ms | Slower, more natural music fade-down at voice onset |
-| `release_ms` | 2000ms | Gradual recovery matches meditation pacing |
-| `lookahead_ms` | 100ms | Pre-duck headroom before first syllable |
+| `duck_amount_db` | -12 dB | Pipeline default; combined with music_volume_db=-17 → -29 dBFS during speech |
+| `attack_ms` | 40ms | Breath-like fade at voice onset (10ms was too snappy/mechanical) |
+| `release_ms` | 800ms | Gradual recovery matches meditation pacing |
+| `lookahead_ms` | 60ms | Pre-duck headroom before first syllable |
 
 The previous RMS-based method (`apply_rms_ducking`, formerly `apply_lookahead_ducking`) is retained as a fallback for edge cases where a boolean mask is unavailable.
 

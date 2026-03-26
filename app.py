@@ -178,6 +178,8 @@ def generate_meditation(
     f5_voice_slug,
     f5_wpm,
     reverb_ir_choice,
+    quality_mode_flag,
+    stereo_output_flag,
 ):
     # Initial status
     yield None, _render_status("Initializing Pipeline", 0.0)
@@ -246,6 +248,9 @@ def generate_meditation(
                 f5_voice_slug=f5_voice_slug if tts_engine == "f5" else None,
                 f5_target_wpm=int(f5_wpm) if tts_engine == "f5" and f5_wpm > 0 else None,
                 reverb_ir=reverb_ir_choice,
+                quality_mode=bool(quality_mode_flag),
+                stereo_output=bool(stereo_output_flag),
+                melody_audio_path=reference_audio_file or None,
             )
             result_container["result"] = result
         except Exception as e:
@@ -668,6 +673,30 @@ input[type="range"] {
 }
 """
 
+DROPDOWN_FIX_JS = """
+() => {
+    // Fix 1: Toggle-close — prevent re-opening when clicking an already-open dropdown
+    document.addEventListener('mousedown', function(e) {
+        const wrapInner = e.target.closest('.wrap-inner');
+        if (!wrapInner) return;
+        const wrap = wrapInner.closest('.wrap');
+        if (!wrap) return;
+        const input = wrap.querySelector('input');
+        if (input && input === document.activeElement) {
+            e.preventDefault();   // stop click from re-focusing
+            input.blur();         // close the dropdown
+        }
+    }, true);  // capture phase
+
+    // Fix 2: Close all open dropdowns on page scroll
+    window.addEventListener('scroll', function() {
+        document.querySelectorAll('.wrap input:focus').forEach(function(input) {
+            input.blur();
+        });
+    }, { passive: true });
+}
+"""
+
 theme = gr.themes.Base(
     primary_hue="violet",
     secondary_hue="slate",
@@ -712,6 +741,7 @@ with gr.Blocks(
     title="MoodScape — Guided Meditation Generator",
     theme=theme,
     css=CUSTOM_CSS,
+    js=DROPDOWN_FIX_JS,
 ) as demo:
 
     gr.HTML("""
@@ -827,7 +857,7 @@ with gr.Blocks(
             with gr.Accordion("Mix & Effects", open=False, elem_classes="accordion-section"):
                 with gr.Row():
                     speed_slider = gr.Slider(0.70, 1.20, 1.0, step=0.01, label="Speed")
-                    duck_slider = gr.Slider(-30, -5, -20, step=1, label="Ducking (dB)")
+                    duck_slider = gr.Slider(-30, -5, -12, step=1, label="Ducking (dB)")
                 with gr.Row():
                     reverb_slider = gr.Slider(0.0, 0.5, 0.15, step=0.05, label="Reverb")
                     reverb_ir_dropdown = gr.Dropdown(
@@ -883,6 +913,15 @@ with gr.Blocks(
                     label="Clean Music (Source Separation)", value=True,
                     elem_classes="toggle-switch",
                 )
+                with gr.Row():
+                    quality_mode_checkbox = gr.Checkbox(
+                        label="High Quality (Best-of-3)", value=False,
+                        elem_classes="toggle-switch",
+                    )
+                    stereo_output_checkbox = gr.Checkbox(
+                        label="Stereo Output", value=False,
+                        elem_classes="toggle-switch",
+                    )
                 reference_audio = gr.Audio(
                     label="Style/Melody Reference",
                     type="filepath",
@@ -984,6 +1023,8 @@ with gr.Blocks(
             f5_voice_dropdown,
             f5_wpm_slider,
             reverb_ir_dropdown,
+            quality_mode_checkbox,
+            stereo_output_checkbox,
         ],
         outputs=[audio_output, status_display],
         show_progress="full",

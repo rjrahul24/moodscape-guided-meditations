@@ -44,7 +44,7 @@ class TestAudioProcessor(unittest.TestCase):
         peak_3k = [p for p in chain if isinstance(p, PeakFilter)
                    and abs(p.cutoff_frequency_hz - 3000) < 1]
         self.assertEqual(len(peak_3k), 1, "Missing PeakFilter at 3000 Hz")
-        self.assertAlmostEqual(peak_3k[0].gain_db, -4.5, places=1)
+        self.assertAlmostEqual(peak_3k[0].gain_db, -2.0, places=1)
 
         # Find the 6 kHz PeakFilter (5-7 kHz gap fill)
         peak_6k = [p for p in chain if isinstance(p, PeakFilter)

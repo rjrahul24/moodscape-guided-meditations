@@ -155,6 +155,44 @@ class TestHeartMulaEngine(unittest.TestCase):
             self.engine._generate_long_form("ambient", total, None, None)
             self.assertEqual(call_count[0], expected_n)
 
+    # ── quality_mode parameter ─────────────────────────────────────────
+
+    def test_generate_accepts_quality_mode(self):
+        """quality_mode parameter is forwarded to generation."""
+        with patch.object(
+            HeartMulaEngine, "_generate_single",
+            return_value=np.zeros(44100, dtype=np.float32),
+        ):
+            # Should not raise
+            self.engine.generate("ambient", 60.0, quality_mode=True)
+
+    # ── STFT crossfade fallback ────────────────────────────────────────
+
+    def test_crossfade_stft_produces_correct_length(self):
+        """STFT crossfade (or fallback) produces expected output length."""
+        sr = TARGET_SAMPLE_RATE
+        s1 = np.random.randn(sr * 10).astype(np.float32)
+        s2 = np.random.randn(sr * 10).astype(np.float32)
+        fade_samples = int(CROSSFADE_SEC * sr)
+        result = HeartMulaEngine._crossfade_segments([s1, s2], CROSSFADE_SEC)
+        expected_len = len(s1) + len(s2) - fade_samples
+        self.assertEqual(len(result), expected_len)
+        self.assertEqual(result.dtype, np.float32)
+
+    # ── Scheduling methods ─────────────────────────────────────────────
+
+    def test_meditation_temperature_schedule(self):
+        """Temperature schedule returns expected values at key points."""
+        self.assertAlmostEqual(HeartMulaEngine._meditation_temperature_schedule(0, 100), 0.80)
+        self.assertAlmostEqual(HeartMulaEngine._meditation_temperature_schedule(50, 100), 0.85)
+        self.assertAlmostEqual(HeartMulaEngine._meditation_temperature_schedule(90, 100), 0.65)
+
+    def test_meditation_cfg_schedule(self):
+        """CFG schedule linearly interpolates from 2.0 to 1.0."""
+        self.assertAlmostEqual(HeartMulaEngine._meditation_cfg_schedule(0, 100), 2.0)
+        self.assertAlmostEqual(HeartMulaEngine._meditation_cfg_schedule(100, 100), 1.0)
+        self.assertAlmostEqual(HeartMulaEngine._meditation_cfg_schedule(50, 100), 1.5)
+
 
 if __name__ == "__main__":
     unittest.main()

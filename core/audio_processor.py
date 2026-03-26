@@ -43,50 +43,67 @@ def make_heartmula_music_chain() -> Pedalboard:
     """FX chain tailored for HeartMuLa / HeartCodec output at 48 kHz.
 
     HeartMuLa/HeartCodec produces 48 kHz stereo output (downmixed to mono
-    in the engine).  Tuned specifically for meditation quality with the following
-    design principles:
+    in the engine).  Tuned for studio-grade meditation quality with the
+    following design principles:
 
     - Suppress codec quantization noise (HeartCodec 12.5 Hz token rate)
-    - Roll off frequency extremes to avoid headphone harshness
+    - Fletcher-Munson bass compensation for low-volume listening (~50-60 dBSPL)
     - Clarity cuts in low-mid and upper-mid (cuts are more transparent than boosts)
-    - Add grounding warmth via low shelf (drone-heavy output benefits from sub-bass)
+    - Add grounding warmth via dual low shelves (drone-heavy output benefits)
+    - LPF at 14 kHz — HeartCodec's 12.5 Hz frame rate produces limited useful
+      content above 8 kHz; gentle LPF removes HF codec artifacts
     - Slow compressor dynamics for a meditative, non-pumping envelope
 
     Chain:
-      1. NoiseGate (-55 dB, 2:1) — suppress codec quantization noise in
-         quiet passages.  Lowered from -52 dB: higher CFG (5.0) produces more
-         consistent amplitude, so a lower threshold preserves quiet ambient
-         textures that the more focused model generates.
-      2. HighpassFilter at 60 Hz — removes low-frequency codec noise
-         (12.5 Hz token rate introduces rumble up to ~60 Hz).
-      3. LowShelfFilter at 100 Hz (+1.5 dB) — grounding warmth for drone-
-         heavy content.  The concise prompt system (Eight Pillars) produces
-         more resonant, drone-oriented output that benefits from sub-bass
-         presence.  Placed after HPF to avoid boosting rumble.
-      4. PeakFilter at 220 Hz (-1.0 dB, Q=0.7) — clarity cut; removes
-         low-mid mud buildup common in HeartCodec's harmonic output.
-      5. PeakFilter at 4000 Hz (-2.0 dB, Q=0.6) — tame LM upper-mid
-         brightness; keeps music behind narration without killing air.
-         Wider Q (was 0.8) for a gentler, more transparent cut — source
-         is cleaner from the improved prompt system.
-      6. HighShelfFilter at 9500 Hz (-2.0 dB) — warmer HF rolloff for
+      1. NoiseGate (-52 dB, 2:1) — suppress codec quantization noise.
+         With lower codec_guidance_scale (1.25), output is smoother and
+         cleaner, so the gate threshold can be higher than -55 dB.
+      2. HighpassFilter at 60 Hz — removes low-frequency codec noise.
+      3. LowShelfFilter at 100 Hz (+1.5 dB) — grounding warmth for
+         drone-heavy content.
+      4. LowShelfFilter at 150 Hz (+2.0 dB) — Fletcher-Munson bass
+         compensation.  At 50-60 dBSPL (typical meditation listening),
+         ISO 226 contours show bass perception drops ~20 dB relative to
+         midrange.  This shelf restores perceived low-end warmth.
+      5. PeakFilter at 220 Hz (-1.0 dB, Q=0.7) — clarity cut; removes
+         low-mid mud from HeartCodec harmonic output.
+      6. PeakFilter at 4000 Hz (-2.0 dB, Q=0.5) — tame upper-mid
+         brightness; transparent presence notch.  Wide Q (0.5) for a
+         gentle, unhearable cut that keeps music behind narration.
+      7. HighShelfFilter at 9500 Hz (-2.0 dB) — warmer HF rolloff for
          headphone listening during meditation.
-      7. Compressor (-20 dB, 2:1, 100ms attack, 900ms release) — slower,
-         more meditative dynamics; prevents pumping on sustained pads.
-      8. Limiter at -0.5 dBFS.
+      8. LowpassFilter at 14000 Hz — remove HF codec artifacts above the
+         useful spectral range for ambient music.
+      9. Compressor (-20 dB, 2:1, 100ms attack, 900ms release) — slow,
+         meditative dynamics; prevents pumping on sustained pads.
+     10. Convolution reverb (stone_chapel IR, 15% wet) — meditation
+          spaciousness.  Cathedral/hall IRs add immersive depth that
+          masks subtle codec artifacts.
+     11. Compressor (-20 dB, 2:1, 100ms attack, 900ms release) — slow,
+          meditative dynamics; prevents pumping on sustained pads.
+     12. Limiter at -0.5 dBFS.
     """
-    return Pedalboard([
+    # Build chain with convolution reverb if IR file exists
+    ir_path = IR_CATALOG.get("stone_chapel", {}).get("path", "")
+    plugins = [
         NoiseGate(
-            threshold_db=-55.0,
+            threshold_db=-52.0,
             ratio=2.0,
             attack_ms=5.0,
             release_ms=200.0,
         ),
         HighpassFilter(cutoff_frequency_hz=60.0),
         LowShelfFilter(cutoff_frequency_hz=100.0, gain_db=1.5),
+        LowShelfFilter(cutoff_frequency_hz=150.0, gain_db=2.0),
         PeakFilter(cutoff_frequency_hz=220, gain_db=-1.0, q=0.7),
-        PeakFilter(cutoff_frequency_hz=4000, gain_db=-2.0, q=0.6),
+        PeakFilter(cutoff_frequency_hz=4000, gain_db=-2.0, q=0.5),
         HighShelfFilter(cutoff_frequency_hz=9500.0, gain_db=-2.0),
+        LowpassFilter(cutoff_frequency_hz=14000.0),
+    ]
+    # Add convolution reverb for meditation spaciousness (if IR available)
+    if os.path.isfile(ir_path):
+        plugins.append(Convolution(ir_path, mix=0.15))
+    plugins.extend([
         Compressor(
             threshold_db=-20.0,
             ratio=2.0,
@@ -95,6 +112,7 @@ def make_heartmula_music_chain() -> Pedalboard:
         ),
         Limiter(threshold_db=-0.5),
     ])
+    return Pedalboard(plugins)
 
 
 def make_acestep_music_chain() -> Pedalboard:
@@ -109,10 +127,10 @@ def make_acestep_music_chain() -> Pedalboard:
       2. Sub-bass HPF at 60 Hz — removes diffusion noise rumble (30–60 Hz band).
       3. Low-shelf warmth at 200 Hz (+2.5 dB) — Fletcher-Munson bass compensation
          for perceived warmth at meditation volumes (~50–60 dBA SPL).
-      4. Midrange cut at 3 kHz (-4.5 dB, Q=1.5) — surgical cut targeting the
-         primary AI diffusion artifact zone.
-      5. Upper-mid cut at 4 kHz (-2.5 dB, Q=0.8) — removes upper-mid diffusion
-         artifacts in the 3–5 kHz band.
+      4. Midrange cut at 3 kHz (-2.0 dB, Q=1.5) — presence cut targeting
+         diffusion artifacts; the vocal pocket chain adds -2 dB more = -4 dB
+         combined, which is sufficient without hollowing out the music.
+      5. Upper-mid cut at 4 kHz (-1.5 dB, Q=0.8) — gentle upper-mid taming.
       6. Gap fill at 6 kHz (-2.0 dB, Q=1.0) — addresses the 5–7 kHz "digital
          edge" zone in ACE-Step output.
       7. Air shelf at 8 kHz (+0.5 dB) — retains gentle air.
@@ -120,7 +138,7 @@ def make_acestep_music_chain() -> Pedalboard:
       9. Treble recovery at 12 kHz (+1.0 dB) — Fletcher-Munson compensation for
          perceived treble loss at quiet listening levels; restores headphone "air".
      10. Ultrasonic LPF at 16 kHz — hard rolloff for diffusion noise.
-     11. Glue compressor — -20 dB / 2.5:1 / 80ms attack / 800ms release.
+     11. Glue compressor — -20 dB / 2.0:1 / 80ms attack / 800ms release.
      12. Limiter at -0.5 dBFS.
     """
     return Pedalboard([
@@ -132,8 +150,8 @@ def make_acestep_music_chain() -> Pedalboard:
         ),
         HighpassFilter(cutoff_frequency_hz=60.0),
         LowShelfFilter(cutoff_frequency_hz=200, gain_db=2.5),         # Fletcher-Munson: bass warmth for low-volume listening
-        PeakFilter(cutoff_frequency_hz=3000, gain_db=-4.5, q=1.5),    # deepened: was -3.0
-        PeakFilter(cutoff_frequency_hz=4000, gain_db=-2.5, q=0.8),    # deepened: was -1.5
+        PeakFilter(cutoff_frequency_hz=3000, gain_db=-2.0, q=1.5),    # presence cut; vocal pocket adds further -2 dB for combined -4 dB total
+        PeakFilter(cutoff_frequency_hz=4000, gain_db=-1.5, q=0.8),    # upper-mid cut
         PeakFilter(cutoff_frequency_hz=6000, gain_db=-2.0, q=1.0),    # 5-7 kHz gap fill
         HighShelfFilter(cutoff_frequency_hz=8000.0, gain_db=0.5),     # reduced: was +1.5
         HighShelfFilter(cutoff_frequency_hz=10000.0, gain_db=-2.5),   # deepened: was -1.0
@@ -141,7 +159,7 @@ def make_acestep_music_chain() -> Pedalboard:
         LowpassFilter(cutoff_frequency_hz=16000.0),                   # ultrasonic cutoff
         Compressor(
             threshold_db=-20.0,
-            ratio=2.5,
+            ratio=2.0,
             attack_ms=80.0,
             release_ms=800.0,
         ),
@@ -199,14 +217,17 @@ def make_vocal_pocket_chain() -> Pedalboard:
       1. HighpassFilter at 30 Hz: Remove sub-bass rumble.
       2. 300 Hz Peak (-3 dB, Q=0.8): Clear low-mid mud buildup.
       3. 1000 Hz Peak (-2 dB, Q=0.7): Open space for vowel fundamentals.
-      4. 3000 Hz Peak (-4 dB, Q=1.0): Presence pocket for sibilance/consonants.
+      4. 3000 Hz Peak (-2 dB, Q=1.0): Presence pocket for sibilance/consonants.
+         Combined with -2 dB already cut in the ACE-Step / HeartMuLa music chain,
+         total attenuation at 3 kHz is -4 dB — enough for intelligibility without
+         hollowing out the music.
       5. LowpassFilter at 12000 Hz: Tame harsh highs and digital artifacts.
     """
     return Pedalboard([
         HighpassFilter(cutoff_frequency_hz=30),
         PeakFilter(cutoff_frequency_hz=300, gain_db=-3, q=0.8),
         PeakFilter(cutoff_frequency_hz=1000, gain_db=-2, q=0.7),
-        PeakFilter(cutoff_frequency_hz=3000, gain_db=-4, q=1.0),
+        PeakFilter(cutoff_frequency_hz=3000, gain_db=-2, q=1.0),
         LowpassFilter(cutoff_frequency_hz=12000),
     ])
 
@@ -236,11 +257,11 @@ def reduce_music_noise(
     prop_decrease: float = 0.65,
     n_fft: int = 2048,
 ) -> np.ndarray:
-    """Stationary noise reduction for ACE-Step diffusion artifacts.
+    """Stationary noise reduction for music engine artifacts.
 
-    Targets the 60 Hz diffusion noise floor and broadband artifacts produced
-    by the 1D VAE.  More aggressive than the Kokoro TTS noise reduction
-    (prop_decrease=0.6) because music has a more stable noise profile.
+    ACE-Step: targets 60 Hz diffusion noise floor and broadband VAE artifacts
+    (prop_decrease=0.65).  HeartMuLa: gentler (prop_decrease=0.45) — HeartCodec
+    output is cleaner but has subtle quantization noise from the 12.5 Hz RVQ.
 
     Must be applied BEFORE the EQ chain so that artifact energy is removed
     before the compressor amplifies quiet passages.

@@ -340,6 +340,7 @@ def mix(
     fade_in_sec: float = 3.0,
     fade_out_sec: float = 6.0,
     target_lufs: float = -19.0,
+    stereo_output: bool = False,
 ) -> np.ndarray:
     """Full mix pipeline: align → level → duck → overlay → fades → normalize.
 
@@ -357,7 +358,7 @@ def mix(
             the voice ends (outro), before the fade-out. Default 8.0s.
 
     Called after voice FX and music FX have already been applied.
-    Returns mixed mono float32 array ready for master chain + export.
+    Returns mixed float32 array (mono or stereo) ready for master chain + export.
     """
     # 1. Align voice and music with pre-roll and post-roll
     aligned_voice, aligned_music = overlay_tracks(
@@ -392,30 +393,37 @@ def mix(
     aligned_music = aligned_music[..., :target_len]
 
     # 4. Apply envelope-follower sidechain ducking
-    # Professional meditation defaults:
-    # attack_ms=10.0: music drops promptly when voice starts.
+    # Meditation defaults:
+    # attack_ms=40.0: gradual, breath-like music fade at voice onset (10ms was
+    #   too snappy — sounded mechanical and introduced click artifacts).
     # release_ms=800.0: music returns gently, feeling calming.
-    # lookahead_ms=25.0: music pre-ducks before voice begins.
-    # duck_amount_db: -10 dB (configurable via duck_amount_db argument).
-    
+    # lookahead_ms=60.0: 60ms pre-duck gives a smooth lead-in before first syllable.
+    # duck_amount_db: -12 dB default (configurable via duck_amount_db argument).
+
     ducked_music = apply_envelope_ducking(
         aligned_voice,
         aligned_music,
         sample_rate=sample_rate,
         duck_amount_db=duck_amount_db,
         threshold_db=-35.0,
-        attack_ms=10.0,
+        attack_ms=40.0,
         release_ms=800.0,
-        lookahead_ms=25.0,
+        lookahead_ms=60.0,
     )
 
-    # 5. Sum voice + ducked music
+    # 5. Stereo upmix (opt-in): Haas effect on music, center-pan voice
+    if stereo_output:
+        from core.stereo_upmix import haas_stereo, center_pan_voice
+        ducked_music = haas_stereo(ducked_music, sample_rate)       # (2, N)
+        aligned_voice = center_pan_voice(aligned_voice)             # (2, N)
+
+    # 6. Sum voice + ducked music
     mixed = aligned_voice + ducked_music
 
-    # 6. Apply fades
+    # 7. Apply fades
     mixed = apply_fades(mixed, sample_rate, fade_in_sec, fade_out_sec)
 
-    # 7. Do not normalize loudness here, as we will chunk-stream the mix through 
+    # 8. Do not normalize loudness here, as we will chunk-stream the mix through
     # mastering EQ and normalizing logic in export_audio to save heap memory.
 
     return mixed.astype(np.float32)

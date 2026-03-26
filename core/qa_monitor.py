@@ -246,6 +246,195 @@ def check_spectral_flatness(
     }
 
 
+def check_spectral_smoothness(
+    audio: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+    max_centroid_variance: float = 50.0,
+) -> dict:
+    """Check timbral consistency via spectral centroid variance.
+
+    For ambient meditation music, the spectral centroid should evolve slowly.
+    A low variance indicates smooth, stable timbre — desirable for drones and
+    pads. High variance suggests jumpy, unpredictable timbral shifts.
+
+    Args:
+        max_centroid_variance: Upper bound for normalized centroid std-dev.
+    """
+    import librosa
+
+    mono = audio[0] if audio.ndim == 2 else audio
+    centroid = librosa.feature.spectral_centroid(
+        y=mono.astype(np.float32), sr=sample_rate,
+    )
+    centroid_std = float(np.std(centroid))
+    centroid_mean = float(np.mean(centroid))
+    # Normalize: coefficient of variation (std/mean) scaled to intuitive range
+    norm_variance = (centroid_std / max(centroid_mean, 1.0)) * 100.0
+    passed = norm_variance <= max_centroid_variance
+    return {
+        "centroid_variance": round(norm_variance, 2),
+        "max_centroid_variance": max_centroid_variance,
+        "passed": passed,
+    }
+
+
+def check_harmonic_stability(
+    audio: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+    min_autocorrelation: float = 0.85,
+) -> dict:
+    """Check tonal stability via chroma autocorrelation.
+
+    Computes chroma features and measures the average lag-1 autocorrelation
+    across chroma bins. High autocorrelation means the harmonic content is
+    consistent frame-to-frame — a hallmark of well-generated ambient music.
+    """
+    import librosa
+
+    mono = audio[0] if audio.ndim == 2 else audio
+    chroma = librosa.feature.chroma_stft(
+        y=mono.astype(np.float32), sr=sample_rate,
+    )
+    if chroma.shape[1] < 2:
+        return {"harmonic_autocorr": 1.0, "min_autocorrelation": min_autocorrelation, "passed": True}
+
+    # Lag-1 autocorrelation per chroma bin, averaged
+    autocorrs = []
+    for row in chroma:
+        if np.std(row) < 1e-8:
+            autocorrs.append(1.0)
+            continue
+        corr = float(np.corrcoef(row[:-1], row[1:])[0, 1])
+        if np.isfinite(corr):
+            autocorrs.append(corr)
+    avg_autocorr = float(np.mean(autocorrs)) if autocorrs else 0.0
+    passed = avg_autocorr >= min_autocorrelation
+    return {
+        "harmonic_autocorr": round(avg_autocorr, 4),
+        "min_autocorrelation": min_autocorrelation,
+        "passed": passed,
+    }
+
+
+def check_onset_density(
+    audio: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+    max_onsets_per_sec: float = 0.5,
+) -> dict:
+    """Check that onset density is low (ambient, not rhythmic).
+
+    Counts detected onsets per second. Meditation music should have very few
+    transient events — a high onset density suggests unwanted percussion or
+    rhythmic elements leaked through generation.
+    """
+    import librosa
+
+    mono = audio[0] if audio.ndim == 2 else audio
+    duration = len(mono) / sample_rate
+    if duration < 1.0:
+        return {"onsets_per_sec": 0.0, "max_onsets_per_sec": max_onsets_per_sec, "passed": True}
+
+    onsets = librosa.onset.onset_detect(
+        y=mono.astype(np.float32), sr=sample_rate, units="time",
+    )
+    density = len(onsets) / duration
+    passed = density <= max_onsets_per_sec
+    return {
+        "onsets_per_sec": round(density, 3),
+        "max_onsets_per_sec": max_onsets_per_sec,
+        "passed": passed,
+    }
+
+
+def check_dynamic_range_consistency(
+    audio: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+    max_rms_std: float = 0.01,
+    window_sec: float = 1.0,
+) -> dict:
+    """Check that dynamic range is consistent (low RMS variance).
+
+    Meditation music should maintain a steady level without sudden volume
+    jumps. Measures the standard deviation of per-window RMS values.
+    """
+    mono = audio[0] if audio.ndim == 2 else audio
+    window_samples = int(window_sec * sample_rate)
+    if len(mono) < window_samples:
+        return {"rms_std": 0.0, "max_rms_std": max_rms_std, "passed": True}
+
+    n_windows = len(mono) // window_samples
+    rms_values = np.array([
+        np.sqrt(np.mean(mono[i * window_samples:(i + 1) * window_samples] ** 2))
+        for i in range(n_windows)
+    ])
+    rms_std = float(np.std(rms_values))
+    passed = rms_std <= max_rms_std
+    return {
+        "rms_std": round(rms_std, 5),
+        "max_rms_std": max_rms_std,
+        "passed": passed,
+    }
+
+
+def check_crossfade_quality(
+    segments: list[np.ndarray],
+    overlap_samples: int,
+    sample_rate: int = SAMPLE_RATE,
+    min_mel_similarity: float = 0.85,
+) -> list[dict]:
+    """Check spectral continuity at segment boundaries.
+
+    Compares mel spectrograms and chroma features at the overlap region
+    between adjacent segments. Low similarity indicates a poor crossfade
+    that may produce audible discontinuities.
+
+    Args:
+        segments: List of audio segment arrays.
+        overlap_samples: Number of overlapping samples between segments.
+        min_mel_similarity: Minimum cosine similarity threshold.
+
+    Returns:
+        List of boundary quality dicts (one per boundary).
+    """
+    import librosa
+
+    results = []
+    for i in range(len(segments) - 1):
+        seg_a_tail = segments[i][-overlap_samples:]
+        seg_b_head = segments[i + 1][:overlap_samples]
+
+        if len(seg_a_tail) < 1024 or len(seg_b_head) < 1024:
+            results.append({"boundary": i, "mel_similarity": 1.0, "passed": True})
+            continue
+
+        # Mel spectrogram comparison
+        mel_a = librosa.feature.melspectrogram(
+            y=seg_a_tail.astype(np.float32), sr=sample_rate, n_mels=64,
+        )
+        mel_b = librosa.feature.melspectrogram(
+            y=seg_b_head.astype(np.float32), sr=sample_rate, n_mels=64,
+        )
+
+        # Mean mel vector per segment boundary
+        vec_a = mel_a.mean(axis=1)
+        vec_b = mel_b.mean(axis=1)
+
+        # Cosine similarity
+        dot = float(np.dot(vec_a, vec_b))
+        norm_a = float(np.linalg.norm(vec_a))
+        norm_b = float(np.linalg.norm(vec_b))
+        similarity = dot / max(norm_a * norm_b, 1e-8)
+
+        passed = similarity >= min_mel_similarity
+        results.append({
+            "boundary": i,
+            "mel_similarity": round(similarity, 4),
+            "passed": passed,
+        })
+
+    return results
+
+
 def compute_composite_score(
     audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
@@ -253,7 +442,8 @@ def compute_composite_score(
     """Compute a composite quality score (higher is better) for A/B selection.
 
     Combines sub-scores from spectral balance, rolloff, onset strength,
-    clipping, LUFS proximity, and spectral flatness (noise detection).
+    clipping, LUFS proximity, spectral flatness, and ambient-specific metrics
+    (spectral smoothness, harmonic stability, onset density, dynamic range).
     Returns a float in approximately [0, 1].
 
     Used by music engines to compare regeneration candidates and pick the
@@ -261,55 +451,86 @@ def compute_composite_score(
     """
     score = 0.0
 
-    # Spectral warmth dominance (0.20)
+    # Spectral warmth dominance (0.12)
     bal = check_spectral_balance(audio, sample_rate)
     total_energy = bal["warmth_energy"] + bal["presence_energy"]
     if total_energy > 0:
         warmth_ratio = bal["warmth_energy"] / total_energy
-        score += 0.20 * min(warmth_ratio / 0.6, 1.0)  # 60%+ warmth → full marks
+        score += 0.12 * min(warmth_ratio / 0.6, 1.0)
     else:
-        score += 0.10  # neutral if silent
+        score += 0.06
 
-    # Spectral rolloff within range (0.20)
+    # Spectral rolloff within range (0.12)
     rolloff = check_spectral_rolloff(audio, sample_rate)
     if rolloff["median_rolloff_hz"] <= rolloff["max_rolloff_hz"]:
-        score += 0.20
+        score += 0.12
     else:
-        # Partial credit — linear decay up to 2x the threshold
         overshoot = rolloff["median_rolloff_hz"] / rolloff["max_rolloff_hz"]
-        score += 0.20 * max(0.0, 1.0 - (overshoot - 1.0))
+        score += 0.12 * max(0.0, 1.0 - (overshoot - 1.0))
 
-    # Onset smoothness (0.15)
+    # Onset smoothness (0.10)
     onset = check_onset_strength(audio, sample_rate)
     if onset["peak_onset_ratio"] < onset["threshold"]:
-        score += 0.15
+        score += 0.10
     else:
         ratio = onset["peak_onset_ratio"] / onset["threshold"]
-        score += 0.15 * max(0.0, 1.0 - (ratio - 1.0) / 2.0)
+        score += 0.10 * max(0.0, 1.0 - (ratio - 1.0) / 2.0)
 
-    # Clipping-free (0.20)
+    # Clipping-free (0.15)
     clip = check_clipping(audio)
     if clip["passed"]:
-        score += 0.20
+        score += 0.15
     else:
-        score += 0.20 * max(0.0, 1.0 - clip["clipped_ratio"] * 1000)
+        score += 0.15 * max(0.0, 1.0 - clip["clipped_ratio"] * 1000)
 
-    # LUFS proximity to -16 target (0.10)
+    # LUFS proximity to -16 target (0.06)
     lufs = check_lufs(audio, sample_rate)
     if lufs["lufs"] is not None:
         deviation = abs(lufs["lufs"] - lufs["target"])
-        score += 0.10 * max(0.0, 1.0 - deviation / 10.0)
-    else:
-        score += 0.0
+        score += 0.06 * max(0.0, 1.0 - deviation / 10.0)
 
-    # Spectral flatness — noise detection in 4–12 kHz band (0.15)
+    # Spectral flatness — noise detection in 4–12 kHz band (0.10)
     flatness = check_spectral_flatness(audio, sample_rate)
     if flatness["passed"]:
-        score += 0.15
+        score += 0.10
     else:
-        # Linear penalty: flatness 0.3 → full marks, flatness 1.0 → zero
         overshoot = flatness["spectral_flatness"] / flatness["max_flatness"]
-        score += 0.15 * max(0.0, 1.0 - (overshoot - 1.0) / 2.33)
+        score += 0.10 * max(0.0, 1.0 - (overshoot - 1.0) / 2.33)
+
+    # ── Ambient-specific metrics (0.35 total) ──────────────────────────────
+
+    # Spectral smoothness — timbral consistency (0.10)
+    smoothness = check_spectral_smoothness(audio, sample_rate)
+    if smoothness["passed"]:
+        score += 0.10
+    else:
+        overshoot = smoothness["centroid_variance"] / smoothness["max_centroid_variance"]
+        score += 0.10 * max(0.0, 1.0 - (overshoot - 1.0))
+
+    # Harmonic stability — tonal consistency (0.10)
+    harmony = check_harmonic_stability(audio, sample_rate)
+    autocorr = harmony["harmonic_autocorr"]
+    min_ac = harmony["min_autocorrelation"]
+    if autocorr >= min_ac:
+        score += 0.10
+    else:
+        score += 0.10 * max(0.0, autocorr / min_ac)
+
+    # Onset density — low rhythmic content (0.08)
+    density = check_onset_density(audio, sample_rate)
+    if density["passed"]:
+        score += 0.08
+    else:
+        overshoot = density["onsets_per_sec"] / density["max_onsets_per_sec"]
+        score += 0.08 * max(0.0, 1.0 - (overshoot - 1.0) / 2.0)
+
+    # Dynamic range consistency (0.07)
+    dyn = check_dynamic_range_consistency(audio, sample_rate)
+    if dyn["passed"]:
+        score += 0.07
+    else:
+        overshoot = dyn["rms_std"] / dyn["max_rms_std"]
+        score += 0.07 * max(0.0, 1.0 - (overshoot - 1.0) / 3.0)
 
     return round(score, 4)
 
@@ -332,6 +553,10 @@ def run_qa_checks(
         "spectral_rolloff": check_spectral_rolloff(audio, sample_rate),
         "onset_strength": check_onset_strength(audio, sample_rate),
         "spectral_flatness": check_spectral_flatness(audio, sample_rate),
+        "spectral_smoothness": check_spectral_smoothness(audio, sample_rate),
+        "harmonic_stability": check_harmonic_stability(audio, sample_rate),
+        "onset_density": check_onset_density(audio, sample_rate),
+        "dynamic_range": check_dynamic_range_consistency(audio, sample_rate),
     }
 
     if log_results:
@@ -341,6 +566,10 @@ def run_qa_checks(
         logger.info("QA — Spectral flatness: %s", results["spectral_flatness"])
         logger.info("QA — Onset strength: %s", results["onset_strength"])
         logger.info("QA — Silence ratio: %s", results["silence_ratio"])
+        logger.info("QA — Spectral smoothness: %s", results["spectral_smoothness"])
+        logger.info("QA — Harmonic stability: %s", results["harmonic_stability"])
+        logger.info("QA — Onset density: %s", results["onset_density"])
+        logger.info("QA — Dynamic range: %s", results["dynamic_range"])
         if results["silence"]:
             logger.warning("QA — Long silences detected: %s", results["silence"])
         if not results["clipping"]["passed"]:
@@ -356,5 +585,17 @@ def run_qa_checks(
         if not results["spectral_flatness"]["passed"]:
             logger.warning("QA — High spectral flatness (%.3f) in 4–12 kHz — possible diffusion noise/static",
                            results["spectral_flatness"]["spectral_flatness"])
+        if not results["spectral_smoothness"]["passed"]:
+            logger.warning("QA — High centroid variance (%.1f) — timbral instability",
+                           results["spectral_smoothness"]["centroid_variance"])
+        if not results["harmonic_stability"]["passed"]:
+            logger.warning("QA — Low harmonic autocorrelation (%.3f) — tonal instability",
+                           results["harmonic_stability"]["harmonic_autocorr"])
+        if not results["onset_density"]["passed"]:
+            logger.warning("QA — High onset density (%.2f/sec) — possible unwanted percussion",
+                           results["onset_density"]["onsets_per_sec"])
+        if not results["dynamic_range"]["passed"]:
+            logger.warning("QA — High RMS variance (%.4f) — inconsistent dynamics",
+                           results["dynamic_range"]["rms_std"])
 
     return results

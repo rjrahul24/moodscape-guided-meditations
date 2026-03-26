@@ -5,6 +5,7 @@
 **Auto-prepended:** `ambient, meditation, calm, peaceful, warm, spacious, soft dynamics, gentle, soothing, high fidelity, studio quality, clean production`
 **Auto-appended:** `no vocals, instrumental`
 **Story mode:** provide comma-separated `music_prompt_stages` in UI for multi-arc meditations
+**Reference audio:** `pipeline.generate(melody_audio_path=...)` → `AceStepEngine.generate(melody_audio=..., melody_sample_rate=...)` → `GenerationParams.reference_audio`; WAV/FLAC, 30–60s, instrument-only
 **See also:** `docs/model_implementation_guides/ace-step.md` · `CLAUDE.md#task-routing-guide`
 <!-- ────────────────────────────────────────────────────────────────── -->
 
@@ -139,9 +140,10 @@ HighpassFilter(30 Hz) → Compressor(-24 dB, 1.5:1, 30ms/300ms) → Gain(+1 dB) 
 **What this means for prompts:**
 - The **60 Hz highpass** removes sub-bass rumble — you do not need to avoid sub-bass in your prompt; the FX chain handles it.
 - The **+2.0 dB low-shelf at 200 Hz** already adds warmth to all ACE-Step output. You can freely include `warm` in your prompt and the effect will compound positively.
-- The **-1.5 dB cut at 4 kHz** creates a spectral pocket for narration. Prompts emphasizing upper-mid presence instruments (bright piano, metallic overtones) will be attenuated.
-- The **-1.0 dB shelf at 10 kHz** tames digital edge. Do not add `bright` or `sparkle` descriptors expecting them to survive at full intensity — they will be reduced.
-- The target pre-mix loudness is **-14 LUFS** (matching the final streaming standard). The music enters the mixer at this level, then the `music_volume_db=-17 dB` offset is applied, followed by the configured duck amount during speech.
+- The **−2.0 dB cut at 3 kHz** (music chain) + **−2.0 dB** (vocal pocket chain) = **−4.0 dB combined** at 3 kHz creates a spectral lane for narration. Prompts emphasizing presence-zone instruments (piano attack, acoustic guitar pick) will be gently recessed in the mix.
+- The **−1.5 dB cut at 4 kHz** further clears upper-mid content. Prompts using `metallic overtones` or `bright plucked strings` will be slightly attenuated.
+- The **−2.5 dB shelf at 10 kHz** tames digital edge. `Bright` or `sparkle` descriptors will survive but at reduced intensity.
+- The target pre-mix loudness is **-14 LUFS**. The music then receives a `music_volume_db=-17 dB` offset in `mix()`, followed by the configured duck amount (default −12 dB) during speech — total −29 dBFS during narration.
 
 ---
 
@@ -183,10 +185,46 @@ Key is passed to the LM planner as a metadata constraint — **do not include ke
 
 ### Reference Audio
 
-When a reference audio file is uploaded:
-- For ACE-Step: guides **timbre and acoustic style** (the "colour" of the sound — room character, instrument family warmth). It does **not** guide melody or chord progression the way HeartMuLa's melody conditioning does.
-- Provided as a temp `.wav` file path to the `reference_audio` parameter of `GenerationParams`.
-- The influence is subtle — the LM planner still drives structure; the reference audio shapes the timbral space.
+Upload an audio file to steer ACE-Step's **timbral and acoustic character** toward a specific sonic world. The reference is passed to `GenerationParams.reference_audio` for every inference call — including all phases of the three-phase infinite pipeline (genesis, continuation, boundary smoothing) and all story-mode stages.
+
+#### What reference audio does (and does not do)
+
+| Does | Does not |
+|------|----------|
+| Guides **timbre** — instrument family warmth, room character, spectral density | Guide **melody** — the LM planner still determines pitch and harmony freely |
+| Shapes **tonal balance** — warm/bright, dense/sparse | Lock **key or chord progression** to the reference |
+| Influences **textural density** — how full or spacious the output feels | Replace the text prompt — the caption + lyrics still drive primary intent |
+| Consistent effect across all phases / stages of a generation | Guarantee exact reproduction of any sound from the reference |
+
+The influence is soft conditioning, not sample playback. Think of it as giving the LM planner a tonal "colour palette" to work within rather than a melody to copy.
+
+#### Best practices for uploading reference audio
+
+**Format and quality**
+- Use **WAV or FLAC** — MP3 compression artifacts can bleed into the spectral conditioning signal and produce muddy results
+- **24-bit / 44.1 kHz or 48 kHz** is ideal; the engine resamples internally but higher-quality input yields cleaner conditioning
+- Mono or stereo both work — stereo is automatically downmixed to mono before processing
+
+**Content selection**
+- Use the **cleanest, most representative excerpt** of the target sound — ideally from the middle of a track where the texture is fully established, not a fade-in or ending
+- **30–60 seconds is the sweet spot**: shorter than 30s gives the model too little spectral data to profile; longer than 90s provides diminishing returns and may average out distinctive characteristics
+- **Instrument-only excerpts work best** — reference files containing drums, percussion, or lead vocals pull the conditioning toward those timbres and fight the `instrumental=True` constraint
+- **Avoid heavily compressed or limited masters** — modern loudness-normalized streaming releases flatten the dynamic profile that the conditioning reads from; use a lossless source if available
+
+**Matching reference to prompt**
+- The reference works best when it **reinforces the text prompt**, not contradicts it. A reference of warm analog synth pads paired with a `"warm analog synth pads"` caption produces strongly coherent output; a bright orchestral reference paired with a `"dark sub-bass drone"` caption produces a confused compromise
+- **Match approximate key/BPM** to your slider settings if you want tight tonal alignment — the LM planner uses both the reference conditioning and your BPM/key metadata; consistent inputs produce consistent results
+- If you want to explore a new direction, set the **Musical Key** to Auto and let the LM planner reconcile the reference texture with your caption freely
+
+**What makes a bad reference**
+| Bad reference type | Why it fails |
+|---|---|
+| Rhythmic EDM / trap / hip-hop | Drums and rhythmic transients dominate the conditioning — output develops unwanted pulse even with `instrumental=True` |
+| Vocal-heavy track | Vocal formants pull the harmonic conditioning toward voice-like frequencies that fight the `no vocals` constraint |
+| Heavily processed modern pop master | Brick-wall limiting destroys the dynamic envelope — model reads a flat spectral profile with no timbral variation |
+| Very short clip (< 10s) | Insufficient spectral information; conditioning is noisy |
+| Field recordings / spoken word | No musical harmonic structure for the model to extract a tonal palette from |
+| Multiple contrasting sections | A reference that swings between loud and quiet, or between two different instruments, gives the model an ambiguous average |
 
 ---
 
@@ -442,5 +480,5 @@ When **ACE-Step 1.5** is selected in the Background Music Model dropdown, use th
 | **Key** | Set via dropdown, not prompt. Auto recommended unless you have a specific reason |
 | **Quality** | Always use Studio for final output |
 | **Duration routing** | ≤ 90s = single call; > 90s = three-phase pipeline (both are transparent to the prompt) |
-| **Reference audio** | For timbre/style guidance only — not melody conditioning |
+| **Reference audio** | Timbral/style conditioning — WAV/FLAC, 30–60s, instrument-only excerpt, no drums/vocals; reinforces the caption, does not replace it |
 | **Validation** | Engine retries up to 3x automatically on near-silence, clipping, or short output |

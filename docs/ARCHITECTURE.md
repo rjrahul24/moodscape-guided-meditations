@@ -82,13 +82,10 @@ class SpeechEngine(ABC):
 
 **HeartMulaEngine** (`core/heart_mula/engine.py`):
 - Detects MLX vs. MPS backend at `load_model()` time
-- **MLX lazy-load sequence:**
-  1. Load LM (bf16) from `./ckpt-mlx/heartmula/`
-  2. Generate token sequence
-  3. `del lm_model; gc.collect(); mx.clear_cache()`
-  4. Load codec (fp32) from `./ckpt-mlx/heartcodec/`
-  5. Detokenize → audio
-  6. `del codec_model; gc.collect(); mx.clear_cache()`
+- **MLX simultaneous loading:** Both LM (bf16) + codec (fp32) loaded together (~12 GB). `mx.set_memory_limit(30GB)`, `mx.set_cache_limit(4GB)`.
+- **Best-of-N selection:** Multiple candidates generated per segment; best selected via `compute_composite_score()` QA ranking
+- **Scheduling:** `cfg_scale=1.8`, `temperature=0.75`, `top_k=30`, `codec_guidance_scale=1.25`, `codec_num_steps=12`
+- **Token continuation:** Long-form segments reuse trailing tokens as context for seamless transitions
 - **MPS path:** heartlib's `lazy_load=True` + `__call__` API (writes to temp file internally)
 - HeartCodec dtype: **always fp32** — `mx.float32` (MLX) / `{"codec": torch.float32}` (MPS)
 - Long-form (>240s): `_generate_segments()` — 240s segments with 8s cosine crossfades
@@ -156,8 +153,8 @@ make_vocal_pocket_chain()    →  apply_audio_fx()   # carves 300Hz/1kHz/3kHz la
 `mixer.mix()` sequence:
 1. `overlay_tracks(voice, music, sr)` — `music_pre_roll_sec=4.0`, `music_post_roll_sec=8.0`, `music_volume_db=−17.0`
 2. `apply_envelope_ducking(voice, music, ...)` — active ducking function (NOT `apply_rms_ducking`):
-   - `duck_amount_db` (configurable, default −21.0 in pipeline)
-   - `attack_ms=10.0`, `release_ms=800.0`, `lookahead_ms=25.0`, `window_ms=50.0`
+   - `duck_amount_db` (configurable, default −12.0 in pipeline)
+   - `attack_ms=40.0`, `release_ms=800.0`, `lookahead_ms=60.0`, `window_ms=50.0`
 3. `apply_fades(audio, sr, fade_in_sec, fade_out_sec)` — linear
 
 `apply_rms_ducking()` also exists in `mixer.py` (vectorized offline lookahead, 75ms shift) but is NOT called by `mix()`.
@@ -175,7 +172,7 @@ make_vocal_pocket_chain()    →  apply_audio_fx()   # carves 300Hz/1kHz/3kHz la
 
 ### Phase 10 — QA Checks
 
-`run_qa_checks(audio, sr)` runs 8 checks; `compute_composite_score()` used by music engines for retry/A-B selection (up to 3 attempts).
+`run_qa_checks(audio, sr)` runs 11 checks (was 7 originally; added spectral smoothness, harmonic stability, onset density, dynamic range); `compute_composite_score()` used by music engines for retry/A-B selection (up to 3 attempts).
 
 ---
 
@@ -210,14 +207,17 @@ make_vocal_pocket_chain()    →  apply_audio_fx()   # carves 300Hz/1kHz/3kHz la
 
 | # | Plugin | Key params |
 |---|--------|-----------|
-| 1 | NoiseGate | threshold=−55 dB, ratio=2:1, attack=5ms, release=200ms |
+| 1 | NoiseGate | threshold=−52 dB, ratio=2:1, attack=5ms, release=200ms |
 | 2 | HighpassFilter | cutoff=60 Hz |
 | 3 | LowShelfFilter | cutoff=100 Hz, gain=+1.5 dB |
-| 4 | PeakFilter | freq=220 Hz, gain=−1.0 dB, Q=0.7 |
-| 5 | PeakFilter | freq=4 000 Hz, gain=−2.0 dB, Q=0.6 |
-| 6 | HighShelfFilter | cutoff=9 500 Hz, gain=−2.0 dB |
-| 7 | Compressor | threshold=−20 dB, ratio=2:1, attack=100ms, release=900ms |
-| 8 | Limiter | threshold=−0.5 dBFS |
+| 4 | LowShelfFilter | cutoff=150 Hz, gain=+2.0 dB |
+| 5 | PeakFilter | freq=220 Hz, gain=−1.0 dB, Q=0.7 |
+| 6 | PeakFilter | freq=4 000 Hz, gain=−2.0 dB, Q=0.5 |
+| 7 | HighShelfFilter | cutoff=9 500 Hz, gain=−2.0 dB |
+| 8 | LowpassFilter | cutoff=14 000 Hz |
+| 9 | Convolution | IR=stone_chapel, wet=0.15 (15%) |
+| 10 | Compressor | threshold=−20 dB, ratio=2:1, attack=100ms, release=900ms |
+| 11 | Limiter | threshold=−0.5 dBFS |
 
 ### `make_acestep_music_chain()` (`core/audio_processor.py`)
 
@@ -226,13 +226,13 @@ make_vocal_pocket_chain()    →  apply_audio_fx()   # carves 300Hz/1kHz/3kHz la
 | 1 | NoiseGate | threshold=−50 dB, ratio=2:1, attack=1ms, release=100ms |
 | 2 | HighpassFilter | cutoff=60 Hz |
 | 3 | LowShelfFilter | cutoff=200 Hz, gain=+2.0 dB |
-| 4 | PeakFilter | freq=3 000 Hz, gain=−4.5 dB, Q=1.5 (primary AI artifact zone) |
-| 5 | PeakFilter | freq=4 000 Hz, gain=−2.5 dB, Q=0.8 |
+| 4 | PeakFilter | freq=3 000 Hz, gain=−2.0 dB, Q=1.5 (vocal pocket adds −2 dB more = −4 dB combined) |
+| 5 | PeakFilter | freq=4 000 Hz, gain=−1.5 dB, Q=0.8 |
 | 6 | PeakFilter | freq=6 000 Hz, gain=−2.0 dB, Q=1.0 (5–7 kHz gap fill) |
 | 7 | HighShelfFilter | cutoff=8 000 Hz, gain=+0.5 dB |
 | 8 | HighShelfFilter | cutoff=10 000 Hz, gain=−2.5 dB |
 | 9 | LowpassFilter | cutoff=16 000 Hz |
-| 10 | Compressor | threshold=−20 dB, ratio=2.5:1, attack=80ms, release=800ms |
+| 10 | Compressor | threshold=−20 dB, ratio=2.0:1, attack=80ms, release=800ms |
 | 11 | Limiter | threshold=−0.5 dBFS |
 
 ### `make_lyria_music_chain()` (`core/audio_processor.py`)
@@ -254,7 +254,7 @@ Applied to music after engine-specific chain to carve spectral room for voice.
 | 1 | HighpassFilter | cutoff=30 Hz |
 | 2 | PeakFilter | freq=300 Hz, gain=−3.0 dB, Q=0.8 |
 | 3 | PeakFilter | freq=1 000 Hz, gain=−2.0 dB, Q=0.7 |
-| 4 | PeakFilter | freq=3 000 Hz, gain=−4.0 dB, Q=1.0 (sibilance/consonant zone) |
+| 4 | PeakFilter | freq=3 000 Hz, gain=−2.0 dB, Q=1.0 (presence pocket; combined −4 dB with music chain) |
 | 5 | LowpassFilter | cutoff=12 000 Hz |
 
 ### `make_master_chain()` (`core/audio_processor.py`)
@@ -290,6 +290,10 @@ Default: `warm_studio`. Selectable in UI via "Reverb Room" dropdown.
 | `check_spectral_rolloff(audio, sr, percentile=0.85, max_hz=8000)` | 85th-pct rolloff ≤ 8kHz | High values = metallic artifacts |
 | `check_onset_strength(audio, sr, peak_mult=5.0)` | peak/median ratio < 5.0 | Detects harsh transients |
 | `check_spectral_flatness(audio, sr, low=4000, high=12000, max=0.3)` | flatness in 4–12kHz < 0.3 | Values near 1.0 = white noise |
+| `check_spectral_smoothness(audio, sr)` | centroid variance < 50 | Detects erratic spectral changes |
+| `check_harmonic_stability(audio, sr)` | chroma autocorr > 0.85 | Ensures tonal consistency |
+| `check_onset_density(audio, sr, max_per_sec=0.5)` | < 0.5 onsets/sec | Meditation should have sparse events |
+| `check_dynamic_range(audio, sr)` | RMS std < 0.01 | Ensures smooth, even dynamics |
 
 **`compute_composite_score()` weights:**
 
@@ -318,29 +322,34 @@ Never load two engines simultaneously. Peak memory per phase:
 - Kokoro: ~200 MB (CPU RAM only)
 - F5-TTS: ~1.5 GB (MPS)
 - ACE-Step: ~8–12 GB (MLX unified RAM, with compile)
-- HeartMuLa LM phase: ~6–8 GB (MLX bf16)
-- HeartMuLa codec phase: ~3–4 GB (fp32)
+- HeartMuLa (LM + codec simultaneous): ~12 GB (MLX bf16 LM + fp32 codec)
 - HT Demucs: ~168 MB (CPU, subprocess)
 
-### HeartMuLa Lazy-Load Sequence (MLX)
+### HeartMuLa Simultaneous Loading (MLX)
+
+Both LM (bf16) and codec (fp32) are loaded together (~12 GB total). Memory limits set before loading:
 
 ```python
-# Step 1: LM generation
-lm_model = load_lm_from_pretrained("./ckpt-mlx/heartmula/", dtype=mx.bfloat16)
-tokens = lm_model.generate(tags, lyrics, cfg_scale=3.0, temperature=0.9, top_k=45)
-del lm_model
-gc.collect()
-mx.clear_cache()
+mx.set_memory_limit(30 * 1024**3)  # 30 GB
+mx.set_cache_limit(4 * 1024**3)    # 4 GB
 
-# Step 2: Codec decoding
+# Load both models simultaneously
+lm_model = load_lm_from_pretrained("./ckpt-mlx/heartmula/", dtype=mx.bfloat16)
 codec_model = load_codec_from_pretrained("./ckpt-mlx/heartcodec/", dtype=mx.float32)
-audio = codec_model.decode(tokens, num_steps=16, guidance_scale=1.5)
-del codec_model
+
+# Best-of-N generation with scheduling
+tokens = lm_model.generate(tags, lyrics, cfg_scale=1.8, temperature=0.75, top_k=30)
+audio = codec_model.decode(tokens, num_steps=12, guidance_scale=1.25)
+
+# Token continuation for long-form: reuse last N tokens as context
+# for seamless multi-segment generation
+
+del lm_model, codec_model
 gc.collect()
 mx.clear_cache()
 ```
 
-MPS path uses heartlib's `lazy_load=True` — same two-phase lifecycle managed internally.
+MPS path uses heartlib's `lazy_load=True` — two-phase lifecycle still managed internally.
 
 ### Demucs Subprocess Isolation
 
@@ -445,7 +454,7 @@ Controls: BPM (40–140), Density (0.0–1.0), Brightness (0.0–1.0), Guidance 
 |-----------|---------------|
 | `unit-tests/test_mixer.py` | `apply_rms_ducking`, `apply_envelope_ducking`, `overlay_tracks`, `apply_fades`, `normalize_loudness`, `resample_for_export` |
 | `unit-tests/test_audio_processor.py` | All 5 Pedalboard chains + `apply_fx()` + `upsample_audio()` |
-| `unit-tests/test_qa_monitor.py` | All 8 QA checks + composite score |
+| `unit-tests/test_qa_monitor.py` | All 11 QA checks + composite score |
 | `unit-tests/test_meditation_mastering.py` | Full mastering chain (ducking → FX → export) |
 | `unit-tests/test_stem_separator.py` | Demucs subprocess isolation |
 | `unit-tests/test_voice_manager.py` | Kokoro voice blending, presets, British voice detection |

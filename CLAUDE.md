@@ -62,6 +62,7 @@ app.py / scripts/generate.py
                          F5Engine.synthesize()       → 24 kHz mono float32
      3. unload TTS, load music engine
      4. music gen        AceStepEngine.generate()   → 48 kHz mono float32
+                           [optional] melody_audio_path → loaded as numpy + sr, passed as melody_audio/melody_sample_rate kwargs
                          HeartMulaEngine.generate()  → 48 kHz mono float32
                          LyriaEngine.generate()      → 48 kHz mono float32
      5. stem sep         StemSeparator.remove_drums_and_vocals()            [optional]
@@ -119,6 +120,8 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 | Session config | `core/session_config.py` | `SessionConfig` | `to_json()`, `from_json()` |
 | Text utils | `core/text_utils.py` | — | `expand_text()`, `ABBREV_MAP` |
 | Breath sounds | `core/breath_sounds.py` | — | `load_breath()` |
+| Neural enhancer | `core/neural_enhancer.py` | — | `enhance_with_apollo()` |
+| Stereo upmix | `core/stereo_upmix.py` | — | `haas_stereo()`, `center_pan_voice()` |
 
 ## Key Constants
 
@@ -134,8 +137,11 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 | ACE-Step CFG | 5.0 | `core/acestep_engine.py` | `_GUIDANCE_SCALE` — SFT sweet spot |
 | ACE-Step steps | 50 | `core/acestep_engine.py` | `_INFERENCE_STEPS` |
 | ACE-Step LM temp | 0.4 | `core/acestep_engine.py` | `_LM_TEMPERATURE` — conservative for meditation |
-| HeartMuLa CFG | 3.0 | `core/heart_mula/engine.py` | `_LM_CFG_SCALE` |
-| HeartMuLa temp | 0.9 | `core/heart_mula/engine.py` | `_LM_TEMPERATURE` |
+| HeartMuLa CFG | 2.5 | `core/heart_mula/engine.py` | `_LM_CFG_SCALE` |
+| HeartMuLa temp | 0.75 | `core/heart_mula/engine.py` | `_LM_TEMPERATURE` |
+| HeartMuLa top_k | 30 | `core/heart_mula/engine.py` | `_LM_TOP_K` |
+| HeartMuLa codec guidance | 1.25 | `core/heart_mula/engine.py` | `_CODEC_GUIDANCE_SCALE` |
+| HeartMuLa codec steps | 12 | `core/heart_mula/engine.py` | `_CODEC_NUM_STEPS` |
 | HeartMuLa max seg | 240 s | `core/heart_mula/engine.py` | `MAX_SEGMENT_SEC` |
 | Lyria max session | 570 s | `core/lyria/engine.py` | `_MAX_SESSION_SEC` (9.5 min cap) |
 | MPS watermark | 0.7 | `core/heart_mula/engine.py` | `PYTORCH_MPS_HIGH_WATERMARK_RATIO` |
@@ -169,6 +175,7 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 | Ducking behavior | `core/mixer.py :: apply_envelope_ducking()` | `core/pipeline.py` (`duck_amount_db`) |
 | LUFS target | `core/pipeline.py` | `core/mixer.py :: export_audio()` |
 | ACE-Step generation params | `core/acestep_engine.py` (module-level constants) | — |
+| ACE-Step reference audio (melody conditioning) | `core/pipeline.py` (`melody_audio_path` param) | `core/acestep_engine.py :: _prepare_reference_audio()` |
 | HeartMuLa generation params | `core/heart_mula/engine.py` (module-level constants) | — |
 | Prompt enhancement logic | `core/pipeline.py :: _enhance_heartmula_prompt()` | `core/acestep_engine.py :: _enhance_prompt()` |
 | QA checks / thresholds | `core/qa_monitor.py` | `docs/ARCHITECTURE.md#qa-checks` |
@@ -184,10 +191,10 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 |----------------|-----------|------------------------|
 | `build_voice_chain()` | Kokoro voice | NoiseGate(−42dB) → HPF(80Hz) → LowShelf(+2dB@200Hz) → Peak(−2dB@350Hz) → Compressor(2:1@−18dB) → Peak(−2.5dB@3kHz) → HiShelf(−4dB@7.5kHz) → ConvReverb(IR) → LPF(9.5kHz) → Limiter(−1dB) |
 | `build_f5_voice_chain()` | F5-TTS voice | De-esser(4–8kHz) → NoiseGate → HPF → EQ chain → Compressor → Limiter — see `core/f5_tts/postprocessor.py` |
-| `make_heartmula_music_chain()` | HeartMuLa 48kHz | NoiseGate(−55dB) → HPF(60Hz) → LowShelf(+1.5dB@100Hz) → Peak(−1dB@220Hz) → Peak(−2dB@4kHz) → HiShelf(−2dB@9.5kHz) → Compressor(2:1@−20dB) → Limiter(−0.5dB) |
-| `make_acestep_music_chain()` | ACE-Step 48kHz | NoiseGate(−50dB) → HPF(60Hz) → LowShelf(+2.5dB@200Hz) → Peak(−4.5dB@3kHz) → Peak(−2.5dB@4kHz) → Peak(−2dB@6kHz) → HiShelf(+0.5dB@8kHz) → HiShelf(−2.5dB@10kHz) → HiShelf(+1dB@12kHz) → LPF(16kHz) → Compressor(2.5:1@−20dB) → Limiter(−0.5dB) |
+| `make_heartmula_music_chain()` | HeartMuLa 48kHz | NoiseGate(−52dB) → HPF(60Hz) → LowShelf(+1.5dB@100Hz) → LowShelf(+2.0dB@150Hz) → Peak(−1dB@220Hz) → Peak(−2dB@4kHz,Q=0.5) → HiShelf(−2dB@9.5kHz) → LPF(14kHz) → ConvReverb(stone_chapel,15%wet) → Compressor(2:1@−20dB) → Limiter(−0.5dB) |
+| `make_acestep_music_chain()` | ACE-Step 48kHz | NoiseGate(−50dB) → HPF(60Hz) → LowShelf(+2.5dB@200Hz) → Peak(−2dB@3kHz) → Peak(−1.5dB@4kHz) → Peak(−2dB@6kHz) → HiShelf(+0.5dB@8kHz) → HiShelf(−2.5dB@10kHz) → HiShelf(+1dB@12kHz) → LPF(16kHz) → Compressor(2.0:1@−20dB) → Limiter(−0.5dB) |
 | `make_lyria_music_chain()` | Lyria 48kHz | HPF(60Hz) → Peak(−1.5dB@250Hz) → HiShelf(−2.5dB@9kHz) → Compressor(2:1@−18dB) → Limiter(−0.5dB) |
-| `make_vocal_pocket_chain()` | Music (all engines) | HPF(30Hz) → Peak(−3dB@300Hz) → Peak(−2dB@1kHz) → Peak(−4dB@3kHz) → LPF(12kHz) |
+| `make_vocal_pocket_chain()` | Music (all engines) | HPF(30Hz) → Peak(−3dB@300Hz) → Peak(−2dB@1kHz) → Peak(−2dB@3kHz) → LPF(12kHz) |
 | `make_master_chain()` | Final mix | HPF(30Hz) → Limiter(−1.0dB, 400ms) |
 
 All chains in `core/audio_processor.py`. IRs in `assets/impulse_responses/` (default: `warm_studio`). Full parameter tables → `docs/ARCHITECTURE.md#fx-chains`.
@@ -208,7 +215,7 @@ All chains in `core/audio_processor.py`. IRs in `assets/impulse_responses/` (def
 - **ACE-Step timeout**: Always pass `compile_model=True` to `initialize_service()` — without it, generation takes ~9s/step and times out (~135s JIT overhead on first run, then ~4× faster per step)
 - **transformers version**: Pinned to `>=4.51.0,<4.58.0` for ACE-Step compatibility — do not upgrade
 - **Kokoro on CPU**: Intentionally forced to CPU — MPS causes deallocation bus errors. British voices (`bf_*`, `bm_*`) require `KPipeline(lang_code="b")`
-- **HeartMuLa lazy loading**: Never load LM and codec simultaneously (OOM). MLX: load LM (bf16) → generate → `del` + `gc.collect()` + `mx.clear_cache()` → load codec (fp32) → decode → unload. MPS: `lazy_load=True` handles lifecycle internally.
+- **HeartMuLa simultaneous loading (MLX)**: Both LM (bf16) + codec (fp32) loaded together (~12 GB). `mx.set_memory_limit(30GB)`, `mx.set_cache_limit(4GB)`. MPS: `lazy_load=True` still handles lifecycle.
 - **HeartCodec dtype**: Always fp32 — bf16 causes metallic artifacts. MLX passes `mx.float32`; MPS passes `{"codec": torch.float32}`.
 - **HeartMuLa MPS watermark**: `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7` (set in `engine.py`). Values below 0.5 cause OOM during 3B LM generation.
 - **HeartMuLa checkpoints**: Must be present before selecting HeartMuLa — see Checkpoint Locations table above.

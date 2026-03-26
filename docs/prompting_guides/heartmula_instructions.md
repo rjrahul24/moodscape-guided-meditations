@@ -1,8 +1,8 @@
 <!-- QUICK-REF ──────────────────────────────────────────────────────── -->
 **Engine files:** `core/pipeline.py :: _enhance_heartmula_prompt()`
-**Framework:** Eight Pillars — Genre (95%) > Timbre (50%) > Mood (32%) > Instrument (25%) > Scene
-**Tag limit:** 7–9 tags max · comma-separated style tags (not sentences)
-**Structural lyrics:** `[interlude]` only (suppresses vocal bias) · `[intro]`/`[outro]` for structure
+**Framework:** Eight Pillars — `deep ambient` genre, `60bpm` tempo tag as core anchors
+**Tag limit:** 5–6 tags max · comma-separated style tags (not sentences)
+**Structural lyrics:** `[inst-medium]` only (suppresses vocal bias) · `[intro-medium]`/`[outro-medium]` for structure
 **Auto-appended:** `no drums, instrumental`
 **Duration scaling:** ≤90s → "extremely slow" · ≤300s → "long soft pads that barely move" · >300s → "soundscape stays flat"
 **See also:** `docs/model_implementation_guides/heartmula.md` · `CLAUDE.md#task-routing-guide`
@@ -55,13 +55,11 @@ HeartMuLa has **no API knobs for tempo or softness** — all control is through 
 
 | Parameter | Value | Effect on Meditation Music |
 |-----------|-------|---------------------------|
-| `cfg_scale` | **3.0** | Classifier-free guidance strength. Higher = stricter adherence to tags. Default (1.5) was too loose — LM wandered from ambient. 3.0 provides moderate adherence. Values above 4.0 risk early EOS (truncated output) and mode collapse. |
-| `temperature` | **0.9** | Token sampling temperature. Lower = more predictable, grounded output. Default (1.0) was slightly too random for sleep music. 0.9 preserves tonal variety while reducing drift. |
-| `top_k` | **45** | Sampling pool size. Moderate restriction from default (50) keeps the LM in ambient territory without starving token diversity (which causes repetitive loops). |
-| `codec guidance_scale` | **1.5** | HeartCodec flow-matching guidance during detokenization. Slightly higher than default (1.25) improves fidelity of sustained pads. |
-| `codec num_steps` | **16** | Codec diffusion steps (was 10). More steps = cleaner reconstruction, less quantization noise. |
-
-**Key insight:** `cfg_scale` is the most impactful parameter but must be used conservatively. The heartlib default (1.5) is too loose, but values above 4.0 cause the autoregressive LM to predict end-of-sequence tokens early, producing truncated output. 3.0 is a safe sweet spot that improves tag adherence without over-constraining.
+| `cfg_scale` | **1.8** | DPO-trained model follows tags at lower CFG. 3.0 over-constrains → repetitive/robotic. |
+| `temperature` | **0.75** | More stable token distributions for sustained drones/pads. |
+| `top_k` | **30** | Tighter pool prevents repetitive loops in ambient territory. |
+| `codec_guidance_scale` | **1.25** | Paper Table 2: 1.25 = "smoother and less harsh." Reduces metallic artifacts. |
+| `codec_num_steps` | **12** | Reflow-distilled for 10 steps; 12 gives marginal improvement, 16 was wasteful. |
 
 ---
 
@@ -69,32 +67,25 @@ HeartMuLa has **no API knobs for tempo or softness** — all control is through 
 
 The `_enhance_heartmula_prompt()` function in `core/pipeline.py` transforms user input following the Eight Pillars system:
 
-1. **Builds core anchors** from the four highest-influence pillars (filtered to avoid duplicating user tags):
-   - Genre: `Ambient`
-   - Timbre: `Warm`
-   - Mood: `Relaxing`
-   - Instrument: `Synthesizer`
+1. **Builds core anchors** (2 tags):
+   - Genre: `deep ambient`
+   - Tempo: `60bpm`
 
-2. **Adds a temporal descriptor** scaled to duration:
-   - ≤90s: `extremely slow`
-   - ≤300s: `long soft pads that barely move`
-   - >300s: `soundscape stays flat`
+2. **Appends user's original prompt** (deduplicated against core anchors)
 
-3. **Appends user's original prompt** verbatim
+3. **Adds negative constraint floor**: `no drums, instrumental`
 
-4. **Adds negative constraint floor**: `no drums, instrumental`
-
-5. **Builds structural lyrics** using `[interlude]` markers:
-   - ≤90s: `[intro] → [interlude] → [outro]`
-   - ≤300s: `[intro] → [interlude] → [interlude] → [outro]`
-   - >300s: `[intro] → [interlude] → [interlude] → [interlude] → [outro]`
+4. **Builds structural lyrics** using `[inst-medium]` markers scaled to duration (one per ~20s):
+   - ≤90s: `[intro-medium] → [inst-medium] → [outro-medium]`
+   - ≤300s: `[intro-medium] → [inst-medium] → [inst-medium] → [outro-medium]`
+   - >300s: `[intro-medium] → [inst-medium] → ... → [outro-medium]`
 
 **Example output for user prompt "gentle piano, ethereal":**
 ```
-Tags:    "Ambient, Relaxing, extremely slow, gentle piano, ethereal, no drums, instrumental"
-Lyrics:  "[intro]\n\n[interlude]\n\n[outro]"
+Tags:    "deep ambient, 60bpm, gentle piano, ethereal, no drums, instrumental"
+Lyrics:  "[intro-medium]\n\n[inst-medium]\n\n[outro-medium]"
 ```
-Note: `Warm` and `Synthesizer` defaults were skipped because the user provided `ethereal` (timbre) and `piano` (instrument).
+Note: User tags are deduplicated — if the user provides `ambient`, it is not repeated since `deep ambient` already covers it.
 
 ---
 
@@ -223,29 +214,30 @@ New Age, Warm, Peaceful, Chimes, gentle pulses, no drums, instrumental
 
 ---
 
-## Structural Lyrics ([interlude] Markers)
+## Structural Lyrics ([inst-medium] Markers)
 
-HeartMuLa uses structural section markers to guide tonal arc. For meditation, we use `[interlude]` instead of `[verse]`/`[bridge]` because:
+HeartMuLa uses structural section markers to guide tonal arc. For meditation, we use `[inst-medium]` instead of `[verse]`/`[bridge]` because:
 
 - `[verse]` and `[bridge]` activate vocal associations in the LM (the model expects sung lyrics after these markers)
-- `[interlude]` starves the vocal generation module — without phonetic tokens, the LM sustains instrumental pads and atmospheric textures
+- `[inst-medium]` starves the vocal generation module — without phonetic tokens, the LM sustains instrumental pads and atmospheric textures
+- The `-medium` suffix provides a moderate energy level appropriate for meditation
 
 | Marker | Purpose |
 |--------|---------|
-| `[intro]` | Opening arrival — sets the tonal foundation |
-| `[interlude]` | Sustained instrumental section — no vocal associations |
-| `[outro]` | Closing dissolution — gentle fade |
+| `[intro-medium]` | Opening arrival — sets the tonal foundation at moderate energy |
+| `[inst-medium]` | Sustained instrumental section — no vocal associations |
+| `[outro-medium]` | Closing dissolution — gentle fade at moderate energy |
 
 For instrumental meditation, use markers **without text lines** between them:
 
 ```
-[intro]
+[intro-medium]
 
-[interlude]
+[inst-medium]
 
-[interlude]
+[inst-medium]
 
-[outro]
+[outro-medium]
 ```
 
 Fewer sections = less model-induced change = more stillness. The pipeline uses minimal section counts automatically.
@@ -258,13 +250,14 @@ For tracks longer than 4 minutes (240s), the engine automatically:
 
 1. Splits the total duration into segments of ≤240s each
 2. Selects a **tonal key anchor** (e.g., "key of D minor") applied to all segments for harmonic continuity
-3. Assigns structural lyrics per segment position:
-   - First: `[intro] + [interlude]`
-   - Middle: `[interlude] + [interlude]`
-   - Last: `[interlude] + [outro]`
-4. Joins segments with **8-second** equal-power cosine crossfades (longer overlap masks tonal differences between independently generated segments)
+3. Uses **token-level continuation** — the last 250 tokens of segment N are fed as a prefix to segment N+1, providing tonal context across boundaries
+4. Assigns structural lyrics per segment position:
+   - First: `[intro-medium] + [inst-medium]`
+   - Middle: `[inst-medium] + [inst-medium]`
+   - Last: `[inst-medium] + [outro-medium]`
+5. Joins segments with **STFT crossfade in log-magnitude domain** for seamless spectral transitions (falls back to cosine² if STFT fails)
 
-**Key anchoring** is the primary coherence mechanism for long-form tracks. Since the heartlib API does not support latent context feedback between segments, appending a musical key tag (e.g., "key of A minor") to all segments constrains the LM to generate in a consistent key, preventing the most jarring form of harmonic drift.
+**Key anchoring** combined with **token-level continuation** provides cross-segment coherence. The key tag constrains harmonic consistency while the token prefix provides tonal context, preventing drift across independently generated segments.
 
 ---
 

@@ -129,17 +129,31 @@ Upsample → mix sample rate (soxr_vhq)
 ### Shared Path (Both Engines)
 
 ```
+HeartMuLa Pre-EQ (HeartMuLa only)
+  • Spectral repair: noisereduce (stationary, prop_decrease=0.45)
+  • Tape saturation: asymmetric soft clipping (drive=0.2, bias=0.10)
+
 ACE-Step Pre-EQ (ACE-Step only — see audio_processing.md §3)
   • Spectral repair: noisereduce (stationary, prop_decrease=0.65)
   • Tape saturation: asymmetric soft clipping (drive=0.3, bias=0.15)
 
 Music FX Chain (engine-specific EQ — see audio_processing.md §3)
 
-ACE-Step Post-EQ (ACE-Step only)
+Neural Enhancement (HeartMuLa only — optional)
+  • Apollo GAN (ICASSP 2025) — codec artifact removal
+  • Loads after music engine unloads (~7 GB)
+  • Graceful fallback if Apollo not installed
+
+ACE-Step / HeartMuLa Post-EQ (ACE-Step and HeartMuLa)
   • Organic noise floor: pink noise at -58 dB, LPF 8 kHz
 
 Vocal Pocket Carving (applied to music before mixing)
   • HPF 30 Hz | -3 dB @ 300 Hz | -2 dB @ 1 kHz | -4 dB @ 3 kHz | LPF 12 kHz
+
+Stereo Upmixing (opt-in)
+  • Haas effect: 16ms delay on right channel, 0.92 gain
+  • Music only — voice stays center-panned
+  • Applied after ducking in mix()
 
 Mixer
   • 4s music pre-roll, 8s music post-roll
@@ -148,7 +162,7 @@ Mixer
     - Lookahead: 75ms | Attack: 50ms | Release: 500ms
   • Linear fades (3s in / 6s out)
 
-QA checks (7 metrics — see §9)
+QA checks (11 metrics — see §9)
 
 Master Chain
   • HPF 30 Hz → Limiter (-1.0 dB, 400ms release)
@@ -224,14 +238,16 @@ Selectable in the UI under "Reverb Space". Applied via Pedalboard `Convolution` 
 | `core/mixer.py` | Lookahead sidechain ducking, overlay, cosine crossfade looping, fades, LUFS, streaming export |
 | `core/kokoro_tts/preprocessor.py` | Script parsing (breath/pause/voice), text expansion, IPA injection, prosody punctuation, token chunking |
 | `core/f5_tts/preprocessor.py` | Script parsing (breath/pause/voice), character-count chunking |
-| `core/qa_monitor.py` | QA: LUFS, clipping, spectral balance, silence gaps, silence ratio, spectral rolloff, onset strength, composite score |
+| `core/qa_monitor.py` | QA: LUFS, clipping, spectral balance, silence gaps, silence ratio, spectral rolloff, onset strength, spectral smoothness, harmonic stability, onset density, dynamic range, composite score |
+| `core/neural_enhancer.py` | Apollo GAN neural post-processing (optional, HeartMuLa codec artifact removal) |
+| `core/stereo_upmix.py` | Haas-effect stereo upmixing (opt-in, music only) |
 | `core/pipeline.py` | Orchestrates the full signal chain end-to-end |
 
 ---
 
 ## 9. Quality Assurance and A/B Selection
 
-After the master chain, `qa_monitor.run_qa_checks()` runs 7 automated checks:
+After the master chain, `qa_monitor.run_qa_checks()` runs 11 automated checks:
 
 | Check | Pass Condition |
 |-------|---------------|
@@ -242,8 +258,12 @@ After the master chain, `qa_monitor.run_qa_checks()` runs 7 automated checks:
 | Silence ratio | 15–60% (meditation pacing) |
 | Spectral rolloff | 85th-percentile rolloff ≤ 8000 Hz |
 | Onset strength | Peak/median onset ratio < 5.0 |
+| Spectral smoothness | Centroid variance < 50 |
+| Harmonic stability | Chroma autocorrelation > 0.85 |
+| Onset density | < 0.5 onsets/sec |
+| Dynamic range | RMS std-dev < 0.01 |
 
-**A/B selection in music engines:** On retry, all candidates are scored via `compute_composite_score()` (weighted composite of all 7 checks, range 0–1). The highest-scoring candidate is selected. Early exit if score > 0.8.
+**A/B selection in music engines:** On retry, all candidates are scored via `compute_composite_score()` (weighted composite of all 11 checks, range 0–1). The highest-scoring candidate is selected. Early exit if score > 0.8.
 
 ---
 
@@ -261,7 +281,7 @@ After the master chain, `qa_monitor.run_qa_checks()` runs 7 automated checks:
 - [x] Equal-power cosine² crossfades: 300ms TTS assembly, 2s music, 2s music loop
 - [x] HeartMuLa seams: micro-crossfade (64-sample triangular at zero-crossing) after _stitch()
 - [x] Streaming export in 20s chunks — no full-array load at export time
-- [x] LUFS target: -19 LUFS integrated (per session)
-- [x] 7 QA checks including spectral rolloff and onset strength (new)
+- [x] LUFS target: -16 LUFS integrated (per session)
+- [x] 11 QA checks including spectral smoothness, harmonic stability, onset density, and dynamic range
 - [x] A/B selection: best composite-scored candidate kept across retry attempts
 - [x] Convolution reverb IR selectable: warm_studio / wooden_hall / stone_chapel

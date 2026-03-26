@@ -33,76 +33,81 @@ def _enhance_heartmula_prompt(user_prompt: str, duration_hint: float = 120.0) ->
 
     HeartMuLa uses comma-separated style tags (not natural-language sentences).
     The tags field corresponds to the 'tags' parameter in heartlib.
-    The lyrics field uses structural markers ([interlude]) for instrumental tracks.
+    The lyrics field uses structural section markers for instrumental tracks.
 
     Follows the **Eight Pillars** tag hierarchy from HeartMuLa research:
       GENRE (95%) > TIMBRE (50%) > MOOD (32%) > INSTRUMENT (25%) > SCENE (20%)
-    with the "Less is More" principle — 7-9 focused tags instead of 20+ diffuse
-    tags.  Excessive tags cause *probability interference*: the cross-attention
-    distribution fractures and produces muddy, generic output.
+    with the "Less is More" principle.  The model is trained with Random Dimension
+    Dropout (2 of 6 annotation dimensions masked per sample), so 5-6 focused tags
+    are optimal.  Overloading beyond 8 tags causes *probability interference*.
 
-    Tag construction:
-      1. Core anchors: Genre + Timbre + Mood + Instrument (4 tags)
-      2. Temporal descriptor scaled to duration (1 tag)
+    Tag construction (target: 5-6 tags):
+      1. Core anchors: Genre + Instrument (2 tags — most influential pillars)
+      2. Pacing descriptor (duration-scaled natural language — not "60bpm" which
+         tokenizes as ['60','b','pm'] and is not in training vocabulary)
       3. Negative floor: "no drums, instrumental" (2 tags)
       4. User tags appended (deduplicated against core anchors)
 
     Structural lyrics:
-      - [interlude] markers (not [verse]/[bridge]) to suppress vocal bias
-      - Fewer sections = less model-induced change = more ambient stillness
+      - [interlude] markers — the standard instrumental section marker from
+        HeartMuLa's Llama-3 training data (song lyrics format).
+      - [intro] / [outro] for bookends.
+      - Without text lines between markers, the LM generates instrumental pads.
+      - One [interlude] per ~20s of target duration.
     """
     user_lower = user_prompt.lower().strip()
 
-    # ── Eight Pillars core anchors (ordered by influence weight) ──────
-    # Each pillar has a default that is skipped if the user already covers it.
+    # ── Core anchors (only the highest-influence pillars) ──────────────
+    # Keep tag count low (5-6 total) for maximum conditioning strength.
+    # Genre and Instrument are the two strongest pillars; Timbre and Mood
+    # are conveyed implicitly by sub-genre choice ("deep ambient" = warm + calm).
     _PILLAR_DEFAULTS = {
         # pillar: (default_tag, keywords_that_indicate_user_coverage)
-        "genre":      ("Ambient",      {"ambient", "new age", "drone", "classical"}),
-        "timbre":     ("Warm",         {"warm", "soft", "dark", "ethereal", "smooth", "bright"}),
-        "mood":       ("Relaxing",     {"relaxing", "peaceful", "calm", "meditation", "serene"}),
-        "instrument": ("Synthesizer",  {"synthesizer", "piano", "strings", "bowl", "singing bowl",
-                                        "flute", "harp", "chimes", "organ", "cello", "guitar",
-                                        "pads", "pad"}),
+        "genre":      ("deep ambient", {"ambient", "new age", "drone", "classical",
+                                        "psychill", "chillout", "lo-fi"}),
+        "instrument": ("synthesizer",  {"synthesizer", "piano", "strings", "bowl",
+                                        "singing bowl", "flute", "harp", "chimes",
+                                        "organ", "cello", "guitar", "pads", "pad"}),
     }
     core = []
     for _pillar, (default, keywords) in _PILLAR_DEFAULTS.items():
         if not any(kw in user_lower for kw in keywords):
             core.append(default)
 
-    # ── Temporal descriptor (1 tag, scaled to duration) ───────────────
-    # Explicit pacing language the model learned during DPO training.
+    # ── Pacing descriptor (duration-scaled) ────────────────────────────
+    # Use natural-language descriptors that appeared in HeartMuLa training data.
+    # Avoid "60bpm" — it tokenizes as ['60','b','pm'] (non-natural) and the
+    # model was not trained on numeric BPM notation in the tags field.
     if duration_hint <= 90.0:
-        temporal = "extremely slow"
+        pacing = "extremely slow"
     elif duration_hint <= 300.0:
-        temporal = "long soft pads that barely move"
+        pacing = "slow"
     else:
-        temporal = "soundscape stays flat"
+        pacing = "slow, peaceful"
 
     # ── Assemble tags ─────────────────────────────────────────────────
-    tag_parts = core + [temporal]
+    tag_parts = core + [pacing]
 
-    # Append user tags
+    # Append user tags (deduplicated against defaults)
     user_stripped = user_prompt.strip()
     if user_stripped:
         tag_parts.append(user_stripped)
 
     # Negative constraints floor — minimal but essential.
-    # "no drums" prevents the most common failure (percussion leaking into
-    # ambient output). "instrumental" suppresses vocal generation.
+    # "no drums" prevents percussion leaking into ambient output.
+    # "instrumental" suppresses vocal generation.
     tag_parts.extend(["no drums", "instrumental"])
 
     tags = ", ".join(tag_parts)
 
-    # ── Structural lyrics ([interlude] markers) ───────────────────────
-    # [interlude] starves the vocal generation module — without phonetic
-    # tokens the LM sustains instrumental pads and atmospheric textures.
-    # Fewer sections = more stillness = better for meditation.
-    if duration_hint <= 90.0:
-        lyrics = "[intro]\n\n[interlude]\n\n[outro]"
-    elif duration_hint <= 300.0:
-        lyrics = "[intro]\n\n[interlude]\n\n[interlude]\n\n[outro]"
-    else:
-        lyrics = "[intro]\n\n[interlude]\n\n[interlude]\n\n[interlude]\n\n[outro]"
+    # ── Structural lyrics ([interlude] markers) ────────────────────────
+    # [interlude] is the standard instrumental section marker from HeartMuLa's
+    # Llama-3 training data (song lyrics format).  Without text lines between
+    # markers, the LM sustains instrumental pads — no vocals generated.
+    # Each [interlude] covers ~15-20 seconds.
+    n_sections = max(1, round(duration_hint / 20.0))
+    sections = "\n\n".join(["[interlude]"] * n_sections)
+    lyrics = f"[intro]\n\n{sections}\n\n[outro]"
 
     return tags, lyrics
 
@@ -130,7 +135,7 @@ class MeditationPipeline:
         music_prompt: str,
         voice: str = "golden_hour",
         speed: float = 0.90,
-        duck_amount_db: float = -21.0,
+        duck_amount_db: float = -12.0,
         reverb_amount: float = 0.15,
         fade_in_sec: float = 3.0,
         fade_out_sec: float = 5.0,
@@ -155,6 +160,9 @@ class MeditationPipeline:
         f5_target_wpm: int | None = None,
         reverb_ir: str = "warm_studio",
         do_stitch: bool = False,
+        quality_mode: bool = False,
+        stereo_output: bool = False,
+        melody_audio_path: str | None = None,
     ) -> tuple[str, str | None, dict | None]:
         """Run the full pipeline and return the path to the output audio file.
 
@@ -165,7 +173,9 @@ class MeditationPipeline:
             voice: Kokoro voice name, preset, or comma-separated blend.
             speed: Speaking speed (0.5–1.0).
             duck_amount_db: How much to reduce music during speech (negative dB).
-                Combined with music_volume_db=-17 → total -38 dB during speech.
+                Combined with music_volume_db=-17 → total -29 dB during speech
+                at the default of -12 dB. Music stays present but sits firmly
+                behind the voice.
             reverb_amount: Voice reverb wet level (0.0–0.5).
             fade_in_sec: Fade-in duration for the final mix.
             fade_out_sec: Fade-out duration for the final mix.
@@ -174,6 +184,10 @@ class MeditationPipeline:
             seed: Optional deterministic seed for reproducible generation.
             do_export_stems: If True, save voice/music stems alongside the mix.
             upsample_48k: If True, export at 48 kHz instead of 44.1 kHz.
+            melody_audio_path: Optional path to a reference audio file for
+                ACE-Step melody/style conditioning. When provided, the audio is
+                loaded and passed to AceStepEngine as melody_audio + melody_sample_rate
+                kwargs. Has no effect for HeartMuLa or Lyria engines.
             music_prompt_stages: Optional list of (prompt, duration_sec) pairs
                 for story mode music generation. When provided, overrides
                 music_prompt and instrumental_duration_m (total music duration
@@ -388,6 +402,23 @@ class MeditationPipeline:
                     label = f"story stage {current}/{total}" if story_mode else f"segment {current}/{total}"
                     _progress(progress_cb, frac, f"Generating music {label}...")
 
+                # Load reference audio for ACE-Step melody conditioning (if provided).
+                # Loaded once here and passed as kwargs to all generate calls below.
+                ref_audio_kwargs: dict = {}
+                if use_acestep and melody_audio_path:
+                    import soundfile as sf
+                    try:
+                        _ref_data, _ref_sr = sf.read(melody_audio_path, dtype="float32", always_2d=False)
+                        if _ref_data.ndim == 2:
+                            _ref_data = _ref_data.mean(axis=1)  # stereo → mono
+                        ref_audio_kwargs = {"melody_audio": _ref_data, "melody_sample_rate": _ref_sr}
+                        logger.info(
+                            "[Pipeline] Reference audio loaded: %s — %.1fs @ %d Hz",
+                            melody_audio_path, len(_ref_data) / _ref_sr, _ref_sr,
+                        )
+                    except Exception as e:
+                        logger.warning("[Pipeline] Failed to load reference audio %s: %s — ignoring", melody_audio_path, e)
+
                 if story_mode:
                     # Build engine-specific stages: enhance each stage prompt
                     # with its model's meditation guardrails.
@@ -418,6 +449,7 @@ class MeditationPipeline:
                             lyrics=enhanced_lyrics,
                             bpm=bpm,
                             keyscale=keyscale,
+                            **ref_audio_kwargs,
                         )
                     elif use_heartmula:
                         engine_stages = [
@@ -430,6 +462,7 @@ class MeditationPipeline:
                             music_duration,
                             progress_cb=music_progress,
                             prompt_stages=engine_stages,
+                            quality_mode=quality_mode,
                         )
                     else:
                         raise ValueError(f"No story mode path for music_model: {music_model}")
@@ -447,12 +480,13 @@ class MeditationPipeline:
                             enhanced_prompt, music_duration, progress_cb=music_progress,
                             lyrics=lyrics, bpm=bpm, keyscale=keyscale,
                             acestep_model_type=acestep_model_type,
+                            **ref_audio_kwargs,
                         )
                     elif use_heartmula:
                         enhanced_tags, enhanced_lyrics = _enhance_heartmula_prompt(music_prompt, duration_hint=music_duration)
                         music_audio = music_engine.generate(
                             enhanced_tags, music_duration, progress_cb=music_progress,
-                            lyrics=enhanced_lyrics,
+                            lyrics=enhanced_lyrics, quality_mode=quality_mode,
                         )
                     else:
                         raise ValueError(f"No generation path for music_model: {music_model}")
@@ -485,8 +519,14 @@ class MeditationPipeline:
                     del separator
                     gc.collect()
 
+                # ── Step 5d: Neural enhancement (HeartMuLa only) ─────────────
+                if use_heartmula:
+                    _progress(progress_cb, 0.70, "Applying neural codec artifact removal...")
+                    from core.neural_enhancer import enhance_with_apollo
+                    music_audio = enhance_with_apollo(music_audio, mix_sr)
+
                 # All engines (ACE-Step, Lyria, HeartMuLa) output at 48 kHz natively.
-                _progress(progress_cb, 0.70, f"Ensuring {music_model_label} audio is at 48kHz mixing rate...")
+                _progress(progress_cb, 0.71, f"Ensuring {music_model_label} audio is at 48kHz mixing rate...")
             else:
                 music_audio = np.zeros(0, dtype=np.float32)
 
@@ -520,22 +560,29 @@ class MeditationPipeline:
                 #   ACE-Step:  -14 LUFS — matches final streaming standard; ensures strong,
                 #              audible presence during vocal pauses before the -17 dB
                 #              music_volume_db offset and ducking are applied in mix()
-                #   HeartMuLa: -17 LUFS — consistent output levels from HeartCodec
+                #   HeartMuLa: -16 LUFS — lower CFG produces more dynamic output;
+                #              slightly louder pre-mix ensures audible presence during
+                #              vocal pauses before ducking
                 if use_lyria:
                     premix_lufs = -16.0
                 elif use_acestep:
                     premix_lufs = -14.0
                 elif use_heartmula:
-                    premix_lufs = -17.0
+                    premix_lufs = -16.0
                 else:
                     raise ValueError(f"No premix LUFS for: {music_model}")
                 music_audio = normalize_loudness(music_audio, mix_sr, target_lufs=premix_lufs)
 
-                # ACE-Step pre-EQ processing: spectral repair + tape saturation
+                # Pre-EQ processing: spectral repair + tape saturation
                 if use_acestep:
                     from core.audio_processor import reduce_music_noise, apply_tape_saturation
-                    music_audio = reduce_music_noise(music_audio, mix_sr)
+                    music_audio = reduce_music_noise(music_audio, mix_sr, prop_decrease=0.40)
                     music_audio = apply_tape_saturation(music_audio)
+                elif use_heartmula:
+                    from core.audio_processor import reduce_music_noise, apply_tape_saturation
+                    # Gentler settings than ACE-Step — HeartCodec output is cleaner
+                    music_audio = reduce_music_noise(music_audio, mix_sr, prop_decrease=0.45)
+                    music_audio = apply_tape_saturation(music_audio, drive=0.2, bias=0.10)
 
                 if use_lyria:
                     from core.audio_processor import make_lyria_music_chain
@@ -550,8 +597,8 @@ class MeditationPipeline:
                     raise ValueError(f"No music FX chain for: {music_model}")
                 music_audio = apply_audio_fx(music_audio, music_chain, mix_sr)
 
-                # ACE-Step post-EQ: add organic noise floor for analog warmth
-                if use_acestep:
+                # Post-EQ: add organic noise floor for analog warmth
+                if use_acestep or use_heartmula:
                     from core.audio_processor import add_organic_noise_floor
                     music_audio = add_organic_noise_floor(music_audio, mix_sr)
 
@@ -571,6 +618,9 @@ class MeditationPipeline:
             if is_instrumental:
                 _progress(progress_cb, 0.82, "Applying final fades...")
                 from core.mixer import apply_fades
+                if stereo_output:
+                    from core.stereo_upmix import haas_stereo
+                    music_audio = haas_stereo(music_audio, mix_sr)
                 mixed = apply_fades(music_audio, mix_sr, fade_in_sec, fade_out_sec)
             elif is_vocals:
                 _progress(progress_cb, 0.82, "Applying final fades...")
@@ -586,6 +636,7 @@ class MeditationPipeline:
                     duck_amount_db=duck_amount_db,
                     fade_in_sec=fade_in_sec,
                     fade_out_sec=fade_out_sec,
+                    stereo_output=stereo_output,
                 )
 
             # ── Step 10: Master processing ──────────────────────────────────
