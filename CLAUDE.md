@@ -14,6 +14,34 @@ python app.py                      # Gradio UI at http://localhost:7860
 
 **Environment variables:** `.env` file (gitignored) must contain `HF_TOKEN` and `GOOGLE_API_KEY`. App also sets `TOKENIZERS_PARALLELISM=false` and `PYTORCH_ENABLE_MPS_FALLBACK=1` at startup.
 
+## Agents
+
+Custom sub-agents live in `.claude/agents/`. Claude Code loads them automatically. Trigger them after implementation work.
+
+| Agent | Model | Role |
+|-------|-------|------|
+| `root-agent` | Sonnet | **Orchestrator** — entry point for every task; dispatches all other agents in order; writes final execution summary |
+| `planning-agent` | Opus | Builds the sequential execution plan before any code is written; clarifies assumptions with user; coordinates with deep-research-agent |
+| `coding-agent` | Sonnet | Executes the confirmed plan; writes all code; tests new dependencies before integrating |
+| `deep-research-agent` | Opus | Online research grounded in project constraints (Apple Silicon, stack, audio contracts); invoked by planning-agent or directly |
+| `documentation-agent` | Sonnet | Updates all docs after every code change (`docs/`, `ARCHITECTURE.md`, `README.md`, `CLAUDE.md`) |
+| `code-reviewer-agent` | Haiku | Removes dead code from changed files, then runs unit and integration tests to verify no regressions |
+| `github-sync-agent` | Haiku | Syncs local repo with GitHub; triggers when 5+ commits ahead, work is complete, or user requests push |
+
+**Standard execution flow**:
+```
+root-agent → planning-agent (confirm plan) → coding-agent → code-reviewer-agent → documentation-agent → [github-sync-agent]
+```
+
+**Research-first flow** (new model/library/architecture):
+```
+root-agent → deep-research-agent → planning-agent (confirm plan) → coding-agent → code-reviewer-agent → documentation-agent
+```
+
+**Always start with `root-agent`** for any task involving more than a single obvious file edit.
+
+---
+
 ## Task Workflow
 
 IMPORTANT: Follow these steps for every task.
@@ -25,8 +53,8 @@ IMPORTANT: Follow these steps for every task.
    - `docs/prompting_guides/` — prompt engineering per engine
    - `docs/ARCHITECTURE.md` — full technical deep-dive (FX params, QA thresholds, memory patterns)
 3. **Implement changes**
-4. **Update documentation** — keep `docs/` in sync; if a function signature or engine behavior changes, update the corresponding doc file
-5. **Update README.md** — only for significant changes (new feature, removed capability, changed setup)
+4. **Trigger `code-reviewer-agent`** on the changed files
+5. **Trigger `documentation-agent`** on the changed files
 6. **Run tests** — unit tests for small changes, integration tests for large changes
 7. **Do NOT push to GitHub** unless explicitly asked
 8. **Update this CLAUDE.md** if you discover new development patterns worth noting
@@ -191,13 +219,13 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 
 | Chain function | Applied to | Key plugins (in order) |
 |----------------|-----------|------------------------|
-| `build_voice_chain()` | Kokoro voice | NoiseGate(−42dB) → HPF(80Hz) → LowShelf(+2dB@200Hz) → Peak(−2dB@350Hz) → Compressor(2:1@−18dB) → Peak(−2.5dB@3kHz) → HiShelf(−4dB@7.5kHz) → ConvReverb(IR) → LPF(9.5kHz) → Limiter(−1dB) |
+| `build_voice_chain()` | Kokoro voice | NoiseGate(−60dB) → HPF(80Hz) → LowShelf(+2dB@200Hz) → Peak(−2dB@350Hz) → Compressor(2:1@−18dB,10ms/100ms) → Peak(**+1dB@3kHz,Q=0.6**) → HiShelf(−3dB@7.5kHz) → ConvReverb(IR) → LPF(9.5kHz) → Limiter(−1dB) |
 | `build_f5_voice_chain()` | F5-TTS voice | De-esser(4–8kHz) → NoiseGate → HPF → EQ chain → Compressor → Limiter — see `core/f5_tts/postprocessor.py` |
 | `make_heartmula_music_chain()` | HeartMuLa 48kHz | NoiseGate(−52dB) → HPF(60Hz) → LowShelf(+1.5dB@100Hz) → LowShelf(+2.0dB@150Hz) → Peak(−1dB@220Hz) → Peak(−2dB@4kHz,Q=0.5) → HiShelf(−2dB@9.5kHz) → LPF(14kHz) → ConvReverb(stone_chapel,15%wet) → Compressor(2:1@−20dB) → Limiter(−0.5dB) |
-| `make_acestep_music_chain()` | ACE-Step 48kHz | NoiseGate(−50dB) → HPF(60Hz) → LowShelf(+2.5dB@200Hz) → Peak(−2dB@3kHz) → Peak(−1.5dB@4kHz) → Peak(−2dB@6kHz) → HiShelf(+0.5dB@8kHz) → HiShelf(−2.5dB@10kHz) → HiShelf(+1dB@12kHz) → LPF(16kHz) → Compressor(2.0:1@−20dB) → Limiter(−0.5dB) |
-| `make_lyria_music_chain()` | Lyria 48kHz | HPF(60Hz) → Peak(−1.5dB@250Hz) → HiShelf(−2.5dB@9kHz) → Compressor(2:1@−18dB) → Limiter(−0.5dB) |
-| `make_vocal_pocket_chain()` | Music (all engines) | HPF(30Hz) → Peak(−3dB@300Hz) → Peak(−2dB@1kHz) → Peak(−2dB@3kHz) → LPF(12kHz) |
-| `make_master_chain()` | Final mix | HPF(30Hz) → Compressor(1.5:1@−22dB, 40ms/300ms) → Limiter(−1.5dB, 400ms) |
+| `make_acestep_music_chain()` | ACE-Step 48kHz | NoiseGate(−55dB) → HPF(60Hz) → LowShelf(+1.5dB@200Hz) → Peak(−1.5dB@3kHz) → LPF(16kHz) → Compressor(2.0:1@−20dB) → Limiter(−0.5dB) |
+| `make_lyria_music_chain()` | Lyria 48kHz | HPF(60Hz) → Peak(−1.5dB@250Hz) → Peak(−2.0dB@4500Hz,Q=0.7) → HiShelf(−2.5dB@9kHz) → Compressor(2:1@−18dB) → Limiter(−0.5dB) |
+| `make_vocal_pocket_chain()` | Music (all engines) | HPF(30Hz) → Peak(−2dB@300Hz) → Peak(−1dB@1kHz) → Peak(−1.5dB@3kHz) → LPF(12kHz) |
+| `make_master_chain()` | Final mix | HPF(30Hz) → Limiter(−1.5dBTP, 400ms) |
 
 All chains in `core/audio_processor.py`. IRs in `assets/impulse_responses/` (default: `warm_studio`). Full parameter tables → `docs/ARCHITECTURE.md#fx-chains`.
 
@@ -221,5 +249,5 @@ All chains in `core/audio_processor.py`. IRs in `assets/impulse_responses/` (def
 - **HeartCodec dtype**: Always fp32 — bf16 causes metallic artifacts. MLX passes `mx.float32`; MPS passes `{"codec": torch.float32}`.
 - **HeartMuLa MPS watermark**: `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7` (set in `engine.py`). Values below 0.5 cause OOM during 3B LM generation.
 - **HeartMuLa checkpoints**: Must be present before selecting HeartMuLa — see Checkpoint Locations table above.
-- **Active ducking function**: `mixer.mix()` calls `apply_multiband_ducking()` by default (`multiband=True`). Falls back to `apply_envelope_ducking()` when `multiband=False`. `apply_rms_ducking()` exists but is not used in production.
+- **Active ducking function**: `mixer.mix()` calls `apply_multiband_ducking()` by default (`multiband=True`). Falls back to `apply_envelope_ducking()` when `multiband=False`. `apply_rms_ducking()` exists but is not used in production. Default `duck_amount_db=−12.0` (in `pipeline.py`); `hold_ms=1200` (in `mix()` `_duck_kwargs`) bridges slow meditation phrase gaps — do not reduce below 800ms.
 - **Mix sample rate**: All music engine paths use `mix_sr = 48000` (`pipeline.py:213`). The 44.1 kHz fallback is only used when no music engine is active.

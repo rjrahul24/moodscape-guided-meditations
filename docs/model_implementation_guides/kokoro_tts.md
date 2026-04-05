@@ -506,7 +506,7 @@ MoodScape uses a multi-stage postprocessing pipeline tailored to Kokoro's ISTFTN
 - RMS normalization to -23 dBFS (EBU R128 speech reference)
 
 #### Stage 2 — Segment Assembly
-- **22ms cosine-squared crossfade** between chunks (528 samples at 24 kHz)
+- **300ms cosine-squared crossfade** between chunks (7200 samples at 24 kHz)
 - **25ms pre-roll silence** + **100ms cosine fade-in** (masks cold-start prosody drift)
 - **50ms fade-out** at segment boundaries
 - **0.8s inter-sentence pause** (1.2s after ellipsis)
@@ -518,13 +518,13 @@ MoodScape uses a multi-stage postprocessing pipeline tailored to Kokoro's ISTFTN
 - Reduces ISTFTNet vocoder hiss by ~6 dB without damaging soft consonants
 
 #### Stage 3 — Unified Voice FX Chain (`build_voice_chain()`, single-pass at mix sample rate)
-1. NoiseGate (-42 dB) — cleanup, mutes inter-chunk silence
+1. NoiseGate (**-60 dB**) — cleanup; mutes true digital silence while allowing room-tone pauses (~-55 dBFS) to pass through naturally
 2. HighpassFilter (80 Hz) — removes sub-bass rumble and plosives
 3. LowShelfFilter (+2 dB @ 200 Hz) — warmth / proximity effect
 4. PeakFilter (-2 dB @ 350 Hz, Q=1.0) — mud cut
 5. Compressor (2:1, -18 dB threshold, 10ms/100ms) — dynamics control
-6. PeakFilter (-2.5 dB @ 3 kHz, Q=0.8) — anti-harshness subtractive cut at the primary metallic resonance zone
-7. HighShelfFilter (-4.0 dB @ 7.5 kHz) — de-harsh shelf enforcing steep spectral tilt
+6. PeakFilter (**+1.0 dB @ 3 kHz, Q=0.6**) — broad presence boost for intelligibility and forward warmth; wide Q=0.6 lifts the full 2–5 kHz upper midrange gently, preserving natural expressiveness without amplifying single resonances
+7. HighShelfFilter (**-3.0 dB @ 7.5 kHz**) — single de-harsh shelf taming ISTFTNet vocoder HF artifacts without killing 'air'
 8. Convolution reverb — space (IR: warm_studio / wooden_hall / stone_chapel)
 9. LowpassFilter (9.5 kHz) — Nyquist masking (after reverb to catch reverb HF)
 10. Limiter (-1 dBFS) — protection

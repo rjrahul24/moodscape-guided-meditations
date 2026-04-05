@@ -116,55 +116,47 @@ def make_heartmula_music_chain() -> Pedalboard:
 
 
 def make_acestep_music_chain() -> Pedalboard:
-    """FX chain tailored for ACE-Step 1.5 clean VAE output for meditation use.
+    """Minimal FX chain for ACE-Step 1.5 — preserves natural VAE output quality.
 
-    Applied after noisereduce spectral repair and tape saturation (handled in
-    pipeline.py).  Tuned for the -14 LUFS pre-mix target with Fletcher-Munson
-    psychoacoustic compensation for low-volume headphone listening:
+    ACE-Step's VAE produces clean audio that doesn't need heavy processing.
+    This chain applies only essential corrections:
 
-      1. Noise gate — gentle expander (-50 dB threshold, 2:1 ratio) catches
-         diffusion residual noise that the compressor would otherwise amplify.
-      2. Sub-bass HPF at 60 Hz — removes diffusion noise rumble (30–60 Hz band).
-      3. Low-shelf warmth at 200 Hz (+2.5 dB) — Fletcher-Munson bass compensation
-         for perceived warmth at meditation volumes (~50–60 dBA SPL).
-      4. Midrange cut at 3 kHz (-2.0 dB, Q=1.5) — presence cut targeting
-         diffusion artifacts; the vocal pocket chain adds -2 dB more = -4 dB
-         combined, which is sufficient without hollowing out the music.
-      5. Upper-mid cut at 4 kHz (-1.5 dB, Q=0.8) — gentle upper-mid taming.
-      6. Gap fill at 6 kHz (-2.0 dB, Q=1.0) — addresses the 5–7 kHz "digital
-         edge" zone in ACE-Step output.
-      7. Air shelf at 8 kHz (+0.5 dB) — retains gentle air.
-      8. HF rolloff at 10 kHz (-2.5 dB) — smooth high-end rolloff.
-      9. Treble recovery at 12 kHz (+1.0 dB) — Fletcher-Munson compensation for
-         perceived treble loss at quiet listening levels; restores headphone "air".
-     10. Ultrasonic LPF at 16 kHz — hard rolloff for diffusion noise.
-     11. Glue compressor — -20 dB / 2.0:1 / 80ms attack / 800ms release.
-     12. Limiter at -0.5 dBFS.
+      1. Noise gate (-55 dB) — catches quiet diffusion residual noise.
+      2. Sub-bass HPF at 60 Hz — removes diffusion rumble.
+      3. Low-shelf warmth at 200 Hz (+1.5 dB) — subtle bass presence.
+      4. Mild presence cut at 3 kHz (-1.5 dB) — creates space for voice;
+         vocal pocket adds -1.5 dB more = -3 dB combined.
+      5. Ultrasonic LPF at 16 kHz — removes diffusion noise above audible range.
+      6. Gentle glue compressor — 2:1 / 80ms attack / 800ms release.
+      7. Limiter at -0.5 dBFS.
     """
-    return Pedalboard([
+    plugins = [
         NoiseGate(
-            threshold_db=-50.0,
+            threshold_db=-55.0,
             ratio=2.0,
-            attack_ms=1.0,
+            attack_ms=15.0,
             release_ms=100.0,
         ),
         HighpassFilter(cutoff_frequency_hz=60.0),
-        LowShelfFilter(cutoff_frequency_hz=200, gain_db=2.5),         # Fletcher-Munson: bass warmth for low-volume listening
-        PeakFilter(cutoff_frequency_hz=3000, gain_db=-2.0, q=1.5),    # presence cut; vocal pocket adds further -2 dB for combined -4 dB total
-        PeakFilter(cutoff_frequency_hz=4000, gain_db=-1.5, q=0.8),    # upper-mid cut
-        PeakFilter(cutoff_frequency_hz=6000, gain_db=-2.0, q=1.0),    # 5-7 kHz gap fill
-        HighShelfFilter(cutoff_frequency_hz=8000.0, gain_db=0.5),     # reduced: was +1.5
-        HighShelfFilter(cutoff_frequency_hz=10000.0, gain_db=-2.5),   # deepened: was -1.0
-        HighShelfFilter(cutoff_frequency_hz=12000.0, gain_db=1.0),    # Fletcher-Munson: treble recovery for headphone air
-        LowpassFilter(cutoff_frequency_hz=16000.0),                   # ultrasonic cutoff
+        LowShelfFilter(cutoff_frequency_hz=200, gain_db=2.0),
+        PeakFilter(cutoff_frequency_hz=2500, gain_db=-2.0, q=0.7),
+        PeakFilter(cutoff_frequency_hz=4500, gain_db=-2.0, q=0.7),
+        HighShelfFilter(cutoff_frequency_hz=8000.0, gain_db=1.5),
+        LowpassFilter(cutoff_frequency_hz=16000.0),
         Compressor(
             threshold_db=-20.0,
             ratio=2.0,
             attack_ms=80.0,
             release_ms=800.0,
         ),
-        Limiter(threshold_db=-0.5),
-    ])
+    ]
+    # Add warm_studio convolution reverb for spaciousness and to mask diffusion artifacts.
+    # 8% wet is subtle — primarily adds depth and warmth rather than audible room effect.
+    ir_path = IR_CATALOG.get("warm_studio", {}).get("path", "")
+    if os.path.isfile(ir_path):
+        plugins.append(Convolution(ir_path, mix=0.08))
+    plugins.append(Limiter(threshold_db=-1.0))
+    return Pedalboard(plugins)
 
 
 def make_lyria_music_chain() -> Pedalboard:
@@ -195,6 +187,7 @@ def make_lyria_music_chain() -> Pedalboard:
     return Pedalboard([
         HighpassFilter(cutoff_frequency_hz=60.0),                         # Sub-bass removal
         PeakFilter(cutoff_frequency_hz=250, gain_db=-1.5, q=0.8),         # Mud notch
+        PeakFilter(cutoff_frequency_hz=4500, gain_db=-2.0, q=0.7),        # Upper-mid presence control
         HighShelfFilter(cutoff_frequency_hz=9000.0, gain_db=-2.5),        # HF warmth rolloff
         Compressor(
             threshold_db=-18.0,
@@ -207,53 +200,45 @@ def make_lyria_music_chain() -> Pedalboard:
 
 
 def make_vocal_pocket_chain() -> Pedalboard:
-    """Consolidated EQ chain to carve a spectral 'lane' for human speech.
-    
-    Human speech intelligibility resides primarily in the 1-3 kHz range.
-    By carving this pocket in the music track, the voice sits naturally
-    on top without needing excessive volume boosts.
-    
+    """Gentle EQ to carve a spectral lane for voice intelligibility.
+
+    Reduced aggressiveness vs previous version — the ducking system now
+    handles most of the voice-music separation, so the EQ pocket only
+    needs to provide a subtle spectral advantage.
+
     Chain:
       1. HighpassFilter at 30 Hz: Remove sub-bass rumble.
-      2. 300 Hz Peak (-3 dB, Q=0.8): Clear low-mid mud buildup.
-      3. 1000 Hz Peak (-2 dB, Q=0.7): Open space for vowel fundamentals.
-      4. 3000 Hz Peak (-2 dB, Q=1.0): Presence pocket for sibilance/consonants.
-         Combined with -2 dB already cut in the ACE-Step / HeartMuLa music chain,
-         total attenuation at 3 kHz is -4 dB — enough for intelligibility without
-         hollowing out the music.
-      5. LowpassFilter at 12000 Hz: Tame harsh highs and digital artifacts.
+      2. 300 Hz Peak (-2 dB, Q=0.8): Mild low-mid clarity.
+      3. 1000 Hz Peak (-1 dB, Q=0.7): Subtle space for vowel fundamentals.
+      4. 3000 Hz Peak (-0.5 dB, Q=1.0): Light presence trim for consonants.
+         ACE-Step music chain already cuts -1.5 dB here; combined = -2.0 dB
+         total (was -3.0 dB, causing telephone/honky coloration).
+      5. LowpassFilter at 12000 Hz: Tame harsh highs.
     """
     return Pedalboard([
         HighpassFilter(cutoff_frequency_hz=30),
-        PeakFilter(cutoff_frequency_hz=300, gain_db=-3, q=0.8),
-        PeakFilter(cutoff_frequency_hz=1000, gain_db=-2, q=0.7),
-        PeakFilter(cutoff_frequency_hz=3000, gain_db=-2, q=1.0),
+        PeakFilter(cutoff_frequency_hz=300, gain_db=-2, q=0.8),
+        PeakFilter(cutoff_frequency_hz=1000, gain_db=-1, q=0.7),
+        PeakFilter(cutoff_frequency_hz=3000, gain_db=-0.5, q=1.0),
         LowpassFilter(cutoff_frequency_hz=12000),
     ])
 
 
 def make_master_chain() -> Pedalboard:
-    """Final mastering chain: subsonic HPF → gentle bus compression → peak limiter.
+    """Final mastering chain: subsonic HPF → bus compressor → peak limiter.
 
-    The bus compressor provides subtle 'glue' that bonds voice and music into
-    a cohesive mix.  At 1.5:1 ratio with slow 40ms attack it lets transients
-    through and only shaves ~1-2 dB of gain reduction on sustained content —
-    well below the threshold where cascading with voice-chain compression
-    becomes audible.
-
-    Limiter at -1.5 dBTP with 400ms release — the extra 0.5 dB headroom vs
-    the previous -1.0 provides safety margin for lossy codec encoding
-    (AAC/MP3) without sacrificing anything, since meditation audio doesn't
-    need loud peaks.  400ms release prevents audible pumping on drones.
+    Chain (per post-processing-pipeline.md):
+      1. HPF 30 Hz — removes subsonic rumble below the audible range.
+      2. Compressor 1.5:1 @ -22 dB, 40ms/300ms — gentle 'glue' compression
+         that bonds voice and music into a cohesive mix (~1-2 dB GR max).
+         At 1.5:1 with a -22 dB threshold, this is inaudible as a compressor
+         but adds perceived cohesion between TTS and music stems.
+      3. Limiter -1.5 dBTP, 400ms release — true peak safety margin for
+         lossy codec encoding (AAC/MP3). 400ms release prevents pumping on drones.
     """
     return Pedalboard([
         HighpassFilter(cutoff_frequency_hz=30.0),
-        Compressor(
-            threshold_db=-22.0,
-            ratio=1.5,
-            attack_ms=40.0,
-            release_ms=300.0,
-        ),
+        Compressor(threshold_db=-22.0, ratio=1.5, attack_ms=40.0, release_ms=300.0),
         Limiter(threshold_db=-1.5, release_ms=400.0),
     ])
 

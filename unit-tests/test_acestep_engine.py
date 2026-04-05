@@ -50,17 +50,17 @@ class TestAceStepEngine(unittest.TestCase):
 
 
     def test_guidance_scale_value(self):
-        """_GUIDANCE_SCALE should be 5.0 (SFT sweet spot for ambient texture control)."""
+        """_GUIDANCE_SCALE should be 5.5 (upper SFT range for tighter meditation adherence)."""
         from core.acestep_engine import _GUIDANCE_SCALE
-        self.assertEqual(_GUIDANCE_SCALE, 5.0)
+        self.assertEqual(_GUIDANCE_SCALE, 5.5)
 
     def test_enhance_prompt_anti_harshness_tags(self):
-        """Task 2: enhanced caption must include anti-harshness tokens."""
+        """Enhanced caption must include compositional style tokens from MESA base tags."""
         caption, _lyrics = AceStepEngine._enhance_prompt("gentle pads")
         caption_lower = caption.lower()
         self.assertIn("smooth texture", caption_lower)
-        self.assertIn("432 hz", caption_lower)
-        self.assertIn("warm tone", caption_lower)
+        self.assertIn("slow tempo", caption_lower)
+        self.assertIn("harmonic layers", caption_lower)
 
 
 if __name__ == "__main__":

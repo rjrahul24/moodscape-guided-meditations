@@ -151,12 +151,12 @@ make_vocal_pocket_chain()    →  apply_audio_fx()   # carves 300Hz/1kHz/3kHz la
 ### Phase 8 — Mix
 
 `mixer.mix()` sequence:
-1. `overlay_tracks(voice, music, sr)` — `music_pre_roll_sec=8.0`, `music_post_roll_sec=15.0`, `music_volume_db=−17.0`
+1. `overlay_tracks(voice, music, sr)` — `music_pre_roll_sec=8.0`, `music_post_roll_sec=15.0`, `music_volume_db=−14.0`
 2. `apply_multiband_ducking(voice, music, ...)` — default when `multiband=True`:
    - 3-band Linkwitz-Riley crossover: low (<250 Hz, 25% duck), mid (250–4 kHz, full duck), high (>4 kHz, 50% duck)
    - `duck_amount_db` (configurable, default −12.0 in pipeline)
-   - `attack_ms=80.0`, `release_ms=1000.0`, `hold_ms=1200.0`, `lookahead_ms=60.0`, `window_ms=50.0`
-   - Hold time bridges inter-phrase gaps — prevents per-sentence pumping
+   - `attack_ms=40.0`, `release_ms=800.0`, `hold_ms=1200.0`, `lookahead_ms=30.0`, `window_ms=50.0`
+   - 1 200 ms hold bridges slow meditation phrase gaps; prevents per-sentence pumping during deliberate narration
    - Falls back to `apply_envelope_ducking()` when `multiband=False`
 3. `apply_fades(audio, sr, fade_in_sec, fade_out_sec, curve="exponential")` — natural DAW-style curves
 
@@ -168,9 +168,9 @@ make_vocal_pocket_chain()    →  apply_audio_fx()   # carves 300Hz/1kHz/3kHz la
 
 `make_master_chain()` applied inside `export_audio()` via 20-second chunk streaming:
 - `HighpassFilter(30 Hz)` — subsonic removal
-- `Compressor(1.5:1 @ −22 dB, 40ms attack, 300ms release)` — gentle bus glue (~1-2 dB GR)
 - `Limiter(−1.5 dBTP, 400ms release)` — true-peak safety
 - True-peak clip at ±0.841 linear (−1.5 dBTP) applied after chain
+- Bus compression omitted — multiband ducking already shapes voice-music dynamics.
 
 ---
 
@@ -196,13 +196,13 @@ make_vocal_pocket_chain()    →  apply_audio_fx()   # carves 300Hz/1kHz/3kHz la
 | # | Plugin | Key params |
 |---|--------|-----------|
 | pre | Tape saturation | tanh(audio × 1.05) before chain |
-| 1 | NoiseGate | threshold=−42 dB, ratio=20:1 |
+| 1 | NoiseGate | threshold=−60 dB, ratio=20:1 (allows room-tone at −55 dBFS through) |
 | 2 | HighpassFilter | cutoff=80 Hz |
 | 3 | LowShelfFilter | cutoff=200 Hz, gain=+2.0 dB |
 | 4 | PeakFilter | freq=350 Hz, gain=−2.0 dB, Q=1.0 (mud cut) |
 | 5 | Compressor | threshold=−18 dB, ratio=2:1 |
-| 6 | PeakFilter | freq=3 000 Hz, gain=−2.5 dB, Q=0.8 (presence control) |
-| 7 | HighShelfFilter | cutoff=7 500 Hz, gain=−4.0 dB (de-harsh) |
+| 6 | PeakFilter | freq=3 000 Hz, gain=**+1.0 dB**, Q=0.6 (broad presence boost for intelligibility & warmth) |
+| 7 | HighShelfFilter | cutoff=7 500 Hz, gain=**−3.0 dB** (de-harsh shelf) |
 | 8 | Convolution | IR file, wet=reverb_amount (0.0–0.5) |
 | 9 | LowpassFilter | cutoff=9 500 Hz (Nyquist mask after reverb) |
 | 10 | Limiter | threshold=−1.0 dBFS |
@@ -225,19 +225,17 @@ make_vocal_pocket_chain()    →  apply_audio_fx()   # carves 300Hz/1kHz/3kHz la
 
 ### `make_acestep_music_chain()` (`core/audio_processor.py`)
 
+Minimal chain — ACE-Step's VAE output is clean and doesn't need heavy processing.
+
 | # | Plugin | Key params |
 |---|--------|-----------|
-| 1 | NoiseGate | threshold=−50 dB, ratio=2:1, attack=1ms, release=100ms |
+| 1 | NoiseGate | threshold=−55 dB, ratio=2:1, attack=1ms, release=100ms |
 | 2 | HighpassFilter | cutoff=60 Hz |
-| 3 | LowShelfFilter | cutoff=200 Hz, gain=+2.0 dB |
-| 4 | PeakFilter | freq=3 000 Hz, gain=−2.0 dB, Q=1.5 (vocal pocket adds −2 dB more = −4 dB combined) |
-| 5 | PeakFilter | freq=4 000 Hz, gain=−1.5 dB, Q=0.8 |
-| 6 | PeakFilter | freq=6 000 Hz, gain=−2.0 dB, Q=1.0 (5–7 kHz gap fill) |
-| 7 | HighShelfFilter | cutoff=8 000 Hz, gain=+0.5 dB |
-| 8 | HighShelfFilter | cutoff=10 000 Hz, gain=−2.5 dB |
-| 9 | LowpassFilter | cutoff=16 000 Hz |
-| 10 | Compressor | threshold=−20 dB, ratio=2.0:1, attack=80ms, release=800ms |
-| 11 | Limiter | threshold=−0.5 dBFS |
+| 3 | LowShelfFilter | cutoff=200 Hz, gain=+1.5 dB |
+| 4 | PeakFilter | freq=3 000 Hz, gain=−1.5 dB, Q=1.0 (vocal pocket adds −1.5 dB more = −3 dB combined) |
+| 5 | LowpassFilter | cutoff=16 000 Hz |
+| 6 | Compressor | threshold=−20 dB, ratio=2.0:1, attack=80ms, release=800ms |
+| 7 | Limiter | threshold=−0.5 dBFS |
 
 ### `make_lyria_music_chain()` (`core/audio_processor.py`)
 
@@ -245,9 +243,10 @@ make_vocal_pocket_chain()    →  apply_audio_fx()   # carves 300Hz/1kHz/3kHz la
 |---|--------|-----------|
 | 1 | HighpassFilter | cutoff=60 Hz |
 | 2 | PeakFilter | freq=250 Hz, gain=−1.5 dB, Q=0.8 (mud notch) |
-| 3 | HighShelfFilter | cutoff=9 000 Hz, gain=−2.5 dB |
-| 4 | Compressor | threshold=−18 dB, ratio=2:1, attack=80ms, release=500ms |
-| 5 | Limiter | threshold=−0.5 dBFS |
+| 3 | PeakFilter | freq=4 500 Hz, gain=−2.0 dB, Q=0.7 (upper-mid presence control) |
+| 4 | HighShelfFilter | cutoff=9 000 Hz, gain=−2.5 dB |
+| 5 | Compressor | threshold=−18 dB, ratio=2:1, attack=80ms, release=500ms |
+| 6 | Limiter | threshold=−0.5 dBFS |
 
 ### `make_vocal_pocket_chain()` (`core/audio_processor.py`)
 
@@ -256,18 +255,19 @@ Applied to music after engine-specific chain to carve spectral room for voice.
 | # | Plugin | Key params |
 |---|--------|-----------|
 | 1 | HighpassFilter | cutoff=30 Hz |
-| 2 | PeakFilter | freq=300 Hz, gain=−3.0 dB, Q=0.8 |
-| 3 | PeakFilter | freq=1 000 Hz, gain=−2.0 dB, Q=0.7 |
-| 4 | PeakFilter | freq=3 000 Hz, gain=−2.0 dB, Q=1.0 (presence pocket; combined −4 dB with music chain) |
+| 2 | PeakFilter | freq=300 Hz, gain=−2.0 dB, Q=0.8 |
+| 3 | PeakFilter | freq=1 000 Hz, gain=−1.0 dB, Q=0.7 |
+| 4 | PeakFilter | freq=3 000 Hz, gain=−1.5 dB, Q=1.0 (presence pocket; combined −3 dB with ACE-Step chain) |
 | 5 | LowpassFilter | cutoff=12 000 Hz |
 
 ### `make_master_chain()` (`core/audio_processor.py`)
 
+Bus compression is intentionally absent — multiband ducking already shapes the dynamic contour; adding a bus compressor fights the intended voice-music balance.
+
 | # | Plugin | Key params |
 |---|--------|-----------|
 | 1 | HighpassFilter | cutoff=30 Hz |
-| 2 | Compressor | threshold=−22 dB, ratio=1.5:1, attack=40ms, release=300ms (gentle bus glue, ~1-2 dB GR) |
-| 3 | Limiter | threshold=−1.5 dBTP, release=400ms |
+| 2 | Limiter | threshold=−1.5 dBTP, release=400ms |
 
 ### Convolution Reverb IR Catalog (`assets/impulse_responses/`)
 
@@ -402,7 +402,9 @@ ACE-Step 1.5 (48 kHz mono float32, native)
 
 HeartMuLa (48 kHz mono float32, native)
   → normalize_loudness(premix_lufs=-17)
+  → reduce_music_noise() + apply_tape_saturation()
   → make_heartmula_music_chain() @ 48 kHz
+  → add_organic_noise_floor()
   → make_vocal_pocket_chain() @ 48 kHz
   → mix() @ 48 kHz
 

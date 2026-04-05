@@ -538,8 +538,8 @@ def mix(
     voice_activity: np.ndarray,
     music_audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
-    duck_amount_db: float = -3.0,
-    music_volume_db: float = -17.0,
+    duck_amount_db: float = -8.0,
+    music_volume_db: float = -14.0,
     music_pre_roll_sec: float = 8.0,
     music_post_roll_sec: float = 15.0,
     fade_in_sec: float = 3.0,
@@ -552,17 +552,14 @@ def mix(
 
     Args:
         duck_amount_db: Additional dB reduction during speech on top of
-            music_volume_db. -12 dB is the recommended default for meditation.
+            music_volume_db. -8 dB gives ~20 dB voice-music separation.
         music_volume_db: Baseline music level in dB (applied before ducking).
-            -17.0 dB keeps the music present and audible during pauses without
-            competing with silence.
-        music_pre_roll_sec: Music plays alone for this many seconds before
-            the voice begins (intro). Default 8.0s — gives listeners time to
-            settle, put on headphones, and close their eyes.
-        music_post_roll_sec: Music plays alone for this many seconds after
-            the voice ends (outro), before the fade-out. Default 15.0s.
-        fade_out_sec: Fade-out duration. Default 8.0s — longer tail for a
-            natural, calming exit.
+            -14 dB keeps music clearly present during pauses.
+        music_pre_roll_sec: Music plays alone before voice begins (intro).
+            8 s gives listeners time to settle with the music before narration starts.
+        music_post_roll_sec: Music plays alone after voice ends (outro).
+            15 s allows a graceful, unhurried close.
+        fade_out_sec: Fade-out duration for natural exit.
         multiband: If True (default), use frequency-selective ducking that
             preserves bass warmth and high-frequency shimmer. Only the mid-range
             (250-4000 Hz) where voice conflicts exist receives full ducking.
@@ -604,17 +601,19 @@ def mix(
 
     # 4. Apply sidechain ducking
     # Meditation-tuned parameters:
-    #   attack_ms=80:     smooth, breath-like music fade at voice onset
-    #   release_ms=1000:  music returns gently over ~1s, feeling calming
-    #   hold_ms=1200:     bridges inter-phrase gaps — prevents per-sentence pumping
-    #   lookahead_ms=60:  60ms pre-duck gives a smooth lead-in before first syllable
+    #   attack_ms=40:     responsive but smooth duck onset
+    #   release_ms=800:   music returns gently, calming feel
+    #   hold_ms=1200:     bridges slow meditation phrase gaps (typical pause 1-3s);
+    #                     prevents per-sentence pumping that feels jarring in
+    #                     slow, deliberate narration
+    #   lookahead_ms=30:  subtle pre-duck before first syllable
     _duck_kwargs = dict(
         sample_rate=sample_rate,
         duck_amount_db=duck_amount_db,
         threshold_db=-35.0,
-        attack_ms=80.0,
-        release_ms=1000.0,
-        lookahead_ms=60.0,
+        attack_ms=40.0,
+        release_ms=800.0,
+        lookahead_ms=30.0,
         hold_ms=1200.0,
     )
 

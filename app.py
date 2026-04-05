@@ -30,6 +30,23 @@ warnings.filterwarnings(
     category=UserWarning,
     module="pyloudnorm",
 )
+# PyTorch's elastic distributed multiprocessing prints an "unsupported on macOS"
+# note at import time — harmless on single-process MPS/MLX workloads.
+warnings.filterwarnings(
+    "ignore",
+    message=".*Redirects are currently not supported.*",
+)
+
+# torchao tries to import a CUDA-only triton integer-matmul kernel on startup and
+# prints "import error: No module named 'triton'" when it's absent (Apple Silicon).
+# The model falls back gracefully; pre-importing with stdout redirected hides the
+# cosmetic message without affecting behaviour.
+import contextlib, io as _io
+with contextlib.redirect_stdout(_io.StringIO()):
+    try:
+        import torchao  # noqa: F401
+    except ImportError:
+        pass
 
 import numpy as np
 import soundfile as sf
@@ -739,9 +756,6 @@ theme = gr.themes.Base(
 
 with gr.Blocks(
     title="MoodScape — Guided Meditation Generator",
-    theme=theme,
-    css=CUSTOM_CSS,
-    js=DROPDOWN_FIX_JS,
 ) as demo:
 
     gr.HTML("""
@@ -856,8 +870,8 @@ with gr.Blocks(
             # Section 2: Mix & Effects
             with gr.Accordion("Mix & Effects", open=False, elem_classes="accordion-section"):
                 with gr.Row():
-                    speed_slider = gr.Slider(0.70, 1.20, 1.0, step=0.01, label="Speed")
-                    duck_slider = gr.Slider(-30, -5, -12, step=1, label="Ducking (dB)")
+                    speed_slider = gr.Slider(0.70, 1.20, 0.9, step=0.01, label="Speaking Speed (0.85-0.95 = meditation ideal)")
+                    duck_slider = gr.Slider(-30, -5, -8, step=1, label="Ducking (dB)")
                 with gr.Row():
                     reverb_slider = gr.Slider(0.0, 0.5, 0.15, step=0.05, label="Reverb")
                     reverb_ir_dropdown = gr.Dropdown(
@@ -1031,4 +1045,5 @@ with gr.Blocks(
     )
 
 if __name__ == "__main__":
-    demo.launch(share=False)
+    # theme, css, and js moved here from gr.Blocks() per Gradio 6.0 API change.
+    demo.launch(share=False, theme=theme, css=CUSTOM_CSS, js=DROPDOWN_FIX_JS)

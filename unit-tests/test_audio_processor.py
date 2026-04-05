@@ -27,36 +27,27 @@ class TestAudioProcessor(unittest.TestCase):
         self.assertIsNotNone(mac)
 
     def test_acestep_chain_has_expected_effects(self):
-        """Verify the ACE-Step chain contains all 12 expected effects."""
+        """Verify the ACE-Step chain contains all expected effects."""
+        import os
+        from core.audio_processor import IR_CATALOG
         chain = make_acestep_music_chain()
-        # 12 effects: NoiseGate, HPF, LowShelf(200Hz), PeakFilter(3kHz),
-        #             PeakFilter(4kHz), PeakFilter(6kHz), HighShelf(8kHz),
-        #             HighShelf(10kHz), HighShelf(12kHz), LowpassFilter(16kHz),
-        #             Compressor, Limiter
-        self.assertEqual(len(chain), 12, f"Expected 12 effects, got {len(chain)}")
+        # 7 base effects: NoiseGate, HPF, LowShelf(200Hz), PeakFilter(3kHz),
+        #                 LowpassFilter(16kHz), Compressor, Limiter
+        # + 1 Convolution reverb when warm_studio IR file is present on disk
+        ir_path = IR_CATALOG.get("warm_studio", {}).get("path", "")
+        expected = 8 if os.path.isfile(ir_path) else 7
+        self.assertEqual(len(chain), expected, f"Expected {expected} effects, got {len(chain)}")
 
     def test_acestep_chain_midrange_and_air_filters(self):
-        """Verify 3 kHz midrange cut, 6 kHz gap fill, and 8 kHz air shelf filters."""
-        from pedalboard import PeakFilter, HighShelfFilter
+        """Verify 3 kHz presence cut is correctly configured."""
+        from pedalboard import PeakFilter
         chain = make_acestep_music_chain()
 
-        # Find the 3 kHz PeakFilter (primary AI artifact zone)
+        # Find the 3 kHz PeakFilter (creates space for voice)
         peak_3k = [p for p in chain if isinstance(p, PeakFilter)
                    and abs(p.cutoff_frequency_hz - 3000) < 1]
         self.assertEqual(len(peak_3k), 1, "Missing PeakFilter at 3000 Hz")
-        self.assertAlmostEqual(peak_3k[0].gain_db, -2.0, places=1)
-
-        # Find the 6 kHz PeakFilter (5-7 kHz gap fill)
-        peak_6k = [p for p in chain if isinstance(p, PeakFilter)
-                   and abs(p.cutoff_frequency_hz - 6000) < 1]
-        self.assertEqual(len(peak_6k), 1, "Missing PeakFilter at 6000 Hz")
-        self.assertAlmostEqual(peak_6k[0].gain_db, -2.0, places=1)
-
-        # Find the 8 kHz HighShelfFilter (gentle air)
-        shelf_8k = [p for p in chain if isinstance(p, HighShelfFilter)
-                    and abs(p.cutoff_frequency_hz - 8000) < 1]
-        self.assertEqual(len(shelf_8k), 1, "Missing HighShelfFilter at 8000 Hz")
-        self.assertAlmostEqual(shelf_8k[0].gain_db, 0.5, places=1)
+        self.assertAlmostEqual(peak_3k[0].gain_db, -1.5, places=1)
 
     def test_acestep_chain_signal_path(self):
         """Smoke test: 48 kHz signal through ACE-Step chain produces valid output."""

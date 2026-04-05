@@ -239,7 +239,7 @@ def apply_segment_fades(speech_audio: np.ndarray) -> np.ndarray:
 def reduce_synthesis_noise(
     audio: np.ndarray,
     sr: int = SAMPLE_RATE,
-    prop_decrease: float = 0.6,
+    prop_decrease: float = 0.3,
     n_std_thresh: float = 2.0,
 ) -> np.ndarray:
     """Remove low-level synthesis hiss via stationary spectral gating.
@@ -474,12 +474,13 @@ def build_voice_chain(reverb_amount: float = 0.08, ir_name: str = "warm_studio")
       4. Peak -2 dB @ 350 Hz (Q=1.0): single mud cut for ISTFTNet boxy
          resonance (replaces dual cuts at 300 Hz and 400 Hz)
       5. Compressor 2:1 @ -18 dB: gentle glue compression
-      6. Peak -2.5 dB @ 3 kHz (Q=0.8): subtractive cut targeting the
-         2-4 kHz metallic resonance zone — the primary source of the
-         "AI sound" in ISTFTNet output. Intelligibility is preserved
-         by the broad Q; only the harsh resonant peaks are attenuated.
-      7. HiShelf -4.0 dB @ 7.5 kHz: de-harsh shelf for vocoder artifacts;
-         enforces the steep spectral tilt of relaxed, breathy speech.
+      6. Peak +1.0 dB @ 3 kHz (Q=0.6): broad presence boost for intelligibility
+         and forward, warm vocal character. Wide Q (0.6) means this is a
+         gentle lift across the 2–5 kHz upper midrange — not a sharp peak —
+         which adds expressiveness without harshness. The +1.0 dB gain is
+         conservative enough to avoid resonance amplification.
+      7. HiShelf -3.0 dB @ 7.5 kHz: single de-harsh shelf for vocoder
+         artifacts (replaces dual shelves at 7 kHz + 8 kHz = -5 dB).
       8. Convolution reverb: real IR for natural room presence
       9. LPF 9.5 kHz: Nyquist masking AFTER reverb (so reverb tails are
          filtered too — previous chain applied this BEFORE reverb)
@@ -492,16 +493,22 @@ def build_voice_chain(reverb_amount: float = 0.08, ir_name: str = "warm_studio")
 
     return Pedalboard([
         # ── Cleanup ──
-        NoiseGate(threshold_db=-42, ratio=20.0, attack_ms=2.0, release_ms=80),
+        # Threshold at -60 dB: allows room-tone pauses (-55 dBFS) to pass through
+        # while still gating true digital silence and inter-chunk synthesis artifacts.
+        # Previous -42 dB threshold was gating room tone, defeating its purpose.
+        NoiseGate(threshold_db=-60, ratio=2.5, attack_ms=5.0, release_ms=200),
         HighpassFilter(cutoff_frequency_hz=80.0),
         # ── Tone shaping ──
         LowShelfFilter(cutoff_frequency_hz=200, gain_db=2.0),
         PeakFilter(cutoff_frequency_hz=350, gain_db=-2.0, q=1.0),
         # ── Dynamics: gentle glue compression ──
-        Compressor(threshold_db=-18, ratio=2.0, attack_ms=10.0, release_ms=100.0),
-        # ── Anti-harshness: subtractive EQ at primary metallic resonance ──
-        PeakFilter(cutoff_frequency_hz=3000, gain_db=-2.5, q=0.8),
-        HighShelfFilter(cutoff_frequency_hz=7500, gain_db=-4.0),
+        Compressor(threshold_db=-18, ratio=2.0, attack_ms=30.0, release_ms=275.0),
+        # ── Presence & de-harsh ──
+        # -0.5 dB gentle cut at 3 kHz (Q=0.6): relieves ISTFTNet vocoder harshness
+        # in the presence region without carving an audible hole. Wide Q means
+        # this is a broad, subtle reduction across 2–5 kHz.
+        PeakFilter(cutoff_frequency_hz=3000, gain_db=-0.5, q=0.6),
+        HighShelfFilter(cutoff_frequency_hz=7500, gain_db=-3.5),
         # ── Space ──
         Convolution(
             impulse_response_filename=ir_path,
@@ -509,7 +516,7 @@ def build_voice_chain(reverb_amount: float = 0.08, ir_name: str = "warm_studio")
         ),
         # ── Protection ──
         LowpassFilter(cutoff_frequency_hz=9500),
-        Limiter(threshold_db=-1.0),
+        Limiter(threshold_db=-1.5),
     ])
 
 
@@ -518,14 +525,14 @@ def build_voice_chain(reverb_amount: float = 0.08, ir_name: str = "warm_studio")
 # is near-identity at normal speech levels but gently rounds transient peaks,
 # adding perceived warmth without audible distortion. Slightly lower drive
 # than F5-TTS (1.05 vs 1.08) because ISTFTNet output is already smoother.
-_KOKORO_TAPE_DRIVE = 1.05
+_KOKORO_TAPE_DRIVE = 1.02
 
 
 def apply_fx(
     audio: np.ndarray,
     chain: Pedalboard,
     sample_rate: int = SAMPLE_RATE,
-    tape_saturation: bool = True,
+    tape_saturation: bool = False,
 ) -> np.ndarray:
     """Apply tape saturation + Pedalboard FX chain to an audio array.
 
@@ -549,5 +556,6 @@ def apply_fx(
         result = processed.squeeze(0)
     else:
         result = processed
-    result = result[..., :audio.shape[-1]]
+    # Do NOT truncate to input length — this would clip the convolution reverb tail.
+    # The pipeline (pipeline.py) reconciles voice_activity length after apply_fx().
     return np.clip(result, -1.0, 1.0).astype(np.float32)

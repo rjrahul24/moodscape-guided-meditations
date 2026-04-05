@@ -59,17 +59,17 @@ Upsample → mix sample rate (soxr_vhq for all TTS engines)
   ▼
 ┌──────────────────────────────────────┐
 │ Unified Voice FX: build_voice_chain()│
-│   1. NoiseGate (-42 dB)             │
+│   1. NoiseGate (-60 dB)             │
 │   2. Highpass 80 Hz                  │
 │   3. LowShelf +2.0 dB @ 200 Hz      │
 │   4. PeakFilter -2 dB @ 350 Hz      │
 │      (Q=1.0, mud cut)              │
 │   5. Compressor 2:1 @ -18 dB        │
 │      (gentle glue)                  │
-│   6. PeakFilter -2.5 dB @ 3 kHz     │
-│      (Q=0.8, anti-harshness cut)   │
-│   7. HighShelf -4.0 dB @ 7.5 kHz    │
-│      (de-harsh, steep spectral tilt)│
+│   6. PeakFilter +1.0 dB @ 3 kHz      │
+│      (Q=0.6, broad presence boost)    │
+│   7. HighShelf -3.0 dB @ 7.5 kHz     │
+│      (de-harsh shelf)                │
 │   8. Convolution reverb (space)      │
 │   9. Lowpass 9.5 kHz (Nyquist mask, │
 │      after reverb)                  │
@@ -210,12 +210,13 @@ Export: 44.1 kHz or 48 kHz / 24-bit WAV | Target: -16 LUFS | TP ceiling: -1.5 dB
 
 ## 6. De-Essing Details
 
-### Kokoro: Anti-Harshness Subtractive EQ + High-Shelf (inside `build_voice_chain()`)
+### Kokoro: Broad Presence Boost + High-Shelf (inside `build_voice_chain()`)
 ```
-PeakFilter(3 kHz, -2.5 dB, Q=0.8)   — subtractive cut at primary metallic resonance zone
-HighShelfFilter(7.5 kHz, -4.0 dB)   — steep spectral tilt enforcement
+PeakFilter(3 kHz, +1.0 dB, Q=0.6)   — gentle broad lift across 2–5 kHz for intelligibility and
+                                       warm, forward vocal character; not a sharp resonance boost
+HighShelfFilter(7.5 kHz, -3.0 dB)   — single de-harsh shelf removing ISTFTNet HF artifacts
 ```
-The 3 kHz zone is the primary source of the "AI sound" in ISTFTNet output. A broadband subtractive cut removes metallic resonance while preserving intelligibility. The -4 dB shelf at 7.5 kHz enforces the steep spectral tilt characteristic of relaxed, breathy speech. The chain's 9.5 kHz LPF provides the final HF ceiling. Tape saturation (drive=1.05) adds harmonic warmth before the chain.
+The +1.0 dB broad presence boost (Q=0.6) preserves Kokoro's natural expressiveness. A wider Q (0.6 vs typically 1.0+) means this is a gentle lift across the full upper midrange, adding intelligibility and warmth without amplifying any single resonant frequency. The -3.0 dB shelf at 7.5 kHz tames vocoder HF artifacts without over-dulling the voice's 'air'. Tape saturation (drive=1.05) adds harmonic warmth before the chain.
 
 ### F5-TTS: Split-Band De-Esser (before voice FX chain)
 Isolates 4–8 kHz sibilant band via 4th-order Butterworth bandpass, compresses aggressively (-20 dB threshold, 4:1 ratio, 0.5ms attack, 10ms release), recombines with non-sibilant signal. Followed by subtle tape saturation (`tanh(x*1.08)/1.08`) for harmonic warmth.

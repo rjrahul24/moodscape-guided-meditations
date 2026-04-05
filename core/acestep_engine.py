@@ -26,10 +26,10 @@ TARGET_SAMPLE_RATE = 48000       # Preserve native 48 kHz through the pipeline
 
 # ── Generation quality knobs ──────────────────────────────────────────────────
 # guidance_scale: CFG strength for the SFT model.
-# 5.0 sits in the SFT sweet spot (4–6) for ambient music — strong enough
-# for reliable prompt adherence and texture control, without the rigidity
-# and spectral artifacts that appear above 6.0.
-_GUIDANCE_SCALE = 5.0
+# 5.5 sits in the upper SFT sweet spot (4–6) for ambient music — tighter
+# prompt adherence for meditation without the rigidity and spectral artifacts
+# that appear above 6.0.
+_GUIDANCE_SCALE = 5.5
 
 # inference_steps: SFT supports up to 50 steps. Going higher causes error
 # accumulation that degrades output quality. 50 is maximum detail without
@@ -38,20 +38,21 @@ _INFERENCE_STEPS = 50
 _INFERENCE_STEPS_REPAINT = 50
 
 # lm_temperature: Controls LM planner creativity.
-# 0.4 produces conservative, consistent tonal output ideal for meditation —
-# reduces unexpected bright timbres and rhythmic surprises while retaining
-# enough variation for organic-sounding ambient textures.
-_LM_TEMPERATURE = 0.4
+# 0.65 balances harmonic variety with calm predictability — low enough to
+# prevent unexpected timbral jumps, high enough to avoid harmonic stagnation
+# and repetitive loops in long meditations.
+_LM_TEMPERATURE = 0.65
 
 # Enable Adaptive Dual Guidance for the base (non-turbo) model.
 # ADG applies two complementary CFG branches that reinforce each other:
 # this significantly reduces spectral noise without increasing inference time.
 _USE_ADG = True
 
-# cfg_interval_end: Release CFG guidance at 60% of denoising steps.
-# Late steps refine micro-detail freely without prompt constraint, producing
-# smoother, more organic sustained tones and pad textures.
-_CFG_INTERVAL_END = 0.6
+# cfg_interval_end: Release CFG guidance at 80% of denoising steps.
+# Only the final 20% of micro-detail steps run free — enough organic softening
+# while keeping the structural calm/meditation intent intact through most of
+# the denoising process. 0.6 was too early, allowing 40% drift from prompt.
+_CFG_INTERVAL_END = 0.8
 
 # shift: Timestep shift factor for the DiT scheduler.
 # 3.0 concentrates more denoising budget on high-noise (semantic) steps,
@@ -1106,8 +1107,10 @@ class AceStepEngine:
     _MESA_BASE_TAGS = (
         "ambient, meditation, calm, peaceful, warm, spacious, "
         "soft dynamics, gentle, soothing, smooth texture, "
-        "high fidelity, warm tone, studio quality, clean production, "
-        "tuned to 432 Hz for natural resonance"
+        "slow tempo, drone pads, harmonic layers, ethereal, "
+        "no percussion, no drums, no beat, slow harmonic evolution, "
+        "sustained pads, sine wave layers, breathing space, no lead instrument, "
+        "high fidelity, deep warmth, Tuned to 432 Hz for natural resonance"
     )
 
     @classmethod
@@ -1156,39 +1159,40 @@ class AceStepEngine:
         training-vocabulary token for instrumental tracks.  [Verse]/[Bridge]
         carry implicit vocal bias from training data.  [Intro] and [Outro]
         are kept as they have clear semantic meaning for beginnings/endings.
-        Descriptive cues after the dash guide the LM planner's structural
-        decisions.  Section count scales with duration.
+        Prose cues after dashes were removed: they are out-of-distribution
+        for the SFT LM planner and degrade prompt adherence.  Section count
+        scales with duration.
         """
         # Short tracks (up to 90s): minimal structure
         if duration_hint <= 90.0:
             return (
                 "[Instrumental]\n\n"
-                "[Intro - Gentle ambient texture emerging softly from silence]\n\n"
-                "[Instrumental - Main harmonic landscape, warm and meditative]\n\n"
-                "[Outro - Dissolving gently into stillness]"
+                "[Intro]\n\n"
+                "[Instrumental]\n\n"
+                "[Outro]"
             )
 
         # Medium tracks (90s - 300s): full journey structure
         if duration_hint <= 300.0:
             return (
                 "[Instrumental]\n\n"
-                "[Intro - Soft ambient texture fading in from silence, establishing space]\n\n"
-                "[Instrumental - Primary harmonic landscape, slow and contemplative]\n\n"
-                "[Instrumental - Subtle tonal shift, deeper warmth, new colors emerge]\n\n"
-                "[Instrumental - Return to main theme with gentle enrichment]\n\n"
-                "[Outro - Extended fade, all elements dissolving gently into silence]"
+                "[Intro]\n\n"
+                "[Instrumental]\n\n"
+                "[Instrumental]\n\n"
+                "[Instrumental]\n\n"
+                "[Outro]"
             )
 
         # Long tracks (> 300s / 5 min): expanded arc for meditation journey
         return (
             "[Instrumental]\n\n"
-            "[Intro - Barely audible ambient wash fading in from pure silence]\n\n"
-            "[Instrumental - Primary landscape establishes slowly, warm and grounding]\n\n"
-            "[Instrumental - Texture deepens, tonal palette shifts to richer colors]\n\n"
-            "[Instrumental - Spacious minimal passage, stillness and breath]\n\n"
-            "[Instrumental - Main theme returns, enriched with new harmonic layers]\n\n"
-            "[Instrumental - Lighter textures, approaching resolution]\n\n"
-            "[Outro - Long extended fade, everything dissolving into peaceful silence]"
+            "[Intro]\n\n"
+            "[Instrumental]\n\n"
+            "[Instrumental]\n\n"
+            "[Instrumental]\n\n"
+            "[Instrumental]\n\n"
+            "[Instrumental]\n\n"
+            "[Outro]"
         )
 
     @staticmethod

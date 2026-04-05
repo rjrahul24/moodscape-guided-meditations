@@ -1,8 +1,8 @@
 <!-- QUICK-REF ──────────────────────────────────────────────────────── -->
 **Files:** `core/audio_processor.py` · `core/mixer.py` · `core/kokoro_tts/postprocessor.py` · `core/f5_tts/postprocessor.py`
 **Key functions:** `make_heartmula_music_chain()` · `make_acestep_music_chain()` · `make_lyria_music_chain()` · `make_vocal_pocket_chain()` · `make_master_chain()` · `build_voice_chain()` · `apply_fx()`
-**Mix defaults:** `music_volume_db=−17.0` · `duck_amount_db=−12.0` · `target_lufs=−19.0` · export streamed in 20s chunks
-**Active ducking:** `mixer.mix()` calls `apply_envelope_ducking()` — NOT `apply_rms_ducking()` (which exists but is unused in production)
+**Mix defaults:** `music_volume_db=−14.0` · `duck_amount_db=−12.0` · `hold_ms=1200` · `target_lufs=−16.0` · export streamed in 20s chunks
+**Active ducking:** `mixer.mix()` calls `apply_multiband_ducking()` by default (`multiband=True`). Falls back to `apply_envelope_ducking()` when `multiband=False`. `apply_rms_ducking()` exists but is NOT used in production.
 **IR files:** `assets/impulse_responses/{warm_studio,wooden_hall,stone_chapel}.wav` · default: `warm_studio`
 **Tasks:**
 - See full plugin-by-plugin parameter tables → `docs/ARCHITECTURE.md#fx-chains--full-parameter-tables`
@@ -157,17 +157,17 @@ def make_heartmula_music_chain() -> Pedalboard:
 
 ## 6. Master Chain
 
-The master chain applies subsonic filtering, headroom reduction, glue compression, and final limiting. The 35Hz highpass filter removes inaudible sub-bass rumble that would otherwise consume digital headroom, causing the limiter to trigger prematurely.
+The master chain applies subsonic filtering and final true-peak limiting. The 30 Hz highpass filter removes inaudible sub-bass rumble. Bus compression is intentionally absent — the multiband ducking system already shapes the voice-music dynamic contour; adding a bus compressor would fight that balance.
 
 ```python
 def make_master_chain() -> Pedalboard:
     return Pedalboard([
-        HighpassFilter(cutoff_frequency_hz=35.0),   # Remove inaudible sub-bass rumble
-        Gain(gain_db=-3.0),
-        Compressor(threshold_db=-18.0, ratio=2.0, attack_ms=30.0, release_ms=300.0),
-        Limiter(threshold_db=-0.1),
+        HighpassFilter(cutoff_frequency_hz=30.0),   # Remove sub-bass rumble
+        Limiter(threshold_db=-1.5, release_ms=400.0),  # True-peak safety (-1.5 dBTP)
     ])
 ```
+
+Export target: **−16 LUFS** (Apple Music / Spotify standard). True-peak clip at ±0.841 linear (−1.5 dBTP) applied after chain in `export_audio()`.
 
 ---
 
@@ -184,10 +184,11 @@ Algorithm:
 **Key parameter values:**
 | Parameter | Value | Rationale |
 |---|---|---|
-| `duck_amount_db` | -12 dB | Pipeline default; combined with music_volume_db=-17 → -29 dBFS during speech |
-| `attack_ms` | 40ms | Breath-like fade at voice onset (10ms was too snappy/mechanical) |
+| `duck_amount_db` | −12 dB | Pipeline default; combined with music_volume_db=−14 → ~22 dB voice-music separation |
+| `attack_ms` | 40ms | Responsive but smooth duck onset |
 | `release_ms` | 800ms | Gradual recovery matches meditation pacing |
-| `lookahead_ms` | 60ms | Pre-duck headroom before first syllable |
+| `hold_ms` | 1200ms | Bridges slow meditation phrase gaps (typical inter-phrase pause = 1–3s); prevents per-sentence pumping during deliberate narration |
+| `lookahead_ms` | 30ms | Subtle pre-duck before first syllable |
 
 The previous RMS-based method (`apply_rms_ducking`, formerly `apply_lookahead_ducking`) is retained as a fallback for edge cases where a boolean mask is unavailable.
 
