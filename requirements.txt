@@ -19,7 +19,10 @@ python-dotenv
 google-genai>=1.16.0
 mlx
 mlx-lm
+mlx-audio  # DeepFilterNet MLX for neural speech denoising
 accelerate>=0.26.0
 f5-tts>=1.0.0
+diffusers>=0.30.0  # AutoencoderOobleck required by ace-step; chatterbox-tts pins 0.29.0 but all its imports are compatible with 0.37.x
+chatterbox-tts  # Chatterbox TTS (Resemble AI) for emotion-controlled narration
 silero-vad
 git+https://github.com/ace-step/ACE-Step-1.5.git

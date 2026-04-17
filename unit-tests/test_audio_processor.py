@@ -31,23 +31,24 @@ class TestAudioProcessor(unittest.TestCase):
         import os
         from core.audio_processor import IR_CATALOG
         chain = make_acestep_music_chain()
-        # 7 base effects: NoiseGate, HPF, LowShelf(200Hz), PeakFilter(3kHz),
-        #                 LowpassFilter(16kHz), Compressor, Limiter
+        # 9 base effects: NoiseGate, HPF, LowShelf(200Hz), PeakFilter(2500Hz),
+        #                 PeakFilter(4500Hz), HighShelf(8kHz), LowpassFilter(16kHz),
+        #                 Compressor, Limiter
         # + 1 Convolution reverb when warm_studio IR file is present on disk
         ir_path = IR_CATALOG.get("warm_studio", {}).get("path", "")
-        expected = 8 if os.path.isfile(ir_path) else 7
+        expected = 10 if os.path.isfile(ir_path) else 9
         self.assertEqual(len(chain), expected, f"Expected {expected} effects, got {len(chain)}")
 
     def test_acestep_chain_midrange_and_air_filters(self):
-        """Verify 3 kHz presence cut is correctly configured."""
+        """Verify 2.5 kHz mid-cut is correctly configured."""
         from pedalboard import PeakFilter
         chain = make_acestep_music_chain()
 
-        # Find the 3 kHz PeakFilter (creates space for voice)
-        peak_3k = [p for p in chain if isinstance(p, PeakFilter)
-                   and abs(p.cutoff_frequency_hz - 3000) < 1]
-        self.assertEqual(len(peak_3k), 1, "Missing PeakFilter at 3000 Hz")
-        self.assertAlmostEqual(peak_3k[0].gain_db, -1.5, places=1)
+        # Find the 2.5 kHz PeakFilter (creates space for voice)
+        peak_mid = [p for p in chain if isinstance(p, PeakFilter)
+                    and abs(p.cutoff_frequency_hz - 2500) < 100]
+        self.assertEqual(len(peak_mid), 1, "Missing PeakFilter near 2500 Hz")
+        self.assertAlmostEqual(peak_mid[0].gain_db, -2.0, places=1)
 
     def test_acestep_chain_signal_path(self):
         """Smoke test: 48 kHz signal through ACE-Step chain produces valid output."""

@@ -69,11 +69,11 @@ ACE-Step 1.5 uses a **two-component architecture** on Apple Silicon (MLX):
 
 | Parameter | Value | Effect |
 |-----------|-------|--------|
-| `guidance_scale` | `5.0` | SFT sweet spot (4–6); strong prompt adherence for ambient texture control |
+| `guidance_scale` | `5.5` | Upper SFT sweet spot (4–6); strong prompt adherence for ambient texture control |
 | `inference_steps` | `50` (SFT) / `8` (Turbo) | Max for SFT without error accumulation |
-| `lm_temperature` | `0.4` | Conservative, consistent tonal output; reduces unexpected bright timbres |
-| `use_adg` | `True` | Adaptive Dual Guidance — reduces spectral noise without additional inference cost |
-| `cfg_interval_end` | `0.6` | Release CFG guidance at 60% — late steps refine freely for organic textures |
+| `lm_temperature` | `0.65` | Balances harmonic variety with calm predictability; prevents timbral jumps while avoiding harmonic stagnation |
+| `use_adg` | `False` | ADG disabled — SFT has prompt adherence baked in; ADG doubles forward passes without quality benefit |
+| `cfg_interval_end` | `0.8` | Release CFG guidance at 80% — only final 20% of micro-detail steps run free |
 | `shift` | `3.0` | Higher timestep shift = stronger semantic conditioning, cleaner harmonics |
 | `infer_method` | `"ode"` | Deterministic ODE for smooth, reproducible output |
 | `instrumental` | `True` | **Always forced** — vocals are categorically disabled |
@@ -99,12 +99,11 @@ The engine automatically selects a strategy based on target duration:
 | Duration | Strategy |
 |----------|----------|
 | ≤ 90s | Single ACE-Step inference call. Simple, reliable. |
-| > 90s | **Three-phase infinite pipeline** (genesis → cover continuation → boundary smoothing). All audio processed at native 48 kHz stereo before final downmix. |
+| > 90s | **Two-phase infinite pipeline** (genesis → repaint continuation). All audio processed at native 48 kHz mono. |
 
-For the three-phase pipeline:
-- **Phase 1 (Genesis):** 60s anchor segment via `text2music`. Sets the harmonic DNA and timbre palette.
-- **Phase 2 (Continuation):** Subsequent 60s segments via `cover` task, with `audio_cover_strength` decaying from 0.85 → 0.75 (floor). The cover task inherits harmonic structure while allowing tonal evolution.
-- **Phase 3 (Boundary Smoothing):** 5-second repaint windows at each segment seam to eliminate audible joins.
+For the two-phase pipeline:
+- **Phase 1 (Genesis):** 90s anchor segment via `text2music`. Sets the harmonic DNA and timbre palette.
+- **Phase 2 (Repaint Continuation):** Overlapping repaint calls — each call takes the last 20s of accumulated audio as context and generates up to 60s of new audio from `repainting_start=20s`. Only the new tail is appended. Produces seamless transitions at the model level — no post-hoc STFT crossfades required.
 
 **Your prompt governs the entire track** — the same enhanced caption is used for all phases. A prompt that clearly establishes a tonal world (rather than listing multiple contrasting moods) produces the most coherent long-form output.
 
@@ -185,7 +184,7 @@ Key is passed to the LM planner as a metadata constraint — **do not include ke
 
 ### Reference Audio
 
-Upload an audio file to steer ACE-Step's **timbral and acoustic character** toward a specific sonic world. The reference is passed to `GenerationParams.reference_audio` for every inference call — including all phases of the three-phase infinite pipeline (genesis, continuation, boundary smoothing) and all story-mode stages.
+Upload an audio file to steer ACE-Step's **timbral and acoustic character** toward a specific sonic world. The reference is passed to `GenerationParams.reference_audio` for every inference call — including both phases of the two-phase infinite pipeline (genesis and repaint continuation calls) and all story-mode stages.
 
 #### What reference audio does (and does not do)
 
@@ -479,6 +478,6 @@ When **ACE-Step 1.5** is selected in the Background Music Model dropdown, use th
 | **BPM** | Set via slider, not prompt. Default 50. Keep ≤ 65 for deep meditation |
 | **Key** | Set via dropdown, not prompt. Auto recommended unless you have a specific reason |
 | **Quality** | Always use Studio for final output |
-| **Duration routing** | ≤ 90s = single call; > 90s = three-phase pipeline (both are transparent to the prompt) |
+| **Duration routing** | ≤ 90s = single call; > 90s = two-phase pipeline (both are transparent to the prompt) |
 | **Reference audio** | Timbral/style conditioning — WAV/FLAC, 30–60s, instrument-only excerpt, no drums/vocals; reinforces the caption, does not replace it |
 | **Validation** | Engine retries up to 3x automatically on near-silence, clipping, or short output |

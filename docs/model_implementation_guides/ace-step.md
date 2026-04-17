@@ -1,14 +1,14 @@
 <!-- QUICK-REF ──────────────────────────────────────────────────────── -->
 **Files:** `core/acestep_engine.py`
 **Class:** `AceStepEngine` — `load_model()` / `generate()` / `_generate_infinite()` / `_enhance_prompt()`
-**Constants:** `_GUIDANCE_SCALE=3.0` · `_INFERENCE_STEPS=50` · `_LM_TEMPERATURE=0.7` · `_USE_ADG=True` · `_STORY_CROSSFADE_SEC=6.0`
+**Constants:** `_GUIDANCE_SCALE=5.5` · `_INFERENCE_STEPS=50` · `_LM_TEMPERATURE=0.65` · `_USE_ADG=False` · `_CFG_INTERVAL_END=0.8` · `_STORY_CROSSFADE_SEC=6.0`
 **Contract:** Output — 48 kHz mono float32 · Checkpoints — `./ACE-Step-1.5/checkpoints/`
 **MANDATORY:** `compile_model=True` to `initialize_service()` — without it, ~9s/step → timeout
 **Tasks:**
 - Tune generation params → module-level constants at top of `acestep_engine.py`
 - Change prompt enhancement → `_enhance_prompt()` (MESA framework: Mood/Elements/Structure/Application)
 - Adjust FX chain → `core/audio_processor.py :: make_acestep_music_chain()`
-- Long-form behavior → `_generate_infinite()` (three-phase: genesis + continuation + smoothing)
+- Long-form behavior → `_generate_infinite()` (two-phase: genesis [90s] + repaint continuation [20s overlap, 60s new per iteration])
 **See also:** `docs/ARCHITECTURE.md#acestepenginecoreacestepenginepy` · `docs/prompting_guides/ace_step_instructions.md`
 <!-- ────────────────────────────────────────────────────────────────── -->
 
@@ -26,7 +26,7 @@ This document is the complete reference for the **ACE-Step 1.5** music generatio
 - Model architecture overview (LM planner + DiT decoder)
 - Prompt engineering using the MESA framework
 - Complete implementation walkthrough of `core/acestep_engine.py`
-- Three-phase long-form generation pipeline
+- Two-phase long-form generation pipeline (genesis + repaint continuation)
 - Pipeline integration with the existing workflow
 - Parameter tuning, memory management, and troubleshooting
 
@@ -58,7 +58,7 @@ ACE-Step 1.5 is an open-source **text-to-music foundation model** with a two-bra
 | Criteria | HeartMuLa | ACE-Step 1.5 |
 |----------|-----------|--------------|
 | **Native sample rate** | 44.1 kHz | 48 kHz |
-| **Long-form approach** | Sliding window continuation (30s segments stitched) | Three-phase pipeline (genesis + cover continuation + boundary smoothing) |
+| **Long-form approach** | Sliding window continuation (30s segments stitched) | Two-phase pipeline (90s genesis + overlapping repaint continuation, 20s context per call) |
 | **Coherence** | Tag-based prompting; depends on context overlap | LM-planned structure; naturally coherent |
 | **Backend** | MPS / CPU via HeartLib | MLX (Metal native) |
 | **Best for** | Reliable ambient, fast prototyping | Long-form coherent journeys, high fidelity |
@@ -117,12 +117,12 @@ python -c "from acestep.llm_inference import LLMHandler; print('LLM Handler OK')
 
 | Parameter | Value | Rationale |
 |-----------|-------|-----------|
-| `_GUIDANCE_SCALE` | `5.0` | SFT sweet spot (4–6); strong prompt adherence for ambient texture control without rigidity |
+| `_GUIDANCE_SCALE` | `5.5` | Upper SFT sweet spot (4–6); strong prompt adherence for ambient texture control without rigidity |
 | `_INFERENCE_STEPS` | `50` | SFT max without error accumulation |
 | `_INFERENCE_STEPS_REPAINT` | `50` | Matches base steps for consistency |
-| `_LM_TEMPERATURE` | `0.4` | Conservative, consistent tonal output; reduces unexpected bright or harsh timbres |
-| `_USE_ADG` | `True` | Adaptive Dual Guidance reduces spectral noise |
-| `_CFG_INTERVAL_END` | `0.6` | Release CFG at 60% — late denoising steps refine freely for organic textures |
+| `_LM_TEMPERATURE` | `0.65` | Balances harmonic variety with calm predictability; prevents unexpected timbral jumps while avoiding harmonic stagnation |
+| `_USE_ADG` | `False` | ADG disabled — SFT model has strong prompt adherence baked in; ADG doubles forward passes without quality benefit on SFT |
+| `_CFG_INTERVAL_END` | `0.8` | Release CFG at 80% — only final 20% of micro-detail steps run free; 0.6 allowed too much drift from prompt |
 | `_SHIFT` | `3.0` | Higher timestep shift = stronger semantic conditioning, cleaner harmonics |
 | `_INFER_METHOD` | `"ode"` | Deterministic ODE for smooth, reproducible output |
 | `instrumental` | `True` | Always — meditation tracks must never have vocals |
@@ -163,9 +163,9 @@ Even for instrumental tracks, structural section tags guide the model's section-
 [Outro - Gradual fade, dissolving into stillness]
 ```
 
-**Medium tracks (90s–300s):** Adds Bridge and second Verse
+**Medium tracks (90s–300s):** Adds `[Verse]` + `[Chorus]` around a central `[Instrumental]` block
 
-**Long tracks (>300s):** Adds Interlude and second Bridge for expanded meditation arc
+**Long tracks (>300s):** Adds `[Bridge]` + a second `[Verse]`/`[Chorus]` pass for expanded meditation arc
 
 ### Curated Presets
 
@@ -224,25 +224,22 @@ ACE-Step output (48 kHz stereo tensor)
 
 All spectral shaping is handled by the downstream Pedalboard FX chain (`make_acestep_music_chain()`) at 48 kHz.
 
-### Three-Phase Long-Form Pipeline (>90s)
+### Two-Phase Long-Form Pipeline (>90s)
 
-For tracks exceeding 90 seconds, `_generate_infinite()` uses a three-phase approach:
+For tracks exceeding 90 seconds, `_generate_infinite()` uses a two-phase approach:
 
 **Phase 1 — Genesis:**
-Generate the initial 60s anchor via `text2music`. This sets the harmonic DNA, timbre palette, and tonal baseline.
+Generate the initial 90s anchor via `text2music`. This sets the harmonic DNA, timbre palette, and tonal baseline.
 
-**Phase 2 — Continuation via Cover Task:**
-For each subsequent segment, use the `cover` task with `audio_cover_strength` modulation:
-- Segment 2: strength=0.85 (close to anchor)
-- Segment 3: strength=0.80
-- Segment 4+: strength=0.75 (floor 0.75)
+**Phase 2 — Repaint Continuation:**
+For each subsequent segment, use `task_type="repaint"` with a 20-second overlap window:
+- Extract the last 20s of accumulated audio as context (written to a temp WAV file)
+- ACE-Step repaints from `repainting_start=20.0s` forward, generating up to 60s of new audio
+- Append only the newly generated tail (after the 20s overlap region) to the accumulation
 
-The cover task preserves the source's harmonic skeleton while allowing controlled tonal evolution. All intermediate audio stays at native 48 kHz stereo.
+The repaint task produces seamless transitions at the model level — no post-hoc STFT crossfades required. All intermediate audio stays at native 48 kHz mono.
 
-**Phase 3 — Boundary Smoothing:**
-Repaint 5-second windows centered on each seam between segments. The DiT automatically smooths rhythm, harmony, and timbre across the boundary.
-
-**Final:** Single postprocess converts the complete 48 kHz stereo track to 24 kHz mono.
+**Final:** Single postprocess converts the complete 48 kHz mono track to float32 numpy output.
 
 ### Output Validation
 
@@ -344,12 +341,12 @@ pip install git+https://github.com/ace-step/ACE-Step-1.5.git
 
 ### Audio Quality Issues
 - Verify MLX backend is active (check logs for "MLX" or "mps")
-- Increase `_GUIDANCE_SCALE` if output doesn't match prompt (max 7.0; currently 5.0)
-- Decrease `_LM_TEMPERATURE` if output is too unpredictable (currently 0.4; minimum ~0.2)
+- Increase `_GUIDANCE_SCALE` if output doesn't match prompt (max 7.0; currently 5.5)
+- Decrease `_LM_TEMPERATURE` if output is too unpredictable (currently 0.65; minimum ~0.2)
 
 ### Long-Form Seam Artifacts
-- The three-phase pipeline (cover + boundary smoothing) should eliminate seams
-- If artifacts persist, increase `BOUNDARY_WINDOW_SEC` in `_generate_infinite()`
+- The two-phase repaint pipeline produces seamless transitions at the model level — no post-hoc STFT crossfades
+- If artifacts persist, increase `CONTINUATION_OVERLAP` (currently 20s) in `_generate_infinite()` to provide more context per repaint call
 
 ---
 
@@ -363,10 +360,11 @@ BACKEND = "mlx"
 COMPILE_MODEL = True
 
 # Generation parameters
-GUIDANCE_SCALE = 3.0
+GUIDANCE_SCALE = 5.5
 INFERENCE_STEPS = 50
-LM_TEMPERATURE = 0.7
-USE_ADG = True
+LM_TEMPERATURE = 0.65
+USE_ADG = False              # Disabled — SFT has strong adherence baked in; ADG doubles passes with no benefit
+CFG_INTERVAL_END = 0.8       # Release guidance at 80% of denoising steps
 INSTRUMENTAL = True
 ENABLE_NORMALIZATION = True
 VOCAL_LANGUAGE = "unknown"
@@ -376,11 +374,9 @@ NATIVE_SAMPLE_RATE = 48000
 TARGET_SAMPLE_RATE = 48000
 OUTPUT_FORMAT = "mono float32 numpy at 48 kHz"
 
-# Long-form pipeline
-GENESIS_LENGTH = 60.0         # Initial anchor segment
-CONTINUATION_LENGTH = 60.0    # Cover continuation segments
-CONTEXT_LENGTH = 30.0         # Source audio for cover task
-CROSSFADE_SEC = 2.0           # Crossfade between segments
-BOUNDARY_WINDOW_SEC = 5.0     # Repaint window at seams
+# Long-form pipeline (two-phase)
+GENESIS_LENGTH = 90.0         # Initial anchor segment (text2music)
+CONTINUATION_LENGTH = 60.0    # New audio per repaint continuation call
+CONTINUATION_OVERLAP = 20.0   # Context window passed to each repaint call
 STORY_CROSSFADE_SEC = 6.0     # Crossfade between story stages
 ```

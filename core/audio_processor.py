@@ -200,60 +200,62 @@ def make_lyria_music_chain() -> Pedalboard:
 
 
 def make_vocal_pocket_chain() -> Pedalboard:
-    """Gentle EQ to carve a spectral lane for voice intelligibility.
+    """Frequency-aware EQ to carve a spectral lane for voice intelligibility.
 
-    Reduced aggressiveness vs previous version — the ducking system now
-    handles most of the voice-music separation, so the EQ pocket only
-    needs to provide a subtle spectral advantage.
+    Research-spec vocal pocket: deeper cuts in the voice presence range
+    (800-3000 Hz) create clear space for the narrator without needing
+    aggressive ducking. The ear is most sensitive at 1-3 kHz (Fletcher-
+    Munson curves), so even modest cuts here dramatically improve
+    perceived voice clarity.
 
     Chain:
       1. HighpassFilter at 30 Hz: Remove sub-bass rumble.
-      2. 300 Hz Peak (-2 dB, Q=0.8): Mild low-mid clarity.
-      3. 1000 Hz Peak (-1 dB, Q=0.7): Subtle space for vowel fundamentals.
-      4. 3000 Hz Peak (-0.5 dB, Q=1.0): Light presence trim for consonants.
-         ACE-Step music chain already cuts -1.5 dB here; combined = -2.0 dB
-         total (was -3.0 dB, causing telephone/honky coloration).
-      5. LowpassFilter at 12000 Hz: Tame harsh highs.
+      2. 350 Hz Peak (-3 dB, Q=0.7): Voice body/warmth range — wider Q
+         creates a gradual scoop across 200-500 Hz.
+      3. 1500 Hz Peak (-3.5 dB, Q=0.7): Primary vocal presence range.
+         Research: -3 to -4 dB @ 800-3kHz. This is the single most
+         effective cut for making voice punch through music.
+      4. 3000 Hz Peak (-2 dB, Q=0.8): Upper harmonics of speech
+         consonants. Prevents sibilance masking.
     """
     return Pedalboard([
         HighpassFilter(cutoff_frequency_hz=30),
-        PeakFilter(cutoff_frequency_hz=300, gain_db=-2, q=0.8),
-        PeakFilter(cutoff_frequency_hz=1000, gain_db=-1, q=0.7),
-        PeakFilter(cutoff_frequency_hz=3000, gain_db=-0.5, q=1.0),
-        LowpassFilter(cutoff_frequency_hz=12000),
+        PeakFilter(cutoff_frequency_hz=350, gain_db=-3.0, q=0.7),
+        PeakFilter(cutoff_frequency_hz=1500, gain_db=-3.5, q=0.7),
+        PeakFilter(cutoff_frequency_hz=3000, gain_db=-2.0, q=0.8),
     ])
 
 
 def make_master_chain() -> Pedalboard:
     """Final mastering chain: subsonic HPF → bus compressor → peak limiter.
 
-    Chain (per post-processing-pipeline.md):
+    Chain (per audio-opt research):
       1. HPF 30 Hz — removes subsonic rumble below the audible range.
       2. Compressor 1.5:1 @ -22 dB, 40ms/300ms — gentle 'glue' compression
          that bonds voice and music into a cohesive mix (~1-2 dB GR max).
          At 1.5:1 with a -22 dB threshold, this is inaudible as a compressor
          but adds perceived cohesion between TTS and music stems.
-      3. Limiter -1.5 dBTP, 400ms release — true peak safety margin for
-         lossy codec encoding (AAC/MP3). 400ms release prevents pumping on drones.
+      3. Limiter -1.0 dBTP, 400ms release — true peak safety margin for
+         lossy codec encoding. Research: -1.0 dBTP for meditation content.
     """
     return Pedalboard([
         HighpassFilter(cutoff_frequency_hz=30.0),
         Compressor(threshold_db=-22.0, ratio=1.5, attack_ms=40.0, release_ms=300.0),
-        Limiter(threshold_db=-1.5, release_ms=400.0),
+        Limiter(threshold_db=-1.0, release_ms=400.0),
     ])
 
 
 def reduce_music_noise(
     audio: np.ndarray,
     sample_rate: int = 48000,
-    prop_decrease: float = 0.65,
-    n_fft: int = 2048,
+    prop_decrease: float = 0.7,
+    n_fft: int = 512,
 ) -> np.ndarray:
     """Stationary noise reduction for music engine artifacts.
 
-    ACE-Step: targets 60 Hz diffusion noise floor and broadband VAE artifacts
-    (prop_decrease=0.65).  HeartMuLa: gentler (prop_decrease=0.45) — HeartCodec
-    output is cleaner but has subtle quantization noise from the 12.5 Hz RVQ.
+    Research-spec parameters: prop_decrease=0.7 for aggressive gating,
+    n_fft=512 for finer spectral resolution. Neural music generators
+    produce consistent artifact patterns that spectral gating handles well.
 
     Must be applied BEFORE the EQ chain so that artifact energy is removed
     before the compressor amplifies quiet passages.

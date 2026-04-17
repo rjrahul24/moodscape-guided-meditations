@@ -17,7 +17,6 @@ import os
 
 import numpy as np
 import torch
-import torchaudio
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +42,13 @@ _INFERENCE_STEPS_REPAINT = 50
 # and repetitive loops in long meditations.
 _LM_TEMPERATURE = 0.65
 
-# Enable Adaptive Dual Guidance for the base (non-turbo) model.
-# ADG applies two complementary CFG branches that reinforce each other:
-# this significantly reduces spectral noise without increasing inference time.
-_USE_ADG = True
+# ADG (Adaptive Dual Guidance) was designed for the base model.
+# On SFT, prompt adherence is baked into weights via supervised fine-tuning,
+# so ADG doubles forward passes without quality benefit and can conflict with
+# the already-strong SFT guidance signal.  Disabled for SFT config.
+# Note: _generate_single_repaint and _generate_cover_continuation already
+# hardcode use_adg=False; this aligns the main generation path with those.
+_USE_ADG = False
 
 # cfg_interval_end: Release CFG guidance at 80% of denoising steps.
 # Only the final 20% of micro-detail steps run free — enough organic softening
@@ -100,13 +102,11 @@ class AceStepEngine:
 
     def load_model(self, model_type="sft"):
         """Load ACE-Step DiT and LLM handlers.
-        
+
         Args:
             model_type: "sft" (high fidelity, 50 steps) or
                         "turbo" (distilled, 8 steps).
         """
-        import os
-
         # ── Patch ACE-Step package constants before first import ──────────────
         # The package hard-codes DURATION_MAX=600 and ACESTEP_GENERATION_TIMEOUT=600
         # at module-import time.  We need to override both before any acestep
@@ -396,18 +396,14 @@ class AceStepEngine:
         keyscale: str | None = "Auto",
         reference_audio_path: str | None = None,
     ) -> np.ndarray:
-        """Three-phase long-form generation at native 48 kHz stereo.
+        """Two-phase long-form generation at native 48 kHz stereo.
 
-        Phase 1 — Genesis: text2music for the initial anchor segment.
-        Phase 2 — Continuation: cover task with decaying audio_cover_strength
-                  to generate harmonically coherent subsequent segments. Adjacent
-                  segments are joined with a 2-second equal-power cosine²
-                  crossfade (CROSSFADE_SEC = 2.0) — no hard cuts, no amplitude
-                  discontinuities at any seam boundary.
-        Phase 3 — Boundary Smoothing: 5-second ACE-Step repaint window at each
-                  seam eliminates musical discontinuity via model-level
-                  re-generation. This is a secondary quality pass — not the
-                  primary stitching mechanism (which is the Phase 2 crossfade).
+        Phase 1 — Genesis: text2music for the initial 90-second anchor segment.
+        Phase 2 — Repaint continuation: overlapping repaint calls that treat the
+                  last 20 seconds of accumulated audio as anchor context, then
+                  generate new audio from that point forward.  Repaint produces
+                  seamless transitions at the model level — no post-hoc STFT
+                  crossfades required.
 
         All intermediate audio stays at 48 kHz stereo.  Single postprocess
         at the end eliminates quality-degrading sample-rate round-trips.
@@ -415,11 +411,8 @@ class AceStepEngine:
         import tempfile
         import soundfile as sf
 
-        GENESIS_LEN = 60.0
+        GENESIS_LEN = 90.0
         CONTINUATION_LEN = 60.0
-        CONTEXT_LEN = 30.0
-        CROSSFADE_SEC = 2.0
-        BOUNDARY_WINDOW_SEC = 5.0
 
         enhanced_prompt, enhanced_lyrics = self._enhance_prompt(
             prompt, duration_hint=total_duration_sec,
@@ -442,84 +435,77 @@ class AceStepEngine:
             enhanced_prompt, genesis_len, lyrics=enhanced_lyrics,
             bpm=bpm, keyscale=keyscale, reference_audio_path=reference_audio_path,
         )
-        seam_positions: list[int] = []
         seg_num = 1
 
-        # ── Phase 2: Cover Continuation ──────────────────────────────────
+        # Downmix genesis to mono (1, T) so that repaint continuations
+        # (which return mono numpy → (1, T) tensor) can be concatenated
+        # along dim=-1 without a channel-count mismatch.
+        if full_tensor.ndim > 1 and full_tensor.shape[0] > 1:
+            full_tensor = full_tensor.mean(dim=0, keepdim=True)
+
+        # ── Phase 2: Overlapping repaint continuation ────────────────────
+        # repaint (task_type="repaint") treats the first N seconds as anchor
+        # and generates new audio from repainting_start onward — producing
+        # seamless transitions without needing post-hoc STFT crossfades.
+        CONTINUATION_OVERLAP = 20.0  # seconds of context passed to each repaint call
+
         while full_tensor.shape[-1] / sr < total_duration_sec - 1.0:
             seg_num += 1
-            remaining = total_duration_sec - (full_tensor.shape[-1] / sr)
-            next_len = min(CONTINUATION_LEN, remaining + CROSSFADE_SEC)
+            full_audio_len = full_tensor.shape[-1] / sr
+            remaining = total_duration_sec - full_audio_len
+            segment_new_len = min(60.0, remaining)
+            repaint_total = CONTINUATION_OVERLAP + segment_new_len
 
-            # Cover strength decays: 0.85, 0.80, 0.75 (floor)
-            cover_strength = max(0.75, 0.90 - 0.05 * seg_num)
-
-            # Use last CONTEXT_LEN seconds as cover source
-            context_samples = int(CONTEXT_LEN * sr)
-            context_samples = min(context_samples, full_tensor.shape[-1])
-            context_tensor = full_tensor[:, -context_samples:]
+            # Extract the last CONTINUATION_OVERLAP seconds as repaint context
+            overlap_samples = int(CONTINUATION_OVERLAP * sr)
+            overlap_samples = min(overlap_samples, full_tensor.shape[-1])
+            src_chunk = full_tensor[:, -overlap_samples:]
 
             logger.info(
-                "[AceStepEngine] Phase 2 seg %d: cover (strength=%.2f, %.0fs)",
-                seg_num, cover_strength, next_len,
+                "[AceStepEngine] Phase 2 seg %d: repaint continuation (overlap=%.0fs, new=%.0fs)",
+                seg_num, CONTINUATION_OVERLAP, segment_new_len,
             )
 
-            new_tensor = None
-            with tempfile.TemporaryDirectory() as tmpdir:
-                src_wav = os.path.join(tmpdir, "cover_src.wav")
-                # soundfile expects (samples, channels) — transpose from (C, T)
-                sf.write(src_wav, context_tensor.cpu().numpy().T, sr)
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                tmp_path = tmp.name
+            # soundfile expects (samples, channels) — transpose from (C, T)
+            sf.write(tmp_path, src_chunk.cpu().numpy().T, sr)
 
-                # Generate with validation and A/B selection (up to 3 attempts)
-                from core.qa_monitor import compute_composite_score
+            continuation_audio = None
+            try:
+                continuation_audio = self._generate_single_repaint(
+                    enhanced_prompt,
+                    tmp_path,
+                    CONTINUATION_OVERLAP,
+                    repaint_total,
+                    lyrics=enhanced_lyrics,
+                    bpm=bpm,
+                    keyscale=keyscale,
+                    reference_audio_path=reference_audio_path,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[AceStepEngine] Repaint continuation seg %d error: %s — stopping early",
+                    seg_num, exc,
+                )
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
 
-                cont_candidates: list[tuple[torch.Tensor, float]] = []
-                for attempt in range(3):
-                    new_tensor, _ = self._generate_cover_continuation(
-                        enhanced_prompt, src_wav, next_len,
-                        cover_strength=cover_strength,
-                        lyrics=enhanced_lyrics, bpm=bpm, keyscale=keyscale,
-                        reference_audio_path=reference_audio_path
-                    )
+            if continuation_audio is None:
+                logger.warning("[AceStepEngine] Repaint continuation returned None — stopping early")
+                break
 
-                    # Validate intermediate segment
-                    temp_audio = self._postprocess(new_tensor, sr)
-                    valid, reason = self._validate_output(temp_audio, next_len - CROSSFADE_SEC)
-                    if valid:
-                        score = compute_composite_score(temp_audio, TARGET_SAMPLE_RATE)
-                        cont_candidates.append((new_tensor, score))
-                        if score > 0.8:
-                            break
-                    else:
-                        logger.warning(
-                            "[AceStepEngine] Continuation attempt %d/3 failed validation: %s",
-                            attempt + 1, reason,
-                        )
-                        cont_candidates.append((new_tensor, 0.0))
+            # continuation_audio is mono float32 numpy from _generate_single_repaint
+            # Convert to (1, T) torch tensor to match full_tensor shape
+            cont_tensor = torch.from_numpy(continuation_audio).unsqueeze(0)
 
-                if cont_candidates:
-                    new_tensor = max(cont_candidates, key=lambda c: c[1])[0]
-                    if len(cont_candidates) > 1:
-                        scores = [f"{s:.3f}" for _, s in cont_candidates]
-                        logger.info("[AceStepEngine] Continuation A/B — scores: %s", scores)
-
-                if not valid and not any(s > 0 for _, s in cont_candidates):
-                    logger.error("[AceStepEngine] Continuation segment %d failed all attempts", seg_num)
-
-            # Crossfade at native 48 kHz stereo
-            fade_samples = int(CROSSFADE_SEC * sr)
-            fade_samples = min(fade_samples, full_tensor.shape[-1], new_tensor.shape[-1])
-
-            t = torch.linspace(0.0, torch.pi / 2.0, fade_samples)
-            fade_out = (torch.cos(t) ** 2).unsqueeze(0)   # (1, F) broadcasts over channels
-            fade_in = (torch.sin(t) ** 2).unsqueeze(0)
-
-            blended = full_tensor[:, -fade_samples:] * fade_out + new_tensor[:, :fade_samples] * fade_in
-            seam_pos = full_tensor.shape[-1] - fade_samples
-            full_tensor = torch.cat([
-                full_tensor[:, :-fade_samples], blended, new_tensor[:, fade_samples:],
-            ], dim=-1)
-            seam_positions.append(seam_pos)
+            # Append only the newly generated tail (after the overlap region)
+            new_start_sample = int(CONTINUATION_OVERLAP * sr)
+            new_audio = cont_tensor[:, new_start_sample:]
+            full_tensor = torch.cat([full_tensor, new_audio], dim=-1)
 
             if progress_cb:
                 done = full_tensor.shape[-1] / sr
@@ -527,20 +513,6 @@ class AceStepEngine:
                     int(done / CONTINUATION_LEN),
                     max(1, int(total_duration_sec / CONTINUATION_LEN)),
                 )
-
-        # ── Phase 3: Boundary Smoothing ──────────────────────────────────
-        for i, seam_pos in enumerate(seam_positions):
-            logger.info(
-                "[AceStepEngine] Phase 3: smoothing boundary %d/%d at %.1fs",
-                i + 1, len(seam_positions), seam_pos / sr,
-            )
-            full_tensor = self._smooth_boundary(
-                full_tensor, sr, seam_pos,
-                window_sec=BOUNDARY_WINDOW_SEC,
-                enhanced_prompt=enhanced_prompt,
-                lyrics=enhanced_lyrics, bpm=bpm, keyscale=keyscale,
-                reference_audio_path=reference_audio_path,
-            )
 
         # ── Final: single postprocess to 24 kHz mono ────────────────────
         logger.info(
@@ -766,179 +738,6 @@ class AceStepEngine:
 
         logger.info("[AceStepEngine] Raw generation done in %.1fs", time.time() - t0)
         return tensor, sample_rate
-
-    def _generate_cover_continuation(
-        self,
-        enhanced_prompt: str,
-        src_audio_path: str,
-        duration_sec: float,
-        cover_strength: float = 0.80,
-        lyrics: str | None = None,
-        bpm: int | None = 50,
-        keyscale: str | None = "Auto",
-        reference_audio_path: str | None = None,
-    ) -> tuple[torch.Tensor, int]:
-        """Cover-task continuation → raw 48 kHz stereo tensor.
-
-        Generates a new segment that inherits the harmonic DNA of the source
-        audio.  ``audio_cover_strength`` controls how much structure is
-        preserved (0.85 = close to source, 0.70 = gentle evolution).
-        """
-        from acestep.inference import GenerationConfig, GenerationParams, generate_music
-
-        t0 = time.time()
-
-        params = GenerationParams(
-            task_type="cover",
-            caption=enhanced_prompt,
-            lyrics=lyrics or "[Instrumental]",
-            instrumental=True,
-            src_audio=src_audio_path,
-            audio_cover_strength=cover_strength,
-            reference_audio=reference_audio_path,
-            duration=duration_sec,
-            bpm=bpm if bpm and bpm > 0 else None,
-            keyscale=keyscale if keyscale and keyscale != "Auto" else "",
-            vocal_language="unknown",
-            inference_steps=self._get_inference_steps(is_repaint=False),
-            guidance_scale=_GUIDANCE_SCALE,
-            use_adg=False,
-            thinking=False,
-            lm_temperature=_LM_TEMPERATURE,
-            enable_normalization=True,
-            cfg_interval_end=_CFG_INTERVAL_END,
-            shift=_SHIFT,
-            infer_method=_INFER_METHOD,
-        )
-        config = GenerationConfig(batch_size=1, audio_format="wav")
-
-        result = generate_music(
-            dit_handler=self._dit, llm_handler=self._llm,
-            params=params, config=config, save_dir=None,
-        )
-
-        if not result.success:
-            raise RuntimeError(
-                f"[AceStepEngine] Cover continuation failed: {result.error or result.status_message}"
-            )
-        if not result.audios:
-            raise RuntimeError("[AceStepEngine] Cover returned no audio outputs")
-
-        audio_dict = result.audios[0]
-        tensor = audio_dict["tensor"]
-        sample_rate = audio_dict.get("sample_rate", NATIVE_SAMPLE_RATE)
-
-        if tensor.device.type != "cpu":
-            tensor = tensor.cpu()
-        tensor = tensor.float()
-        if tensor.ndim == 1:
-            tensor = tensor.unsqueeze(0)
-
-        logger.info("[AceStepEngine] Cover continuation done in %.1fs", time.time() - t0)
-        return tensor, sample_rate
-
-    def _smooth_boundary(
-        self,
-        full_tensor: torch.Tensor,
-        sr: int,
-        seam_sample_pos: int,
-        window_sec: float = 5.0,
-        enhanced_prompt: str | None = None,
-        lyrics: str | None = None,
-        bpm: int | None = 50,
-        keyscale: str | None = "Auto",
-        reference_audio_path: str | None = None,
-    ) -> torch.Tensor:
-        """Repaint a short window around a seam to smooth the boundary.
-
-        Extracts a ~30s context window centered on the seam, repaints the
-        middle ``window_sec`` seconds, and splices the result back.
-        """
-        import tempfile
-        import soundfile as sf
-
-        half_window = int(window_sec * sr / 2)
-        context_pad = int(12.5 * sr)  # ~12.5s of context on each side
-
-        # Define the extraction window (context + repaint region + context)
-        extract_start = max(0, seam_sample_pos - half_window - context_pad)
-        extract_end = min(full_tensor.shape[-1], seam_sample_pos + half_window + context_pad)
-        window_tensor = full_tensor[:, extract_start:extract_end]
-        window_duration = window_tensor.shape[-1] / sr
-
-        # Repaint boundaries within the extracted window
-        repaint_start = (seam_sample_pos - half_window - extract_start) / sr
-        repaint_end = (seam_sample_pos + half_window - extract_start) / sr
-        repaint_start = max(0.0, repaint_start)
-        repaint_end = min(window_duration, repaint_end)
-
-        if repaint_end - repaint_start < 0.5:
-            return full_tensor  # window too small to repaint
-
-        from acestep.inference import GenerationConfig, GenerationParams, generate_music
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            src_wav = os.path.join(tmpdir, "boundary_src.wav")
-            sf.write(src_wav, window_tensor.cpu().numpy().T, sr)
-
-            params = GenerationParams(
-                task_type="repaint",
-                caption=enhanced_prompt or "",
-                lyrics=lyrics or "[Instrumental]",
-                instrumental=True,
-                src_audio=src_wav,
-                reference_audio=reference_audio_path,
-                repainting_start=repaint_start,
-                repainting_end=repaint_end,
-                duration=window_duration,
-                bpm=bpm if bpm and bpm > 0 else None,
-                keyscale=keyscale if keyscale and keyscale != "Auto" else "",
-                vocal_language="unknown",
-                inference_steps=self._get_inference_steps(is_repaint=True),
-                guidance_scale=_GUIDANCE_SCALE,
-                use_adg=False,
-                thinking=False,
-                lm_temperature=_LM_TEMPERATURE,
-                enable_normalization=True,
-            )
-            config = GenerationConfig(batch_size=1, audio_format="wav")
-
-            result = generate_music(
-                dit_handler=self._dit, llm_handler=self._llm,
-                params=params, config=config, save_dir=None,
-            )
-
-        if not result.success:
-            logger.warning("[AceStepEngine] Boundary smoothing failed: %s", result.error)
-            return full_tensor  # non-fatal — keep the crossfaded version
-
-        repainted_tensor = result.audios[0]["tensor"]
-        if repainted_tensor.device.type != "cpu":
-            repainted_tensor = repainted_tensor.cpu()
-        repainted_tensor = repainted_tensor.float()
-        if repainted_tensor.ndim == 1:
-            repainted_tensor = repainted_tensor.unsqueeze(0)
-
-        # Splice the repainted region back into full_tensor.
-        # Use a short (0.1s) crossfade at splice edges to avoid clicks.
-        splice_fade = min(int(0.1 * sr), half_window)
-        rp_start_sample = seam_sample_pos - half_window
-        rp_end_sample = seam_sample_pos + half_window
-        rp_start_in_window = rp_start_sample - extract_start
-        rp_end_in_window = rp_end_sample - extract_start
-
-        # Ensure indices are in bounds
-        rp_start_in_window = max(0, rp_start_in_window)
-        rp_end_in_window = min(repainted_tensor.shape[-1], rp_end_in_window)
-        rp_start_sample = max(0, rp_start_sample)
-        rp_end_sample = min(full_tensor.shape[-1], rp_end_sample)
-
-        repainted_region = repainted_tensor[:, rp_start_in_window:rp_end_in_window]
-        region_len = min(repainted_region.shape[-1], rp_end_sample - rp_start_sample)
-        if region_len > 0:
-            full_tensor[:, rp_start_sample:rp_start_sample + region_len] = repainted_region[:, :region_len]
-
-        return full_tensor
 
     @staticmethod
     def _validate_output(audio: np.ndarray, duration_sec: float) -> tuple[bool, str]:
@@ -1172,13 +971,14 @@ class AceStepEngine:
                 "[Outro]"
             )
 
-        # Medium tracks (90s - 300s): full journey structure
+        # Medium tracks (90s - 300s): full journey structure with compositional arc
         if duration_hint <= 300.0:
             return (
                 "[Instrumental]\n\n"
                 "[Intro]\n\n"
+                "[Verse]\n\n"
                 "[Instrumental]\n\n"
-                "[Instrumental]\n\n"
+                "[Chorus]\n\n"
                 "[Instrumental]\n\n"
                 "[Outro]"
             )
@@ -1187,11 +987,13 @@ class AceStepEngine:
         return (
             "[Instrumental]\n\n"
             "[Intro]\n\n"
+            "[Verse]\n\n"
             "[Instrumental]\n\n"
+            "[Chorus]\n\n"
+            "[Bridge]\n\n"
             "[Instrumental]\n\n"
-            "[Instrumental]\n\n"
-            "[Instrumental]\n\n"
-            "[Instrumental]\n\n"
+            "[Verse]\n\n"
+            "[Chorus]\n\n"
             "[Outro]"
         )
 

@@ -73,10 +73,9 @@ class SpeechEngine(ABC):
 - `load_model(model_type="sft")` — patches `ACESTEP_GENERATION_TIMEOUT=7200`, `DURATION_MAX=1200` before import
 - `compile_model=True` — mandatory; one-time JIT ~135s, then ~4× faster per step
 - Device: `"auto"` → MPS on Apple Silicon; DiT uses `use_mlx_dit=True`
-- Long-form (>90s): `_generate_infinite()` — three phases:
-  1. **Genesis** (60s): initial anchor segment
-  2. **Cover continuation** (60s segments): decaying `audio_cover_strength` (0.85 → 0.80 → 0.75 floor); last 30s of previous as context
-  3. **Boundary smoothing**: 5s ACE-Step repaint windows at each seam
+- Long-form (>90s): `_generate_infinite()` — two phases:
+  1. **Genesis** (90s): initial anchor segment via `text2music`
+  2. **Repaint continuation**: overlapping repaint calls — 20s context window from tail of accumulated audio; 60s new audio per iteration; seamless at model level (no post-hoc STFT crossfades needed)
 - Story mode: `_generate_story()` — per-stage prompt + 6s equal-power crossfades
 - `_enhance_prompt(user_prompt, duration_hint)` — MESA framework → `(caption, lyrics)` tuple
 
@@ -475,7 +474,7 @@ Controls: BPM (40–140), Density (0.0–1.0), Brightness (0.0–1.0), Guidance 
 | `unit-tests/test_f5_pacing.py` | WPM-based pacing, `fix_duration` |
 | `unit-tests/test_heartmula_engine.py` | HeartMuLa lazy loading, segment generation |
 | `unit-tests/test_acestep_engine.py` | ACE-Step generation, MESA prompt enhancement |
-| `unit-tests/test_acestep_infinite.py` | Three-phase long-form generation |
+| `unit-tests/test_acestep_infinite.py` | Two-phase long-form generation (genesis + repaint continuation) |
 | `unit-tests/test_stitch_client.py` | `StitchClient.generate_design_concept()` |
 | `integration-tests/test_integration_modes.py` | Full pipeline (all mode combinations) |
 | `integration-tests/test_stress.py` | Load testing, memory management across sessions |

@@ -197,6 +197,8 @@ def generate_meditation(
     reverb_ir_choice,
     quality_mode_flag,
     stereo_output_flag,
+    chatterbox_exaggeration,
+    chatterbox_ref_audio,
 ):
     # Initial status
     yield None, _render_status("Initializing Pipeline", 0.0)
@@ -224,7 +226,12 @@ def generate_meditation(
     acestep_model_type = "turbo" if "Turbo" in acestep_quality else "sft"
 
     # Map TTS engine label to key
-    tts_engine = "f5" if tts_engine_choice == "F5-TTS" else "kokoro"
+    if tts_engine_choice == "F5-TTS":
+        tts_engine = "f5"
+    elif tts_engine_choice == "Chatterbox":
+        tts_engine = "chatterbox"
+    else:
+        tts_engine = "kokoro"
 
     # Queue for streaming progress updates from the pipeline thread.
     # Items are (fraction, message) tuples; None is the sentinel for completion.
@@ -268,6 +275,9 @@ def generate_meditation(
                 quality_mode=bool(quality_mode_flag),
                 stereo_output=bool(stereo_output_flag),
                 melody_audio_path=reference_audio_file or None,
+                chatterbox_exaggeration=float(chatterbox_exaggeration) if tts_engine == "chatterbox" else 0.45,
+                chatterbox_cfg_weight=0.2,
+                chatterbox_reference_audio=chatterbox_ref_audio if tts_engine == "chatterbox" else None,
             )
             result_container["result"] = result
         except Exception as e:
@@ -308,7 +318,7 @@ def generate_meditation(
     duration = _get_duration(output_path)
     minutes = int(duration // 60)
     seconds = int(duration % 60)
-    tts_label = "F5-TTS" if tts_engine == "f5" else "Kokoro"
+    tts_label = {"f5": "F5-TTS", "chatterbox": "Chatterbox", "kokoro": "Kokoro"}.get(tts_engine, "Kokoro")
     detail = f"Synthesized with {tts_label} + {music_model_choice} · {minutes}m {seconds}s"
     yield output_path, _render_status("Generation Complete", 1.0, detail, elapsed=elapsed)
 
@@ -841,7 +851,7 @@ with gr.Blocks(
                     elem_classes="pill-radio",
                 )
                 tts_engine_radio = gr.Radio(
-                    choices=["Kokoro", "F5-TTS"],
+                    choices=["Kokoro", "F5-TTS", "Chatterbox"],
                     value="Kokoro",
                     label="Voice Engine",
                     elem_classes="pill-radio",
@@ -865,6 +875,17 @@ with gr.Blocks(
                         0, 150, 0, step=5,
                         label="Pacing (WPM)",
                         info="0 = natural rhythm (recommended), 90-110 = meditation, 120-150 = narration",
+                    )
+                with gr.Group(visible=False, elem_id="chatterbox-group") as chatterbox_settings:
+                    chatterbox_exag_slider = gr.Slider(
+                        0.0, 1.0, 0.45, step=0.05,
+                        label="Emotion Intensity",
+                        info="0 = monotone, 0.25 = flat calm, 0.45 = meditation ideal (warmth + care), 1.0 = dramatic",
+                    )
+                    chatterbox_ref_audio_input = gr.Audio(
+                        label="Voice Reference (5-15s .wav for cloning)",
+                        type="filepath",
+                        sources=["upload"],
                     )
 
             # Section 2: Mix & Effects
@@ -951,6 +972,7 @@ with gr.Blocks(
         show_lyria = (current_music_model == "Lyria RealTime") and not is_voc
         show_kokoro = (current_tts_engine == "Kokoro") and not is_inst
         show_f5 = (current_tts_engine == "F5-TTS") and not is_inst
+        show_chatterbox = (current_tts_engine == "Chatterbox") and not is_inst
         return (
             gr.update(visible=not is_inst),   # script_input
             gr.update(visible=not is_voc),    # music_prompt
@@ -964,12 +986,13 @@ with gr.Blocks(
             gr.update(visible=show_acestep),  # acestep_metadata
             gr.update(visible=show_lyria),    # lyria_settings
             gr.update(visible=show_f5),       # f5_settings
+            gr.update(visible=show_chatterbox),  # chatterbox_settings
         )
 
     generation_mode.change(
         fn=toggle_mode_settings,
         inputs=[generation_mode, music_model_dropdown, tts_engine_radio],
-        outputs=[script_input, music_prompt, music_duration, kokoro_settings, speed_slider, duck_slider, reverb_slider, reference_audio, acestep_quality, acestep_metadata, lyria_settings, f5_settings],
+        outputs=[script_input, music_prompt, music_duration, kokoro_settings, speed_slider, duck_slider, reverb_slider, reference_audio, acestep_quality, acestep_metadata, lyria_settings, f5_settings, chatterbox_settings],
     )
 
     def toggle_music_engine_ui(model, mode):
@@ -988,10 +1011,14 @@ with gr.Blocks(
         is_inst = mode == "Instrumental Only"
         show_kokoro = (tts_engine == "Kokoro") and not is_inst
         show_f5 = (tts_engine == "F5-TTS") and not is_inst
+        show_chatterbox = (tts_engine == "Chatterbox") and not is_inst
         # Set engine-optimal speed default
         if tts_engine == "F5-TTS":
             speed_val = 1.0
             speed_label = "Speaking Speed (1.0 = natural, use slow reference for pace)"
+        elif tts_engine == "Chatterbox":
+            speed_val = 0.90
+            speed_label = "Speaking Speed (pacing controlled by emotion intensity)"
         else:
             speed_val = 0.90
             speed_label = "Speaking Speed (0.85-0.95 = meditation ideal)"
@@ -999,12 +1026,13 @@ with gr.Blocks(
             gr.update(visible=show_kokoro),
             gr.update(visible=show_f5),
             gr.update(value=speed_val, label=speed_label),
+            gr.update(visible=show_chatterbox),
         )
 
     tts_engine_radio.change(
         fn=toggle_tts_engine_ui,
         inputs=[tts_engine_radio, generation_mode],
-        outputs=[kokoro_settings, f5_settings, speed_slider],
+        outputs=[kokoro_settings, f5_settings, speed_slider, chatterbox_settings],
     )
 
     generate_btn.click(
@@ -1039,6 +1067,8 @@ with gr.Blocks(
             reverb_ir_dropdown,
             quality_mode_checkbox,
             stereo_output_checkbox,
+            chatterbox_exag_slider,
+            chatterbox_ref_audio_input,
         ],
         outputs=[audio_output, status_display],
         show_progress="full",

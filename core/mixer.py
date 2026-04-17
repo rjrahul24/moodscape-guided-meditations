@@ -600,20 +600,22 @@ def mix(
     aligned_music = aligned_music[..., :target_len]
 
     # 4. Apply sidechain ducking
-    # Meditation-tuned parameters:
-    #   attack_ms=40:     responsive but smooth duck onset
-    #   release_ms=800:   music returns gently, calming feel
+    # Research-spec meditation parameters:
+    #   attack_ms=150:    much slower than EDM (100-200ms per research);
+    #                     music fades gracefully rather than snapping down
+    #   release_ms=650:   music returns gently (research: 500-800ms)
     #   hold_ms=1200:     bridges slow meditation phrase gaps (typical pause 1-3s);
     #                     prevents per-sentence pumping that feels jarring in
     #                     slow, deliberate narration
-    #   lookahead_ms=30:  subtle pre-duck before first syllable
+    #   lookahead_ms=500: conservative pre-duck (research recommends 1-2s;
+    #                     starting conservative per user preference)
     _duck_kwargs = dict(
         sample_rate=sample_rate,
         duck_amount_db=duck_amount_db,
         threshold_db=-35.0,
-        attack_ms=40.0,
-        release_ms=800.0,
-        lookahead_ms=30.0,
+        attack_ms=150.0,
+        release_ms=650.0,
+        lookahead_ms=500.0,
         hold_ms=1200.0,
     )
 

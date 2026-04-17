@@ -14,55 +14,60 @@ class TestAceStepInfinite(unittest.TestCase):
         self.engine._llm = MagicMock()
         self.engine._dit.initialize_service.return_value = ("Success", True)
 
-    @patch("core.qa_monitor.compute_composite_score", return_value=0.9)
-    @patch("core.acestep_engine.AceStepEngine._smooth_boundary")
-    @patch("core.acestep_engine.AceStepEngine._generate_cover_continuation")
+    @patch("core.acestep_engine.AceStepEngine._generate_single_repaint")
     @patch("core.acestep_engine.AceStepEngine._generate_single_raw")
-    @patch("core.acestep_engine.AceStepEngine._validate_output")
     @patch("soundfile.write")
     def test_generate_infinite_reference_audio_propagation(
-        self, mock_sf_write, mock_validate, mock_raw, mock_cover, mock_smooth, mock_score,
+        self, mock_sf_write, mock_raw, mock_repaint,
     ):
-        """Verify reference_audio_path is propagated to all phases."""
-        mock_raw.return_value = (torch.ones(2, int(60 * NATIVE_SAMPLE_RATE)), NATIVE_SAMPLE_RATE)
-        mock_cover.return_value = (torch.ones(2, int(60 * NATIVE_SAMPLE_RATE)), NATIVE_SAMPLE_RATE)
-        mock_validate.return_value = (True, "OK")
-        mock_smooth.side_effect = lambda tensor, *a, **kw: tensor
+        """Verify reference_audio_path is propagated to genesis and repaint continuation."""
+        # Genesis returns 90s of stereo audio (GENESIS_LEN = 90.0)
+        genesis_samples = int(90 * NATIVE_SAMPLE_RATE)
+        mock_raw.return_value = (torch.ones(2, genesis_samples), NATIVE_SAMPLE_RATE)
+
+        # Repaint continuation returns 80s of mono audio (20s overlap + 60s new)
+        repaint_samples = int(80 * NATIVE_SAMPLE_RATE)
+        mock_repaint.return_value = np.zeros(repaint_samples, dtype=np.float32)
 
         ref_path = "/tmp/test_ref.wav"
-        with patch.object(AceStepEngine, "_prepare_reference_audio", return_value=ref_path):
-            self.engine.generate("test prompt", 120.0, melody_audio=np.zeros(100), melody_sample_rate=24000)
+        with patch("tempfile.NamedTemporaryFile") as mock_tmpfile, \
+             patch("os.unlink"):
+            mock_tmpfile.return_value.__enter__ = lambda s: s
+            mock_tmpfile.return_value.__exit__ = MagicMock(return_value=False)
+            mock_tmpfile.return_value.name = "/tmp/fake_overlap.wav"
+            with patch.object(AceStepEngine, "_prepare_reference_audio", return_value=ref_path):
+                self.engine.generate("test prompt", 120.0, melody_audio=np.zeros(100), melody_sample_rate=24000)
 
-        # Check genesis
+        # Check genesis received reference_audio_path
         self.assertEqual(mock_raw.call_args[1]["reference_audio_path"], ref_path)
-        # Check continuation
-        self.assertEqual(mock_cover.call_args[1]["reference_audio_path"], ref_path)
-        # Check smoothing
-        self.assertEqual(mock_smooth.call_args[1]["reference_audio_path"], ref_path)
+        # Check repaint continuation received reference_audio_path
+        self.assertEqual(mock_repaint.call_args[1]["reference_audio_path"], ref_path)
 
-    @patch("core.qa_monitor.compute_composite_score", return_value=0.9)
-    @patch("core.acestep_engine.AceStepEngine._smooth_boundary")
-    @patch("core.acestep_engine.AceStepEngine._generate_cover_continuation")
+    @patch("core.acestep_engine.AceStepEngine._generate_single_repaint")
     @patch("core.acestep_engine.AceStepEngine._generate_single_raw")
-    @patch("core.acestep_engine.AceStepEngine._validate_output")
     @patch("soundfile.write")
     def test_generate_infinite_retry_logic(
-        self, mock_sf_write, mock_validate, mock_raw, mock_cover, mock_smooth, mock_score,
+        self, mock_sf_write, mock_raw, mock_repaint,
     ):
-        """Verify that _generate_infinite retries failed segments."""
-        mock_raw.return_value = (torch.ones(2, int(60 * NATIVE_SAMPLE_RATE)), NATIVE_SAMPLE_RATE)
-        mock_cover.return_value = (torch.ones(2, int(60 * NATIVE_SAMPLE_RATE)), NATIVE_SAMPLE_RATE)
-        mock_smooth.side_effect = lambda tensor, *a, **kw: tensor
+        """Verify that _generate_infinite stops early when repaint returns None."""
+        # Genesis returns 90s of stereo audio (GENESIS_LEN = 90.0)
+        genesis_samples = int(90 * NATIVE_SAMPLE_RATE)
+        mock_raw.return_value = (torch.ones(2, genesis_samples), NATIVE_SAMPLE_RATE)
 
-        # Genesis (60s) + 1 Continuation (52s - 2s crossfade = 50s) = 110s
-        # First attempt of continuation fails, second succeeds
-        mock_validate.side_effect = [(False, "Too quiet"), (True, "OK")]
+        # Repaint raises an exception on first call → continuation_audio stays None → early stop
+        mock_repaint.side_effect = RuntimeError("Repaint failed")
 
-        self.engine.generate("test prompt", 110.0)
+        with patch("tempfile.NamedTemporaryFile") as mock_tmpfile, \
+             patch("os.unlink"):
+            mock_tmpfile.return_value.__enter__ = lambda s: s
+            mock_tmpfile.return_value.__exit__ = MagicMock(return_value=False)
+            mock_tmpfile.return_value.name = "/tmp/fake_overlap.wav"
+            result = self.engine.generate("test prompt", 150.0)
 
-        # 1 genesis call (mock_validate NOT called for genesis in this test)
-        # 2 cover calls (failed attempt + successful retry)
-        self.assertEqual(mock_cover.call_count, 2)
+        # Should return the genesis audio (90s) without crashing
+        self.assertIsNotNone(result)
+        # Repaint was called once (then stopped early)
+        self.assertEqual(mock_repaint.call_count, 1)
 
     @patch("core.qa_monitor.compute_composite_score", return_value=0.9)
     def test_generate_single_switch(self, mock_score):

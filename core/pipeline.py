@@ -1,7 +1,9 @@
 """Orchestrates the full meditation audio generation pipeline."""
 
 import gc
+import json
 import logging
+import os
 import time
 
 import numpy as np
@@ -163,6 +165,9 @@ class MeditationPipeline:
         quality_mode: bool = False,
         stereo_output: bool = False,
         melody_audio_path: str | None = None,
+        chatterbox_exaggeration: float = 0.25,
+        chatterbox_cfg_weight: float = 0.3,
+        chatterbox_reference_audio: str | None = None,
     ) -> tuple[str, str | None, dict | None]:
         """Run the full pipeline and return the path to the output audio file.
 
@@ -224,9 +229,9 @@ class MeditationPipeline:
         use_heartmula = music_model == "heartmula"
 
         # All music engines output at 48 kHz natively; mix at that rate for quality.
-        # F5-TTS also mixes at 48 kHz.
+        # F5-TTS and Chatterbox also mix at 48 kHz.
         # TTS voice (24 kHz) is upsampled to match whichever rate is selected.
-        mix_sr = 48000 if (use_lyria or use_acestep or use_heartmula or tts_engine == "f5") else TARGET_SR
+        mix_sr = 48000 if (use_lyria or use_acestep or use_heartmula or tts_engine in ("f5", "chatterbox")) else TARGET_SR
 
         logger.info("Starting generation — mode=%s, music_model=%s, voice=%s, speed=%s, seed=%s, lufs=%s",
                     generation_mode, music_model, voice, speed, seed, target_lufs)
@@ -238,6 +243,9 @@ class MeditationPipeline:
 
                 if tts_engine == "f5":
                     from core.f5_tts.preprocessor import prepare_segments as _prepare
+                elif tts_engine == "chatterbox":
+                    # Chatterbox uses Kokoro's preprocessor (same segment format)
+                    from core.kokoro_tts.preprocessor import prepare_segments as _prepare
                 else:
                     from core.kokoro_tts.preprocessor import prepare_segments as _prepare
                 segments = _prepare(script)
@@ -256,6 +264,14 @@ class MeditationPipeline:
                     from core.f5_tts.engine import F5Engine
                     tts = F5Engine(voice_slug=f5_voice_slug)
                     _progress(progress_cb, 0.05, "Loading F5-TTS voice model...")
+                elif tts_engine == "chatterbox":
+                    from core.chatterbox_tts.engine import ChatterboxEngine
+                    tts = ChatterboxEngine(
+                        exaggeration=chatterbox_exaggeration,
+                        cfg_weight=chatterbox_cfg_weight,
+                        reference_audio=chatterbox_reference_audio,
+                    )
+                    _progress(progress_cb, 0.05, "Loading Chatterbox TTS (0.5B)...")
                 else:
                     tts = self.tts
                     _progress(progress_cb, 0.05, "Loading Kokoro voice model...")
@@ -273,6 +289,11 @@ class MeditationPipeline:
                     voice_audio, voice_activity = tts.synthesize(
                         segments, speed=speed, progress_cb=tts_progress,
                         target_wpm=f5_target_wpm if f5_target_wpm and f5_target_wpm > 0 else None,
+                    )
+                elif tts_engine == "chatterbox":
+                    voice_audio, voice_activity = tts.synthesize(
+                        segments, speed=speed, progress_cb=tts_progress,
+                        seed=seed,
                     )
                 else:
                     voice_audio, voice_activity = tts.synthesize(
@@ -320,8 +341,6 @@ class MeditationPipeline:
                     from core.f5_tts.postprocessor import F5MasteringEngine
                     mastering_engine = F5MasteringEngine(sample_rate=SAMPLE_RATE)
 
-                logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
-
                 # Upsample Voice to the mix sample rate:
                 #   Lyria / ACE-Step path → 48 kHz (preserves native music resolution)
                 #   HeartMuLa → 44.1 kHz (HeartCodec native rate)
@@ -348,6 +367,16 @@ class MeditationPipeline:
                 else:
                      voice_activity = voice_activity[:len(voice_audio)]
 
+                # Neural denoising: DeepFilterNet MLX removes TTS synthesis noise
+                # at 48 kHz using learned spectral masks. Much better than noisereduce
+                # spectral gating — preserves soft consonants (/h/, /f/) and breath
+                # sounds that statistical methods would damage. Falls back to
+                # noisereduce if mlx-audio is not installed.
+                if mix_sr == 48000:
+                    _progress(progress_cb, 0.39, "Neural denoising (DeepFilterNet MLX)...")
+                    from core.deepfilter_enhancer import enhance_voice_deepfilter
+                    voice_audio = enhance_voice_deepfilter(voice_audio, sr=mix_sr)
+
                 # F5-TTS Phase B mastering (Kokoro skips — unified voice chain in Step 7)
                 if mastering_engine is not None:
                     _progress(progress_cb, 0.39, "Mastering vocal stem (EQ/De-Ess)...")
@@ -360,7 +389,7 @@ class MeditationPipeline:
                 # ── Step 4: Unload TTS, load music model ────────────────────────
                 if not is_instrumental:
                     tts.unload_model()
-                    if tts_engine == "f5":
+                    if tts_engine in ("f5", "chatterbox"):
                         del tts
 
                 music_model_label = "Lyria RealTime" if use_lyria else ("ACE-Step 1.5" if use_acestep else "HeartMuLa")
@@ -536,6 +565,9 @@ class MeditationPipeline:
                     from core.f5_tts.postprocessor import build_f5_voice_chain
                     from core.kokoro_tts.postprocessor import apply_fx
                     voice_chain = build_f5_voice_chain(reverb_amount=reverb_amount, ir_name=reverb_ir)
+                elif tts_engine == "chatterbox":
+                    from core.kokoro_tts.postprocessor import build_chatterbox_voice_chain, apply_fx
+                    voice_chain = build_chatterbox_voice_chain(reverb_amount=reverb_amount, ir_name=reverb_ir)
                 else:
                     from core.kokoro_tts.postprocessor import build_voice_chain, apply_fx
                     voice_chain = build_voice_chain(reverb_amount=reverb_amount, ir_name=reverb_ir)
