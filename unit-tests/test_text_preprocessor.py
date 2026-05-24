@@ -155,14 +155,19 @@ class TestApplyStressMarkers(unittest.TestCase):
 
     def test_no_double_wrap_on_ipa_block(self):
         """Words already inside [word](/IPA/) blocks must not be wrapped again."""
+        # Boost-word guard
         text = "[calm](/kˈɑːm/) is what you seek."
         result = _apply_stress_markers(text)
-        # Should NOT produce [[calm]
         self.assertNotIn("[[calm]", result)
+        # Reduce-word guard
+        text2 = "[tension](/tɛnʃən/) is released."
+        result2 = _apply_stress_markers(text2)
+        self.assertNotIn("[[tension]", result2)
 
     def test_case_insensitive_matching(self):
         result = _apply_stress_markers("TENSION in your body.")
         self.assertIn("(-1)", result)
+        self.assertIn("[TENSION](-1)", result)
 
     def test_stress_markers_appear_in_full_preprocess_pipeline(self):
         """_apply_stress_markers is called inside preprocess_for_meditation."""
