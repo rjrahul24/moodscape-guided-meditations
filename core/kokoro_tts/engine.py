@@ -79,6 +79,8 @@ class KokoroEngine(SpeechEngine):
             )
             if hasattr(self.pipeline, "model") and self.pipeline.model is not None:
                 self.pipeline.model.to(device)
+            # Apply meditation G2P lexicon overrides (American English only)
+            self._apply_meditation_lexicon(self.pipeline)
 
     def _get_pipeline(self, voice):
         """Return the correct pipeline based on voice language prefix."""
@@ -100,6 +102,63 @@ class KokoroEngine(SpeechEngine):
                     self.pipeline_en_gb = KPipeline(lang_code="b", device=device)
             return self.pipeline_en_gb
         return self.pipeline
+
+    # ── Meditation lexicon constants ──────────────────────────────────────
+    # Maps English meditation words → elongated IPA variants using American
+    # English phonemes. Written once into pipeline.g2p.lexicon.golds at
+    # load_model() time — overrides default conversational pronunciations
+    # globally for all subsequent synthesis calls.
+    # Only applied to the American English pipeline (lang_code='a');
+    # the British pipeline uses non-rhotic IPA which differs.
+    _MEDITATION_LEXICON: dict[str, str] = {
+        # Core breath words — elongated vowels for resonance
+        "breathe":    "bɹiːːð",     # hyper-elongated 'ee'
+        "breath":     "bɹɛːθ",      # elongated open vowel
+        "exhale":     "ɛksˈheɪːl",  # elongated 'ay' on release
+        "inhale":     "ɪnˈheɪːl",   # elongated 'ay' on intake
+        # Relaxation verbs — flattened stress, elongated vowels
+        "relax":      "ɹɪˈlæːks",   # elongated 'a'
+        "release":    "ɹɪˈliːːs",   # hyper-elongated 'ee'
+        "soften":     "ˈsɔːfən",    # elongated 'o' for warmth
+        "surrender":  "səˈɹɛndə",   # reduced stress, trailing schwa
+        "dissolve":   "dɪˈzɒːlv",   # elongated 'o'
+        "melt":       "mɛːlt",      # elongated vowel
+        "sink":       "sɪːŋk",      # elongated vowel
+        "drift":      "dɹɪːft",     # elongated vowel
+    }
+
+    def _apply_meditation_lexicon(self, pipe) -> None:
+        """Inject elongated IPA overrides for core English meditation words.
+
+        Writes directly into the misaki G2P lexicon's 'golds' dict, which
+        takes priority over all dictionary lookups. Applied once at
+        model-load time — no per-sentence text manipulation needed.
+
+        Only called on the American English pipeline (lang_code='a').
+        The British pipeline is intentionally excluded because the IPA
+        uses rhotic American phonemes (e.g., bɹiːːð with ɹ) that would
+        produce incorrect non-rhotic pronunciation in British English.
+
+        Args:
+            pipe: A KPipeline instance. If its g2p.lexicon.golds attribute
+                  is inaccessible (e.g., future misaki API change), an
+                  AttributeError is caught and a warning is logged so
+                  synthesis continues with default pronunciations.
+        """
+        try:
+            lexicon = pipe.g2p.lexicon.golds
+            for word, ipa in self._MEDITATION_LEXICON.items():
+                lexicon[word] = ipa
+            logger.info(
+                "[Kokoro] Meditation G2P lexicon applied: %d word overrides",
+                len(self._MEDITATION_LEXICON),
+            )
+        except AttributeError as exc:
+            logger.warning(
+                "[Kokoro] G2P lexicon override skipped — attribute path "
+                "g2p.lexicon.golds not accessible (%s). "
+                "Default pronunciations will be used.", exc,
+            )
 
     def unload_model(self):
         """Release model and free GPU memory."""

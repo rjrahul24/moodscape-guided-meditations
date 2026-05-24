@@ -128,5 +128,50 @@ class TestHumanizeVoiceScope(unittest.TestCase):
             )
 
 
+class TestMeditationLexicon(unittest.TestCase):
+    """_apply_meditation_lexicon must write IPA overrides into pipeline.g2p.lexicon.golds."""
+
+    def _make_engine(self):
+        return KokoroEngine()
+
+    def test_core_words_injected(self):
+        engine = self._make_engine()
+        mock_pipe = MagicMock()
+        mock_pipe.g2p.lexicon.golds = {}
+
+        engine._apply_meditation_lexicon(mock_pipe)
+
+        for word in ("breathe", "exhale", "inhale", "relax", "release",
+                     "soften", "surrender", "dissolve", "melt", "sink", "drift"):
+            self.assertIn(
+                word, mock_pipe.g2p.lexicon.golds,
+                f"Expected '{word}' in g2p.lexicon.golds after _apply_meditation_lexicon"
+            )
+
+    def test_ipa_values_are_strings(self):
+        engine = self._make_engine()
+        mock_pipe = MagicMock()
+        mock_pipe.g2p.lexicon.golds = {}
+
+        engine._apply_meditation_lexicon(mock_pipe)
+
+        for word, ipa in mock_pipe.g2p.lexicon.golds.items():
+            self.assertIsInstance(ipa, str, f"IPA for '{word}' must be a str, got {type(ipa)}")
+            self.assertGreater(len(ipa), 0, f"IPA for '{word}' must be non-empty")
+
+    def test_missing_golds_attr_does_not_raise(self):
+        """If g2p.lexicon.golds is not accessible, method silently logs a warning."""
+        engine = self._make_engine()
+
+        class _NoPipeline:
+            pass  # no g2p attribute at all
+
+        # Must not raise — AttributeError is caught internally
+        try:
+            engine._apply_meditation_lexicon(_NoPipeline())
+        except AttributeError:
+            self.fail("_apply_meditation_lexicon raised AttributeError instead of catching it")
+
+
 if __name__ == '__main__':
     unittest.main()
