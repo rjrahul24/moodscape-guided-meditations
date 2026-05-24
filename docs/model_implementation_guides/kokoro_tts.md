@@ -525,7 +525,7 @@ MoodScape uses a multi-stage postprocessing pipeline tailored to Kokoro's ISTFTN
 5. Compressor (2.5:1, **-28 dB** threshold, 15ms/150ms) — dynamics control; catches whisper-level delivery
 6. PeakFilter (**+1.0 dB @ 3 kHz, Q=0.6**) — broad presence boost for intelligibility and forward warmth; wide Q=0.6 lifts the full 2–5 kHz upper midrange gently, preserving natural expressiveness without amplifying single resonances
 7. HighShelfFilter (**-3.0 dB @ 7.5 kHz**) — single de-harsh shelf taming ISTFTNet vocoder HF artifacts without killing 'air'
-8. Convolution reverb — space (IR: warm_studio / wooden_hall / stone_chapel)
+8. Convolution reverb (**18% wet**, IR: warm_studio / wooden_hall / stone_chapel)
 9. LowpassFilter (9.5 kHz) — Nyquist masking (after reverb to catch reverb HF)
 10. Limiter (-1 dBFS) — protection
 
