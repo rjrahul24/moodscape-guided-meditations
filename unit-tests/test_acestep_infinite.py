@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 import numpy as np
 import torch
-from core.acestep_engine import AceStepEngine, TARGET_SAMPLE_RATE, NATIVE_SAMPLE_RATE
+from core.acestep.engine import AceStepEngine, TARGET_SAMPLE_RATE, NATIVE_SAMPLE_RATE
 
 
 class TestAceStepInfinite(unittest.TestCase):
@@ -14,8 +14,8 @@ class TestAceStepInfinite(unittest.TestCase):
         self.engine._llm = MagicMock()
         self.engine._dit.initialize_service.return_value = ("Success", True)
 
-    @patch("core.acestep_engine.AceStepEngine._generate_single_repaint")
-    @patch("core.acestep_engine.AceStepEngine._generate_single_raw")
+    @patch("core.acestep.engine.AceStepEngine._generate_single_repaint")
+    @patch("core.acestep.engine.AceStepEngine._generate_single_raw")
     @patch("soundfile.write")
     def test_generate_infinite_reference_audio_propagation(
         self, mock_sf_write, mock_raw, mock_repaint,
@@ -43,8 +43,8 @@ class TestAceStepInfinite(unittest.TestCase):
         # Check repaint continuation received reference_audio_path
         self.assertEqual(mock_repaint.call_args[1]["reference_audio_path"], ref_path)
 
-    @patch("core.acestep_engine.AceStepEngine._generate_single_repaint")
-    @patch("core.acestep_engine.AceStepEngine._generate_single_raw")
+    @patch("core.acestep.engine.AceStepEngine._generate_single_repaint")
+    @patch("core.acestep.engine.AceStepEngine._generate_single_raw")
     @patch("soundfile.write")
     def test_generate_infinite_retry_logic(
         self, mock_sf_write, mock_raw, mock_repaint,

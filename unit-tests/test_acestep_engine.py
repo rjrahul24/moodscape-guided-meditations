@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 
-from core.acestep_engine import AceStepEngine, TARGET_SAMPLE_RATE
+from core.acestep.engine import AceStepEngine, TARGET_SAMPLE_RATE
 
 
 class TestAceStepEngine(unittest.TestCase):
@@ -51,7 +51,7 @@ class TestAceStepEngine(unittest.TestCase):
 
     def test_guidance_scale_value(self):
         """_GUIDANCE_SCALE should be 5.5 (upper SFT range for tighter meditation adherence)."""
-        from core.acestep_engine import _GUIDANCE_SCALE
+        from core.acestep.engine import _GUIDANCE_SCALE
         self.assertEqual(_GUIDANCE_SCALE, 5.5)
 
     def test_enhance_prompt_anti_harshness_tags(self):

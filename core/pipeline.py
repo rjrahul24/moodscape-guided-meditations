@@ -39,7 +39,7 @@ def _enhance_acestep_prompt(user_prompt: str, duration_hint: float = 120.0) -> t
     Delegates to AceStepEngine's prompt enhancer which returns
     (caption, lyrics) tuple with duration-aware structural tags.
     """
-    from core.acestep_engine import AceStepEngine
+    from core.acestep import AceStepEngine
     return AceStepEngine._enhance_prompt(user_prompt, duration_hint=duration_hint)
 
 
@@ -326,7 +326,7 @@ class MeditationPipeline:
                     from core.lyria.engine import LyriaEngine
                     music_engine = LyriaEngine()
                 elif use_acestep:
-                    from core.acestep_engine import AceStepEngine
+                    from core.acestep import AceStepEngine
                     music_engine = AceStepEngine()
                 else:
                     raise ValueError(f"Unknown music model: {music_model}")
@@ -440,7 +440,7 @@ class MeditationPipeline:
                     if use_lyria:
                         from core.lyria.engine import TARGET_SAMPLE_RATE as MUSIC_SR
                     elif use_acestep:
-                        from core.acestep_engine import TARGET_SAMPLE_RATE as MUSIC_SR
+                        from core.acestep import TARGET_SAMPLE_RATE as MUSIC_SR
                     else:
                         raise ValueError(f"Unknown music model for stem separation: {music_model}")
                     from core.stem_separator import StemSeparator
