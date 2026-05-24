@@ -1,278 +1,98 @@
 # MoodScape Guided Meditations
 
-AI-guided meditation audio generator using Gradio, multiple TTS engines, and AI music generation. Target hardware: Apple Silicon M1 Max (36 GB unified RAM).
+AI-guided meditation audio generator (Gradio UI). Three TTS engines (Kokoro, F5-TTS, IndexTTS-2) and two music engines (ACE-Step 1.5, Lyria RealTime). Target hardware: Apple Silicon M1 Max (36 GB unified RAM).
 
 ## Setup & Run
 
 ```bash
 source .venv/bin/activate
 pip install -r requirements.txt
-python app.py                      # Gradio UI at http://localhost:7860
+brew install espeak-ng                 # Kokoro G2P dependency
+python app.py                          # Gradio UI at http://localhost:7860
 ```
 
-**System dependency:** `brew install espeak-ng` (required by Kokoro TTS)
-
-**Environment variables:** `.env` file (gitignored) must contain `HF_TOKEN` and `GOOGLE_API_KEY`. App also sets `TOKENIZERS_PARALLELISM=false` and `PYTORCH_ENABLE_MPS_FALLBACK=1` at startup.
-
-## Agents
-
-Custom sub-agents live in `.claude/agents/`. Claude Code loads them automatically. Trigger them after implementation work.
-
-| Agent | Model | Role |
-|-------|-------|------|
-| `root-agent` | Sonnet | **Orchestrator** — entry point for every task; dispatches all other agents in order; writes final execution summary |
-| `planning-agent` | Opus | Builds the sequential execution plan before any code is written; clarifies assumptions with user; coordinates with deep-research-agent |
-| `coding-agent` | Sonnet | Executes the confirmed plan; writes all code; tests new dependencies before integrating |
-| `deep-research-agent` | Opus | Online research grounded in project constraints (Apple Silicon, stack, audio contracts); invoked by planning-agent or directly |
-| `documentation-agent` | Sonnet | Updates all docs after every code change (`docs/`, `ARCHITECTURE.md`, `README.md`, `CLAUDE.md`) |
-| `code-reviewer-agent` | Haiku | Removes dead code from changed files, then runs unit and integration tests to verify no regressions |
-| `github-sync-agent` | Haiku | Syncs local repo with GitHub; triggers when 5+ commits ahead, work is complete, or user requests push |
-
-**Standard execution flow**:
-```
-root-agent → planning-agent (confirm plan) → coding-agent → code-reviewer-agent → documentation-agent → [github-sync-agent]
-```
-
-**Research-first flow** (new model/library/architecture):
-```
-root-agent → deep-research-agent → planning-agent (confirm plan) → coding-agent → code-reviewer-agent → documentation-agent
-```
-
-**Always start with `root-agent`** for any task involving more than a single obvious file edit.
-
----
-
-## Task Workflow
-
-IMPORTANT: Follow these steps for every task.
-
-1. **Use the Task-Routing Guide below** — find the relevant file(s) before scanning broadly
-2. **Read docs first** — each doc file has a QUICK-REF header; read that before the full doc
-   - `docs/model_implementation_guides/` — engine internals (ACE-Step, Kokoro, F5-TTS, Lyria, Pedalboard)
-   - `docs/optimization_and_processing/` — audio pipeline and post-processing
-   - `docs/prompting_guides/` — prompt engineering per engine
-   - `docs/ARCHITECTURE.md` — full technical deep-dive (FX params, QA thresholds, memory patterns)
-3. **Implement changes**
-4. **Trigger `code-reviewer-agent`** on the changed files
-5. **Trigger `documentation-agent`** on the changed files
-6. **Run tests** — unit tests for small changes, integration tests for large changes
-7. **Do NOT push to GitHub** unless explicitly asked
-8. **Update this CLAUDE.md** if you discover new development patterns worth noting
+`.env` must define `HF_TOKEN` and `GOOGLE_API_KEY`. `app.py` sets `TOKENIZERS_PARALLELISM=false` and `PYTORCH_ENABLE_MPS_FALLBACK=1` at startup.
 
 ## Build & Test
 
 ```bash
 .venv/bin/python -m pytest tests/unit/ -v                                    # all unit tests
 .venv/bin/python -m pytest tests/unit/test_mixer.py -v                       # single file
-.venv/bin/python -m pytest tests/unit/test_meditation_mastering.py::test_mastering -v
-.venv/bin/python -m pytest tests/integration/ -v                             # slower, full pipeline
-python scripts/generate.py <script_file> --voice <voice_name> --output <output.wav>
+.venv/bin/python -m pytest tests/integration/ -v                             # full pipeline (slow)
+python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 ```
 
-## Git Workflow
-
-- **Conventional commits**: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`
-- **Commit directly to main** — no feature branches (solo developer)
-- **Never push** unless the user explicitly asks
-
----
-
-## Architecture
-
-**Pipeline flow** (`core/pipeline.py` — `MeditationPipeline.generate()`):
+## Folder Map
 
 ```
-app.py / scripts/generate.py
-  → core/pipeline.py :: MeditationPipeline.generate()
-     1. parse script     kokoro_tts/preprocessor.py :: prepare_segments()
-                         f5_tts/preprocessor.py :: prepare_segments()      [if f5]
-     2. TTS synthesis    KokoroEngine.synthesize()  → 24 kHz mono float32
-                         F5Engine.synthesize()       → 24 kHz mono float32
-                         Engine.synthesize() → 24 kHz mono float32
-     3. unload TTS, load music engine
-     4. music gen        AceStepEngine.generate()   → 48 kHz mono float32
-                           [optional] melody_audio_path → loaded as numpy + sr, passed as melody_audio/melody_sample_rate kwargs
-                         Engine.generate()  → 48 kHz mono float32
-                         LyriaEngine.generate()      → 48 kHz mono float32
-     5. stem sep         StemSeparator.remove_drums_and_vocals()            [optional]
-     6. TTS upsample     audio_processor.upsample_audio() 24 kHz → 48 kHz
-    6b. voice humanize   kokoro_tts/postprocessor :: humanize_voice() per speech chunk
-                         (pitch drift ±6¢, vibrato ±3¢, jitter ±2¢, formant 0.97)
-     7. voice FX         kokoro_tts/postprocessor :: build_voice_chain() + apply_fx()
-    7b. voice norm       mixer.normalize_loudness() → −18 LUFS pre-mix
-     8. music FX         audio_processor :: make_{engine}_music_chain() + make_vocal_pocket_chain()
-     9. mix              mixer.mix() → apply_multiband_ducking() + overlay + exponential fades
-    10. master           audio_processor :: make_master_chain() [HPF → bus comp → limiter@−1.5dBTP]
-    11. QA              qa_monitor :: run_qa_checks()
-    12. export           mixer.export_audio() → WAV/MP3 at −16 LUFS, −1.5 dBTP ceiling
+.
+├── app.py                            # Gradio UI entry point
+├── core/
+│   ├── pipeline.py                   # MeditationPipeline orchestrator
+│   ├── speech_engine.py              # SpeechEngine ABC (TTS contract)
+│   ├── audio_processor.py            # Pedalboard FX chains
+│   ├── mixer.py                      # ducking · overlay · loudness · export
+│   ├── qa_monitor.py                 # output validation
+│   ├── stem_separator.py             # Demucs source separation
+│   ├── text_utils.py · breath_sounds.py · stereo_upmix.py · deepfilter_enhancer.py · stitch_client.py
+│   ├── kokoro_tts/  f5_tts/  index_tts/   # TTS engines (engine + preproc + postproc + voices)
+│   └── acestep/  lyria/                   # Music engines
+├── scripts/                          # generate.py · separate_worker.py · generate_breath_samples.py
+├── tests/unit/  tests/integration/
+├── assets/impulse_responses/         # convolution reverb IRs
+└── docs/                             # see Where to Look below
 ```
 
-**Sequential engine loading**: Load TTS → synthesize → unload TTS → load music → generate → unload music. Never load two engines simultaneously (36 GB unified RAM constraint).
+## Pipeline Flow (`core/pipeline.py :: MeditationPipeline.generate()`)
 
-## Audio Contracts
+1. **Parse script** → `{tts}/preprocessor.py :: prepare_segments()`
+2. **TTS synth** → 24 kHz mono float32
+3. **Unload TTS**, load music engine (sequential — 36 GB RAM constraint)
+4. **Music gen** → 48 kHz mono float32 (ACE-Step or Lyria)
+5. **Stem separation** (optional) → `stem_separator.remove_drums_and_vocals()`
+6. **TTS upsample** 24 → 48 kHz via `audio_processor.upsample_audio(high_accuracy=True)`; then per-chunk humanize (Kokoro)
+7. **Voice FX** → `build_voice_chain()` + `apply_fx()`; then `mixer.normalize_loudness()` to −18 LUFS
+8. **Music FX** → `make_{engine}_music_chain()` + `make_vocal_pocket_chain()`
+9. **Mix** → `mixer.mix()` (multiband ducking by default; exponential fades)
+10. **Master** → `make_master_chain()` (HPF → bus comp → limiter @ −1.5 dBTP)
+11. **QA** → `qa_monitor.run_qa_checks()`
+12. **Export** → `mixer.export_audio()` (WAV/MP3, −16 LUFS)
 
-| Engine | Native SR | Mix SR | Output |
-|--------|-----------|--------|--------|
-| Kokoro TTS | 24 kHz | → upsampled to 48 kHz | mono float32 |
-| F5-TTS | 24 kHz | → upsampled to 48 kHz | mono float32 |
-| IndexTTS-2 | 24 kHz | → upsampled to 48 kHz | mono float32 |
-| ACE-Step 1.5 | 48 kHz | 48 kHz | mono float32 |
-| Lyria RealTime | 48 kHz | 48 kHz | mono float32 |
-
-Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa soxr_vhq`.
-
-## Component Registry
-
-**TTS:**
-
-| Component | File | Class | Key Methods |
-|-----------|------|-------|-------------|
-| TTS contract | `core/speech_engine.py` | `SpeechEngine(ABC)` | `load_model`, `unload_model`, `synthesize`, `get_available_voices` |
-| Kokoro engine | `core/kokoro_tts/engine.py` | `KokoroEngine` | `load_model()`, `synthesize()` |
-| Kokoro preproc | `core/kokoro_tts/preprocessor.py` | — | `parse_script()`, `prepare_segments()`, `merge_sentences_to_chunks()` |
-| Kokoro postproc | `core/kokoro_tts/postprocessor.py` | — | `process_chunk()`, `crossfade_chunks()`, `build_voice_chain()`, `apply_fx()` |
-| Kokoro voices | `core/kokoro_tts/voice_manager.py` | — | `MEDITATION_PRESETS`, `blend_voices()`, `slerp_blend()`, `BRITISH_VOICES` |
-| F5 engine | `core/f5_tts/engine.py` | `F5Engine` | `load_model()`, `synthesize()` |
-| F5 preproc | `core/f5_tts/preprocessor.py` | — | `parse_script()`, `normalize_for_f5()`, `split_into_chunks()` |
-| F5 voice registry | `core/f5_tts/voice_registry.py` | `VoiceRegistry` | `scan()`, `get_voice()` |
-| IndexTTS engine | `core/index_tts/engine.py` | `IndexTTSEngine` | `load_model()`, `synthesize()` |
-| IndexTTS preproc | `core/index_tts/preprocessor.py` | — | `parse_script()`, `normalize_for_indextts()`, `split_into_chunks()` |
-| IndexTTS postproc | `core/index_tts/postprocessor.py` | `IndexTTSMasteringEngine` | `master_vocals()`, `build_index_voice_chain()` |
-| IndexTTS voice reg | `core/index_tts/voice_registry.py` | — | `scan_voices()`, `scan_emotions()`, `get_voice()`, `get_emotion()` |
-
-**Music & Pipeline:**
-
-| Component | File | Class | Key Methods |
-|-----------|------|-------|-------------|
-| Pipeline | `core/pipeline.py` | `MeditationPipeline` | `generate()`, `_enhance__prompt()`, `_enhance_acestep_prompt()` |
-| ACE-Step | `core/acestep_engine.py` | `AceStepEngine` | `load_model()`, `generate()`, `_generate_infinite()`, `_enhance_prompt()` |
-| Lyria | `core/lyria/engine.py` | `LyriaEngine` | `load_model()`, `generate()`, `_run_session()` |
-| Lyria prompts | `core/lyria/prompts.py` | — | `parse_weighted_prompts()` |
-| Audio FX | `core/audio_processor.py` | — | `make_{engine}_music_chain()`, `make_vocal_pocket_chain()`, `make_master_chain()`, `upsample_audio()` |
-| Mixer | `core/mixer.py` | — | `apply_envelope_ducking()`, `apply_multiband_ducking()`, `overlay_tracks()`, `mix()`, `normalize_loudness()`, `export_audio()` |
-| QA monitor | `core/qa_monitor.py` | — | `run_qa_checks()`, `compute_composite_score()`, `check_voice_music_ratio()`, `check_ducking_smoothness()` |
-| Stem separator | `core/stem_separator.py` | `StemSeparator` | `remove_drums_and_vocals()` |
-| Session config | `core/session_config.py` | `SessionConfig` | `to_json()`, `from_json()` |
-| Text utils | `core/text_utils.py` | — | `expand_text()`, `ABBREV_MAP` |
-| Breath sounds | `core/breath_sounds.py` | — | `load_breath()` |
-| Neural enhancer | `core/neural_enhancer.py` | — | `enhance_with_apollo()` |
-| DeepFilter enhancer | `core/deepfilter_enhancer.py` | — | `enhance_voice()` |
-| Stereo upmix | `core/stereo_upmix.py` | — | `haas_stereo()`, `center_pan_voice()` |
-
-## Key Constants
-
-| Constant | Value | File | Note |
-|----------|-------|------|------|
-| TTS output SR | 24 000 Hz | `core/speech_engine.py` | All TTS engines |
-| Fallback mix SR | 44 100 Hz | `core/pipeline.py:213` | Only when no music engine selected |
-| Export LUFS target | −16.0 | `core/pipeline.py` | Matches Apple Music; avoids platform re-limiting |
-| Kokoro crossfade | 7 200 samples | `core/kokoro_tts/postprocessor.py` | 300ms at 24 kHz |
-| Kokoro humanize drift | 6.0 cents (0.5 Hz) | `core/kokoro_tts/postprocessor.py` | Slow pitch drift; vocal fold tension simulation |
-| Kokoro humanize vibrato | 3.0 cents (5 Hz) | `core/kokoro_tts/postprocessor.py` | Subtle vibrato; ±15 cents total headroom |
-| Kokoro humanize jitter | 2.0 cents | `core/kokoro_tts/postprocessor.py` | Random micro-jitter |
-| Kokoro formant shift | 0.97 | `core/kokoro_tts/postprocessor.py` | 3% lower formants; perceived warmth |
-| Kokoro max tokens | 150 | `core/kokoro_tts/preprocessor.py` | Per chunk |
-| F5 max chars | 300 | `core/f5_tts/preprocessor.py` | Per chunk |
-| IndexTTS max chars | 220 | `core/index_tts/preprocessor.py` | Per chunk; tightened from 250 to keep BPE-token count under the 120-token attention window |
-| IndexTTS calm vector | `[0,…,0,1.0]` | `core/index_tts/engine.py` | 8D `emo_vector` default — pure calm dimension, deterministic |
-| IndexTTS emo_alpha | 0.70 | `core/index_tts/engine.py` | 70% emotion override + 30% speaker-timbre preservation |
-| IndexTTS top_p | 0.85 | `core/index_tts/engine.py` | Tighter nucleus → fewer hallucinated breaths |
-| IndexTTS temperature | 0.70 | `core/index_tts/engine.py` | Lower temp → prosodic stability over long passages |
-| IndexTTS interval_silence | 200 ms | `core/index_tts/engine.py` | API-internal silence between micro-segments |
-| IndexTTS max tokens/seg | 120 | `core/index_tts/engine.py` | Hard ceiling matching T2S attention window |
-| ACE-Step CFG | 5.5 | `core/acestep_engine.py` | `_GUIDANCE_SCALE` — SFT sweet spot |
-| ACE-Step steps | 50 | `core/acestep_engine.py` | `_INFERENCE_STEPS` |
-| ACE-Step LM temp | 0.65 | `core/acestep_engine.py` | `_LM_TEMPERATURE` — balances variety with calm predictability |
-| ACE-Step ADG | `False` | `core/acestep_engine.py` | `_USE_ADG` — disabled; SFT adherence baked in, ADG doubles passes without benefit |
-| ACE-Step genesis | 90 s | `core/acestep_engine.py` | `GENESIS_LEN` in `_generate_infinite` — long-form Phase 1 anchor |
-| Lyria max session | 570 s | `core/lyria/engine.py` | `_MAX_SESSION_SEC` (9.5 min cap) |
-
-## Checkpoint Locations
-
-| Engine | Backend | Path |
-|--------|---------|------|
-| ACE-Step 1.5 | MLX + MPS | `./ACE-Step-1.5/checkpoints/` |
-|  | MPS | `./ckpt/-oss/` |
-|  | MLX | `./ckpt-mlx//` |
-| Kokoro-82M | HF hub (auto) | `~/.cache/huggingface/` |
-| F5-TTS | HF hub (auto) | `~/.cache/huggingface/` |
-| HT Demucs | torch hub (auto) | `~/.cache/torch/hub/` |
-| Convolution IRs | local | `assets/impulse_responses/{warm_studio,wooden_hall,stone_chapel}.wav` |
-| F5 voice assets | local | `core/f5_tts/assets/reference_audio/` · `.../reference_transcript/` · `.../voices.toml` |
-| IndexTTS-2 | HF hub (manual) | `model_checkpoints/indextts2/` |
-| IndexTTS voice assets | local | `reference_audio/vocals/` (speakers) · `reference_audio/instrumental/` (emotions) |
-
-## Task-Routing Guide
-
-| Task | Primary file | Secondary |
-|------|-------------|-----------|
-| TTS chunk splitting | `core/kokoro_tts/preprocessor.py` | `core/f5_tts/preprocessor.py` |
-| Voice blend presets | `core/kokoro_tts/voice_manager.py` | — |
-| Add / edit F5 voice | `core/f5_tts/assets/` (audio + transcript) | `core/f5_tts/voice_registry.py` |
-| Add / edit IndexTTS voice | `reference_audio/vocals/` (WAV only) | `core/index_tts/voice_registry.py` |
-| Add / edit IndexTTS emotion | `reference_audio/instrumental/` (WAV only) | `core/index_tts/voice_registry.py` |
-| Kokoro prosody / punctuation | `core/kokoro_tts/preprocessor.py` | — |
-| Voice FX chain (EQ, reverb, compression) | `core/kokoro_tts/postprocessor.py :: build_voice_chain()` | `core/f5_tts/postprocessor.py` |
-| Music FX chain (per engine) | `core/audio_processor.py :: make_{engine}_music_chain()` | — |
-| Vocal pocket / intelligibility EQ | `core/audio_processor.py :: make_vocal_pocket_chain()` | — |
-| Ducking behavior (fullband) | `core/mixer.py :: apply_envelope_ducking()` | `core/pipeline.py` (`duck_amount_db`) |
-| Ducking behavior (multiband) | `core/mixer.py :: apply_multiband_ducking()` | `core/mixer.py :: mix(multiband=True)` |
-| LUFS target | `core/pipeline.py` | `core/mixer.py :: export_audio()` |
-| ACE-Step generation params | `core/acestep_engine.py` (module-level constants) | — |
-| ACE-Step reference audio (melody conditioning) | `core/pipeline.py` (`melody_audio_path` param) | `core/acestep_engine.py :: _prepare_reference_audio()` |
-| Prompt enhancement logic | `core/pipeline.py :: _enhance__prompt()` | `core/acestep_engine.py :: _enhance_prompt()` |
-| QA checks / thresholds | `core/qa_monitor.py` | `docs/ARCHITECTURE.md#qa-checks` |
-| Stem separation behavior | `core/stem_separator.py` | `scripts/separate_worker.py` |
-| Export format / sample rate | `core/mixer.py :: export_audio()` | `core/pipeline.py` (`export_sr`) |
-| Master chain (final limiter/EQ) | `core/audio_processor.py :: make_master_chain()` | — |
-| Session reproducibility | `core/session_config.py` | — |
-| Text normalization (digits, abbrevs) | `core/text_utils.py` | — |
-
-## FX Chain Summary
-
-| Chain function | Applied to | Key plugins (in order) |
-|----------------|-----------|------------------------|
-| `build_voice_chain()` | Kokoro voice | NoiseGate(−40dB) → HPF(80Hz) → Peak(−2.5dB@400Hz) → LowShelf(+1.5dB@200Hz) → Compressor(2.5:1@−28dB,15ms/150ms) → HiShelf(+1dB@10kHz) → ConvReverb(warm_studio,18%wet) → Limiter(−1dBTP) |
-| `build_f5_voice_chain()` | F5-TTS voice | De-esser(4–8kHz) → NoiseGate → HPF → EQ chain → Compressor → Limiter — see `core/f5_tts/postprocessor.py` |
-| `build_index_voice_chain()` | IndexTTS-2 voice | De-esser(3.75–7.25kHz) → NoiseGate(−42dB) → HPF(75Hz) → EQ chain → Compressor(−22dB) → Limiter — see `core/index_tts/postprocessor.py` |
-| `make_acestep_music_chain()` | ACE-Step 48kHz | NoiseGate(−55dB) → HPF(60Hz) → LowShelf(+1.5dB@200Hz) → Peak(−1.5dB@3kHz) → LPF(16kHz) → Compressor(2.0:1@−20dB) → Limiter(−0.5dB) |
-| `make_lyria_music_chain()` | Lyria 48kHz | HPF(60Hz) → Peak(−1.5dB@250Hz) → Peak(−2.0dB@4500Hz,Q=0.7) → HiShelf(−2.5dB@9kHz) → Compressor(2:1@−18dB) → Limiter(−0.5dB) |
-| `make_vocal_pocket_chain()` | Music (all engines) | HPF(30Hz) → Peak(−3dB@350Hz,Q=0.7) → Peak(−3.5dB@1.5kHz,Q=0.7) → Peak(−2dB@3kHz,Q=0.8) |
-| `make_master_chain()` | Final mix | HPF(30Hz) → Compressor(1.5:1@−22dB,40ms/300ms) → Limiter(−1.0dBTP, 400ms) |
-
-All chains in `core/audio_processor.py`. IRs in `assets/impulse_responses/` (default: `warm_studio`). Full parameter tables → `docs/ARCHITECTURE.md#fx-chains`.
-
----
+Full breakdown with parameters: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Code Conventions
 
-- Classes: `PascalCase` — Functions/methods: `snake_case` — Constants: `UPPER_SNAKE_CASE`
-- Private functions: `_leading_underscore`
+- `PascalCase` classes · `snake_case` functions · `UPPER_SNAKE_CASE` constants · `_leading_underscore` private
 - Imports: `from core.module import Class` (relative to project root)
-- Each subpackage has `__init__.py` with explicit public API exports
-- Abstract base class pattern: `SpeechEngine` ABC → concrete engine implementations
+- Every subpackage has `__init__.py` with explicit public exports
+- TTS engines inherit `SpeechEngine` ABC from `core/speech_engine.py`
 
-## Common Gotchas
+## Git Workflow
 
-- **MPS bus error on exit**: `atexit.register(lambda: os._exit(0))` in `app.py` — do not remove
-- **ACE-Step timeout**: Always pass `compile_model=True` to `initialize_service()` — without it, generation takes ~9s/step and times out (~135s JIT overhead on first run, then ~4× faster per step)
-- **transformers version**: Pinned to `>=4.51.0,<4.58.0` for ACE-Step compatibility — do not upgrade
-- **Kokoro on CPU**: Intentionally forced to CPU — MPS causes deallocation bus errors. British voices (`bf_*`, `bm_*`) require `KPipeline(lang_code="b")`
-- ** simultaneous loading (MLX)**: Both LM (bf16) + codec (fp32) loaded together (~12 GB). `mx.set_memory_limit(30GB)`, `mx.set_cache_limit(4GB)`. MPS: `lazy_load=True` still handles lifecycle.
-- ** dtype**: Always fp32 — bf16 causes metallic artifacts. MLX passes `mx.float32`; MPS passes `{"codec": torch.float32}`.
-- ** MPS watermark**: `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7` (set in `engine.py`). Values below 0.5 cause OOM during 3B LM generation.
-- ** checkpoints**: Must be present before selecting  — see Checkpoint Locations table above.
-- **Active ducking function**: `mixer.mix()` calls `apply_multiband_ducking()` by default (`multiband=True`). Falls back to `apply_envelope_ducking()` when `multiband=False`. `apply_rms_ducking()` exists but is not used in production. Default `duck_amount_db=−12.0` (in `pipeline.py`); `hold_ms=1200` (in `mix()` `_duck_kwargs`) bridges slow meditation phrase gaps — do not reduce below 800ms.
-- ** MPS torch.load patch**: Engine patches `torch.load` with `weights_only=False` + MPS `map_location` for Apple Silicon compatibility (from 's official `example_for_mac.py`). Patch is applied in a try/finally block and restored after loading.
-- ** voice cloning**: Reference audio 5-15s `.wav` — no transcript needed (unlike F5-TTS). Falls back to default voice if file not found. Assets dir: `core/_tts/assets/reference_audio/`.
-- ** pacing**: The `speed` parameter is accepted for ABC compliance but does not control  pacing. Pacing is controlled by `exaggeration` (emotion intensity) and `cfg_weight`. Low cfg_weight (0.2) = slow, deliberate meditation delivery.  also applies per-chunk RMS normalization, segment fades, and pyworld pitch humanization (same as Kokoro) for natural expressiveness.
-- ** breath sounds**: `[breath]` markers produce room-tone pauses (not breath WAVs) because  generates naturalistic breathing via its exaggeration parameter.
-- **Mix sample rate**: All music engine paths use `mix_sr = 48000` (`pipeline.py:213`). The 44.1 kHz fallback is only used when no music engine is active.
-- **IndexTTS-2 MPS NaN**: BigVGANv2 vocoder may produce NaN values on MPS — mitigated by `torch.clamp(mel, -10, 10)`. Force `use_fp16=False, use_deepspeed=False, use_cuda_kernel=False` on Apple Silicon.
-- **IndexTTS-2 checkpoints**: Manual download required — `huggingface-cli download IndexTeam/IndexTTS-2 --local-dir=model_checkpoints/indextts2`. Engine raises `FileNotFoundError` with instructions if missing.
-- **IndexTTS-2 no transcript**: Unlike F5-TTS, IndexTTS-2 does NOT require verbatim transcript files — only speaker reference WAV is needed.
-- **IndexTTS-2 calm vector is the default**: When no emotion audio is selected, `infer()` is called with `emo_vector=[0,…,0,1.0]` + `emo_alpha=0.70`. Audio-ref selection overrides the vector. Do NOT use `use_emo_text` — the Qwen3 path conflates "calm/serene" with "sad/melancholic".
-- **IndexTTS-2 speed slider is a no-op**: The v2 API does not expose reliable time-stretching (Issue #422). The Gradio slider is marked non-interactive and the engine logs a one-time warning if `speed != 1.0`. Pacing comes from the calm vector + preprocessor pause durations + 600ms inter-chunk room-tone gap.
-- **IndexTTS-2 per-chunk VRAM**: The engine calls `torch.mps.empty_cache()` (or `torch.cuda.empty_cache()`) after every chunk to mitigate the known BigVGAN/CFM memory leak (upstream Issue #364) on long meditation sessions.
-- **IndexTTS-2 meditation lexicon**: `INDEX_MEDITATION_LEXICON` in the preprocessor phoneticizes sanskrit/pali terms (Om, pranayama, savasana, …) AFTER the compound-hyphen stripper so the syllabification hyphens survive. Add new terms there.
-- **IndexTTS-2 emotion**: Emotion is decoupled from speaker identity. Emotion reference clips go in `reference_audio/instrumental/`. Users can also upload custom emotion audio in the Gradio UI.
+- Conventional commits: `feat:` `fix:` `refactor:` `docs:` `test:` `chore:`
+- Commit directly to `main` (solo developer)
+- **Never push** unless the user explicitly asks
+
+## Top Gotchas
+
+The six that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
+
+- **MPS bus error on exit** → `atexit.register(lambda: os._exit(0))` in `app.py` — do not remove.
+- **ACE-Step timeout** → always pass `compile_model=True` to `initialize_service()`; first run has ~135s JIT overhead.
+- **transformers pin** → `>=4.51.0,<4.58.0` for ACE-Step compatibility — do not upgrade.
+- **Kokoro forced to CPU** → MPS causes deallocation bus errors. British voices (`bf_*`, `bm_*`) need `KPipeline(lang_code="b")`.
+- **IndexTTS-2 NaN clamp** → BigVGANv2 may emit NaN on MPS. Use `torch.clamp(mel, -10, 10)`; force `use_fp16=False, use_deepspeed=False, use_cuda_kernel=False`.
+- **Ducking defaults** → `duck_amount_db=-12.0` (`pipeline.py`) · `hold_ms=1200` (`mixer.mix()`). Do not reduce `hold_ms` below 800; phrase gaps will pump.
+
+## Where to Look
+
+| Need | Go to |
+|------|-------|
+| Full pipeline, FX params, QA thresholds, memory patterns | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Engine internals (Kokoro, F5, IndexTTS, ACE-Step, Lyria, Pedalboard) | [docs/model_implementation_guides/](docs/model_implementation_guides/) |
+| Prompt writing per engine | [docs/prompting_guides/](docs/prompting_guides/) |
+| Mix / post-processing details | [docs/optimization_and_processing/](docs/optimization_and_processing/) |
+| Component & class map | [docs/COMPONENT_REGISTRY.md](docs/COMPONENT_REGISTRY.md) |
+| File for a given task | [docs/TASK_ROUTING.md](docs/TASK_ROUTING.md) |
+| All gotchas | [docs/GOTCHAS.md](docs/GOTCHAS.md) |
+| Setup / checkpoints | [docs/setup_and_execution/](docs/setup_and_execution/) |

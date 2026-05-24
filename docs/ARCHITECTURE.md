@@ -69,7 +69,7 @@ class SpeechEngine(ABC):
 
 **Sequential unload pattern:** TTS must fully unload (+ `gc.collect()` + cache clear) before music engine loads.
 
-**AceStepEngine** (`core/acestep_engine.py`):
+**AceStepEngine** (`core/acestep/engine.py`):
 - `load_model(model_type="sft")` — patches `ACESTEP_GENERATION_TIMEOUT=7200`, `DURATION_MAX=1200` before import
 - `compile_model=True` — mandatory; one-time JIT ~135s, then ~4× faster per step
 - Device: `"auto"` → MPS on Apple Silicon; DiT uses `use_mlx_dit=True`
@@ -203,22 +203,6 @@ make_vocal_pocket_chain()    →  apply_audio_fx()   # carves 300Hz/1kHz/3kHz la
 | 7 | Convolution | IR file, wet=**0.18** default (18%) |
 | 8 | Limiter | threshold=−1.0 dBFS |
 
-### `make__music_chain()` (`core/audio_processor.py`)
-
-| # | Plugin | Key params |
-|---|--------|-----------|
-| 1 | NoiseGate | threshold=−52 dB, ratio=2:1, attack=5ms, release=200ms |
-| 2 | HighpassFilter | cutoff=60 Hz |
-| 3 | LowShelfFilter | cutoff=100 Hz, gain=+1.5 dB |
-| 4 | LowShelfFilter | cutoff=150 Hz, gain=+2.0 dB |
-| 5 | PeakFilter | freq=220 Hz, gain=−1.0 dB, Q=0.7 |
-| 6 | PeakFilter | freq=4 000 Hz, gain=−2.0 dB, Q=0.5 |
-| 7 | HighShelfFilter | cutoff=9 500 Hz, gain=−2.0 dB |
-| 8 | LowpassFilter | cutoff=14 000 Hz |
-| 9 | Convolution | IR=stone_chapel, wet=0.15 (15%) |
-| 10 | Compressor | threshold=−20 dB, ratio=2:1, attack=100ms, release=900ms |
-| 11 | Limiter | threshold=−0.5 dBFS |
-
 ### `make_acestep_music_chain()` (`core/audio_processor.py`)
 
 Minimal chain — ACE-Step's VAE output is clean and doesn't need heavy processing.
@@ -322,35 +306,9 @@ Load Music → generate() → unload_model() → gc.collect() → [cache clear]
 Never load two engines simultaneously. Peak memory per phase:
 - Kokoro: ~200 MB (CPU RAM only)
 - F5-TTS: ~1.5 GB (MPS)
+- IndexTTS-2: ~6 GB (MPS, fp32)
 - ACE-Step: ~8–12 GB (MLX unified RAM, with compile)
--  (LM + codec simultaneous): ~12 GB (MLX bf16 LM + fp32 codec)
 - HT Demucs: ~168 MB (CPU, subprocess)
-
-###  Simultaneous Loading (MLX)
-
-Both LM (bf16) and codec (fp32) are loaded together (~12 GB total). Memory limits set before loading:
-
-```python
-mx.set_memory_limit(30 * 1024**3)  # 30 GB
-mx.set_cache_limit(4 * 1024**3)    # 4 GB
-
-# Load both models simultaneously
-lm_model = load_lm_from_pretrained("./ckpt-mlx//", dtype=mx.bfloat16)
-codec_model = load_codec_from_pretrained("./ckpt-mlx//", dtype=mx.float32)
-
-# Best-of-N generation with scheduling
-tokens = lm_model.generate(tags, lyrics, cfg_scale=1.8, temperature=0.75, top_k=30)
-audio = codec_model.decode(tokens, num_steps=12, guidance_scale=1.25)
-
-# Token continuation for long-form: reuse last N tokens as context
-# for seamless multi-segment generation
-
-del lm_model, codec_model
-gc.collect()
-mx.clear_cache()
-```
-
-MPS path uses heartlib's `lazy_load=True` — two-phase lifecycle still managed internally.
 
 ### Demucs Subprocess Isolation
 
@@ -396,14 +354,6 @@ ACE-Step 1.5 (48 kHz mono float32, native)
   → make_vocal_pocket_chain() @ 48 kHz
   → mix() @ 48 kHz
 
- (48 kHz mono float32, native)
-  → normalize_loudness(premix_lufs=-17)
-  → reduce_music_noise() + apply_tape_saturation()
-  → make__music_chain() @ 48 kHz
-  → add_organic_noise_floor()
-  → make_vocal_pocket_chain() @ 48 kHz
-  → mix() @ 48 kHz
-
 Lyria RealTime (48 kHz stereo int16 PCM → mono float32)
   → normalize_loudness(premix_lufs=-16)
   → make_lyria_music_chain() @ 48 kHz
@@ -427,7 +377,7 @@ mix() output (48 kHz mono float32)
 
 ## Prompt Engineering Summary
 
-### ACE-Step — MESA Framework (`core/acestep_engine.py :: _enhance_prompt()`)
+### ACE-Step — MESA Framework (`core/acestep/engine.py :: _enhance_prompt()`)
 
 - **M**ood: emotional context (e.g. "peaceful, introspective, warm")
 - **E**lements: instruments + textures (e.g. "singing bowls, soft piano, ambient pads")
@@ -435,14 +385,6 @@ mix() output (48 kHz mono float32)
 - **A**pplication: use case (e.g. "meditation background, sleep journey")
 - Auto-prepended base tags: `ambient, meditation, calm, peaceful, warm, spacious, soft dynamics, gentle, soothing, high fidelity, studio quality, clean production`
 - Auto-appended negatives: `no vocals, instrumental`
-
-###  — Eight Pillars (`core/pipeline.py :: _enhance__prompt()`)
-
-Tag priority (high → low): Genre (95%) → Timbre (50%) → Mood (32%) → Instrument (25%) → Scene
-- Max 7–9 tags total
-- Temporal descriptor scales with duration: ≤90s → "extremely slow"; ≤300s → "long soft pads that barely move"; >300s → "soundscape stays flat"
-- Structural lyrics: `[interlude]` only (suppresses vocal bias); `[intro]`/`[outro]` for structure
-- Auto-appended: `"no drums, instrumental"`
 
 ### Lyria — Weighted Prompts (`core/lyria/prompts.py :: parse_weighted_prompts()`)
 

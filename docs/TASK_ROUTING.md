@@ -1,0 +1,29 @@
+# Task Routing Guide
+
+When you need to change something, start here. Locate the row that matches your task and open the **Primary file** first.
+
+| Task | Primary file | Secondary |
+|------|-------------|-----------|
+| TTS chunk splitting | `core/kokoro_tts/preprocessor.py` | `core/f5_tts/preprocessor.py`, `core/index_tts/preprocessor.py` |
+| Voice blend presets (Kokoro) | `core/kokoro_tts/voice_manager.py` | — |
+| Add / edit F5 voice | `core/f5_tts/assets/` (audio + transcript) | `core/f5_tts/voice_registry.py` |
+| Add / edit IndexTTS voice | `reference_audio/vocals/` (WAV only) | `core/index_tts/voice_registry.py` |
+| Add / edit IndexTTS emotion | `reference_audio/instrumental/` (WAV only) | `core/index_tts/voice_registry.py` |
+| Kokoro prosody / punctuation | `core/kokoro_tts/preprocessor.py` | — |
+| Voice FX chain (EQ, reverb, compression) | `core/kokoro_tts/postprocessor.py :: build_voice_chain()` | `core/f5_tts/postprocessor.py`, `core/index_tts/postprocessor.py` |
+| Music FX chain (per engine) | `core/audio_processor.py :: make_{engine}_music_chain()` | — |
+| Vocal pocket / intelligibility EQ | `core/audio_processor.py :: make_vocal_pocket_chain()` | — |
+| Ducking behavior (fullband) | `core/mixer.py :: apply_envelope_ducking()` | `core/pipeline.py` (`duck_amount_db`) |
+| Ducking behavior (multiband) | `core/mixer.py :: apply_multiband_ducking()` | `core/mixer.py :: mix(multiband=True)` |
+| LUFS target | `core/pipeline.py` | `core/mixer.py :: export_audio()` |
+| ACE-Step generation params | `core/acestep/engine.py` (module-level constants) | — |
+| ACE-Step reference audio (melody conditioning) | `core/pipeline.py` (`melody_audio_path` param) | `core/acestep/engine.py :: _prepare_reference_audio()` |
+| Prompt enhancement logic | `core/pipeline.py :: _enhance_acestep_prompt()` | `core/acestep/engine.py :: _enhance_prompt()` |
+| QA checks / thresholds | `core/qa_monitor.py` | `docs/ARCHITECTURE.md#qa-checks` |
+| Stem separation behavior | `core/stem_separator.py` | `scripts/separate_worker.py` |
+| Export format / sample rate | `core/mixer.py :: export_audio()` | `core/pipeline.py` (`export_sr`) |
+| Master chain (final limiter/EQ) | `core/audio_processor.py :: make_master_chain()` | — |
+| Text normalization (digits, abbrevs) | `core/text_utils.py` | — |
+| DeepFilter voice enhancement | `core/deepfilter_enhancer.py` | `core/pipeline.py` (toggle) |
+| Stereo upmix (Haas) | `core/stereo_upmix.py` | `core/pipeline.py` |
+| Breath sound loading | `core/breath_sounds.py` | `scripts/generate_breath_samples.py` |
