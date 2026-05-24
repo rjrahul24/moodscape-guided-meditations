@@ -119,8 +119,8 @@ The master chain is a lightweight safety net applied per-chunk in `export_audio(
 
 Crossfade technique varies by context:
 
-- **ACE-Step story mode** (`acestep_engine.py`): **STFT crossfade** in log-magnitude domain — interpolates magnitudes in dB (perceptually linear) for smoother transitions on sustained drones and singing bowls. Falls back to cosine² if energy anomaly detected (>3 dB deviation). 6-second crossfade.
-- **ACE-Step continuation** (`acestep_engine.py`): 2-second equal-power cosine² crossfade at each cover segment seam (operates on torch tensors).
+- **ACE-Step story mode** (`core/acestep/engine.py`): **STFT crossfade** in log-magnitude domain — interpolates magnitudes in dB (perceptually linear) for smoother transitions on sustained drones and singing bowls. Falls back to cosine² if energy anomaly detected (>3 dB deviation). 6-second crossfade.
+- **ACE-Step continuation** (`core/acestep/engine.py`): 2-second equal-power cosine² crossfade at each cover segment seam (operates on torch tensors).
 - ** segment stitching** (`core//engine.py`): 2-second macro crossfade at each segment seam, plus a **micro-crossfade** (64-sample triangular window at zero-crossing) to eliminate residual HF clicks.
 - **Music looping** (`mixer.py`): 2-second crossfade when music is looped to cover the full meditation duration.
 - **TTS chunk assembly**: 300ms cosine-squared crossfade for both Kokoro and F5-TTS engines.

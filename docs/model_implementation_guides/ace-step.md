@@ -1,11 +1,11 @@
 <!-- QUICK-REF ──────────────────────────────────────────────────────── -->
-**Files:** `core/acestep_engine.py`
+**Files:** `core/acestep/engine.py`
 **Class:** `AceStepEngine` — `load_model()` / `generate()` / `_generate_infinite()` / `_enhance_prompt()`
 **Constants:** `_GUIDANCE_SCALE=5.5` · `_INFERENCE_STEPS=50` · `_LM_TEMPERATURE=0.65` · `_USE_ADG=False` · `_CFG_INTERVAL_END=0.8` · `_STORY_CROSSFADE_SEC=6.0`
 **Contract:** Output — 48 kHz mono float32 · Checkpoints — `./ACE-Step-1.5/checkpoints/`
 **MANDATORY:** `compile_model=True` to `initialize_service()` — without it, ~9s/step → timeout
 **Tasks:**
-- Tune generation params → module-level constants at top of `acestep_engine.py`
+- Tune generation params → module-level constants at top of `core/acestep/engine.py`
 - Change prompt enhancement → `_enhance_prompt()` (MESA framework: Mood/Elements/Structure/Application)
 - Adjust FX chain → `core/audio_processor.py :: make_acestep_music_chain()`
 - Long-form behavior → `_generate_infinite()` (two-phase: genesis [90s] + repaint continuation [20s overlap, 60s new per iteration])
@@ -25,7 +25,7 @@ This document is the complete reference for the **ACE-Step 1.5** music generatio
 - Hardware setup for **Apple Silicon M1 Max (24-Core GPU, 36 GB Unified RAM)** via **MLX**
 - Model architecture overview (LM planner + DiT decoder)
 - Prompt engineering using the MESA framework
-- Complete implementation walkthrough of `core/acestep_engine.py`
+- Complete implementation walkthrough of `core/acestep/engine.py`
 - Two-phase long-form generation pipeline (genesis + repaint continuation)
 - Pipeline integration with the existing workflow
 - Parameter tuning, memory management, and troubleshooting
@@ -194,7 +194,7 @@ silence between notes, dry reverb, high clarity, introspective
 
 ---
 
-## 7. Implementation — `core/acestep_engine.py`
+## 7. Implementation — `core/acestep/engine.py`
 
 ### Class Interface
 
@@ -292,7 +292,7 @@ Explicit `gc.collect()` + `torch.mps.empty_cache()` ensures the 36 GB pool is cl
 
 ```python
 if use_acestep:
-    from core.acestep_engine import AceStepEngine
+    from core.acestep import AceStepEngine
     music_engine = AceStepEngine()
 music_engine.load_model()
 music_audio = music_engine.generate(enhanced_prompt, duration, ...)

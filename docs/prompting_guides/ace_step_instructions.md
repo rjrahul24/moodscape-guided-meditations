@@ -1,5 +1,5 @@
 <!-- QUICK-REF ──────────────────────────────────────────────────────── -->
-**Engine files:** `core/acestep_engine.py :: _enhance_prompt()` · `core/pipeline.py :: _enhance_acestep_prompt()`
+**Engine files:** `core/acestep/engine.py :: _enhance_prompt()` · `core/pipeline.py :: _enhance_acestep_prompt()`
 **Framework:** MESA — Mood + Elements + Structure + Application
 **Structural lyrics tags:** `[Intro]` `[Verse]` `[Bridge]` `[Outro]` (standard ACE-Step training vocab)
 **Auto-prepended:** `ambient, meditation, calm, peaceful, warm, spacious, soft dynamics, gentle, soothing, high fidelity, studio quality, clean production`
