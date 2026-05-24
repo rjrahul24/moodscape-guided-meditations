@@ -141,7 +141,7 @@ class TestMeditationLexicon(unittest.TestCase):
 
         engine._apply_meditation_lexicon(mock_pipe)
 
-        for word in ("breathe", "exhale", "inhale", "relax", "release",
+        for word in ("breathe", "breath", "exhale", "inhale", "relax", "release",
                      "soften", "surrender", "dissolve", "melt", "sink", "drift"):
             self.assertIn(
                 word, mock_pipe.g2p.lexicon.golds,
