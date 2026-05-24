@@ -892,7 +892,7 @@ with gr.Blocks(
                     )
                 with gr.Group(visible=False, elem_id="indextts-group") as indextts_settings:
                     indextts_voice_dropdown = gr.Dropdown(
-                        choices=INDEXTTS_VOICE_CHOICES if INDEXTTS_VOICE_CHOICES else ["(no voices — add .wav to reference_audio/vocals/)"],
+                        choices=INDEXTTS_VOICE_CHOICES if INDEXTTS_VOICE_CHOICES else ["(no voices — add .wav to assets/speakers/)"],
                         value=INDEXTTS_VOICE_DEFAULT,
                         label="Voice",
                         interactive=bool(INDEXTTS_VOICE_CHOICES),

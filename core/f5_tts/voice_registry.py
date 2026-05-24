@@ -1,19 +1,21 @@
 """VoiceRegistry — scans and validates F5-TTS reference asset pairs.
 
-Directory layout (relative to this module's location at core/f5_tts/):
+Directory layout (relative to project root):
 
-    assets/reference_audio/      — 24 kHz, 16-bit PCM .wav files (one per slug)
-    assets/reference_transcript/ — verbatim .txt transcripts (one per slug)
+    assets/speakers/              — 24 kHz, 16-bit PCM .wav files (shared pool;
+                                    also used by IndexTTS-2)
+    assets/speakers/transcripts/  — verbatim .txt transcripts (F5-only)
 
 A voice slug is derived from the filename without extension, e.g.:
-    assets/reference_audio/calm_brittney.wav
-    assets/reference_transcript/calm_brittney.txt
+    assets/speakers/calm_brittney.wav
+    assets/speakers/transcripts/calm_brittney.txt
     → slug: "calm_brittney"
 
-A voice is only registered if both the .wav and the matching .txt file exist
-and the transcript is non-empty.
+A voice is only registered with F5 if both the .wav AND the matching .txt file
+exist (and the transcript is non-empty). WAVs without transcripts are skipped
+silently — IndexTTS-2 will still pick them up from its own scan.
 
-Multi-phase support can be added via assets/voices.toml:
+Multi-phase support can be added via assets/speakers/voices.toml:
     [calm_brittney]
     default = { ref_audio = "guided.wav", ref_text = "..." }
     closing = { ref_audio = "closing.wav", ref_text = "..." }
@@ -32,11 +34,11 @@ else:
 
 logger = logging.getLogger(__name__)
 
-# Asset directories, anchored to this module's location (core/f5_tts/)
-_ASSETS_DIR = Path(__file__).parent / "assets"
-_AUDIO_DIR = _ASSETS_DIR / "reference_audio"
-_TRANSCRIPT_DIR = _ASSETS_DIR / "reference_transcript"
-_VOICES_TOML = _ASSETS_DIR / "voices.toml"
+# Asset directories, anchored to the project root (three levels up from this file)
+_PROJECT_ROOT = Path(__file__).parent.parent.parent
+_AUDIO_DIR = _PROJECT_ROOT / "assets" / "speakers"
+_TRANSCRIPT_DIR = _AUDIO_DIR / "transcripts"
+_VOICES_TOML = _AUDIO_DIR / "voices.toml"
 
 
 def scan() -> dict[str, dict[str, dict[str, Path | str]]]:
@@ -64,8 +66,10 @@ def scan() -> dict[str, dict[str, dict[str, Path | str]]]:
             break
 
         if not txt_path.is_file():
-            logger.warning(
-                "Voice '%s' skipped — transcript missing: %s", slug, txt_path
+            # Expected: IndexTTS-only voices share assets/speakers/ but have no transcripts.
+            logger.debug(
+                "F5 voice '%s' skipped — no transcript at %s (IndexTTS-only voice?)",
+                slug, txt_path,
             )
             continue
 
@@ -124,7 +128,7 @@ def scan() -> dict[str, dict[str, dict[str, Path | str]]]:
     if not registry:
         logger.warning(
             "No complete F5-TTS voice pairs found. "
-            "Add .wav files to '%s' and matching .txt files to '%s'.",
+            "Add .wav files to '%s' and matching .txt transcripts to '%s'.",
             _AUDIO_DIR,
             _TRANSCRIPT_DIR,
         )

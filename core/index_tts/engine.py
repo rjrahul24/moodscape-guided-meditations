@@ -1,13 +1,13 @@
 """IndexTTS-2 engine — wraps IndexTTS2 for zero-shot voice cloning with emotion control.
 
 Voice identity is resolved at construction time via a voice slug that maps to
-a speaker reference WAV file in reference_audio/vocals/:
+a speaker reference WAV file in assets/speakers/:
 
     IndexTTSEngine(voice_slug="calm_meditation")
-    # loads: reference_audio/vocals/calm_meditation.wav
+    # loads: assets/speakers/calm_meditation.wav
 
 Emotion control is applied via an optional emotion reference WAV from
-reference_audio/instrumental/, or a user-uploaded emotion audio file.
+assets/emotions/, or a user-uploaded emotion audio file.
 
 Key settings:
     use_fp16=False       — float32 for MPS stability (prevents NaN errors)
@@ -188,9 +188,9 @@ class IndexTTSEngine(SpeechEngine):
         """Initialise the engine and resolve speaker + emotion assets.
 
         Args:
-            voice_slug: Voice identifier matching a .wav in reference_audio/vocals/.
+            voice_slug: Voice identifier matching a .wav in assets/speakers/.
                 If None, the first alphabetically sorted voice is used.
-            emotion_slug: Emotion identifier matching a .wav in reference_audio/instrumental/.
+            emotion_slug: Emotion identifier matching a .wav in assets/emotions/.
                 If None, no emotion reference is used (model defaults to neutral).
             emotion_audio_path: Direct path to an emotion reference WAV file.
                 Overrides emotion_slug if both are provided (used for user-uploaded
@@ -512,11 +512,11 @@ class IndexTTSEngine(SpeechEngine):
     # ── Voice catalogue ───────────────────────────────────────────────────────
 
     def get_available_voices(self) -> list[dict]:
-        """Return all registered voices from reference_audio/vocals/."""
+        """Return all registered voices from assets/speakers/."""
         voices = voice_registry.scan_voices()
         if not voices:
             return [{"id": "none", "name": "No voices registered",
-                     "description": "Add .wav files to reference_audio/vocals/"}]
+                     "description": "Add .wav files to assets/speakers/"}]
         return [
             {
                 "id": slug,

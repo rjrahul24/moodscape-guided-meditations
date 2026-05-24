@@ -1,16 +1,19 @@
 """VoiceRegistry for IndexTTS-2 — scans and validates speaker and emotion assets.
 
 IndexTTS-2 uses two types of reference audio:
-  1. Speaker references (voice cloning) — stored in reference_audio/vocals/
-  2. Emotion references (emotion control) — stored in reference_audio/instrumental/
+  1. Speaker references (voice cloning) — stored in assets/speakers/
+  2. Emotion references (emotion control) — stored in assets/emotions/
+
+`assets/speakers/` is a SHARED pool also consumed by F5-TTS. IndexTTS-2 picks up
+every .wav in that directory; F5-TTS only picks up the ones with matching .txt
+transcripts under assets/speakers/transcripts/.
 
 Unlike F5-TTS, IndexTTS-2 does NOT require verbatim transcripts — it performs
-its own speech analysis from the reference audio. So a voice is registered
-with just a .wav file (no matching .txt required).
+its own speech analysis from the reference audio.
 
 Directory layout (relative to project root):
-    reference_audio/vocals/         — 24 kHz, 16-bit PCM .wav files (one per voice)
-    reference_audio/instrumental/   — 24 kHz, 16-bit PCM .wav files (one per emotion)
+    assets/speakers/    — 24 kHz, 16-bit PCM .wav files (shared with F5-TTS)
+    assets/emotions/    — 24 kHz, 16-bit PCM .wav files (IndexTTS-only)
 """
 
 from __future__ import annotations
@@ -22,8 +25,8 @@ logger = logging.getLogger(__name__)
 
 # Asset directories, anchored to the project root (three levels up from this file)
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
-_VOCALS_DIR = _PROJECT_ROOT / "reference_audio" / "vocals"
-_EMOTIONS_DIR = _PROJECT_ROOT / "reference_audio" / "instrumental"
+_VOCALS_DIR = _PROJECT_ROOT / "assets" / "speakers"
+_EMOTIONS_DIR = _PROJECT_ROOT / "assets" / "emotions"
 
 # Reference-audio hygiene thresholds (Conformer encoder + zero-shot timbre quality).
 _MIN_SR_HZ = 16000          # below 16 kHz: insufficient spectral detail for cloning
@@ -89,14 +92,17 @@ def _validate_reference(path: Path, kind: str) -> None:
 
 
 def scan_voices() -> dict[str, dict[str, Path]]:
-    """Scan reference_audio/vocals/ for speaker reference audio files.
+    """Scan assets/speakers/ for speaker reference audio files.
 
     Returns mapping:
         voice_slug -> {"audio": Path}
 
-    Each .wav file in the vocals directory becomes a selectable voice.
-    The slug is derived from the filename without extension:
+    Each .wav file in assets/speakers/ becomes a selectable voice. The slug is
+    derived from the filename without extension:
         calm_meditation.wav -> slug: "calm_meditation"
+
+    The directory is shared with F5-TTS; F5 only uses voices with matching
+    transcripts under assets/speakers/transcripts/.
     """
     registry: dict[str, dict[str, Path]] = {}
 
@@ -123,13 +129,13 @@ def scan_voices() -> dict[str, dict[str, Path]]:
 
 
 def scan_emotions() -> dict[str, dict[str, Path]]:
-    """Scan reference_audio/instrumental/ for emotion reference audio files.
+    """Scan assets/emotions/ for emotion reference audio files.
 
     Returns mapping:
         emotion_slug -> {"audio": Path}
 
-    Each .wav file in the instrumental directory becomes a selectable emotion.
-    The slug is derived from the filename without extension:
+    Each .wav file in assets/emotions/ becomes a selectable emotion. The slug
+    is derived from the filename without extension:
         calm.wav -> slug: "calm"
     """
     registry: dict[str, dict[str, Path]] = {}

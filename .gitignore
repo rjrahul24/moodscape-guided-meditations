@@ -12,9 +12,11 @@ build/
 # Environment variables
 .env
 
-# Generated audio output
+# Generated audio output (but always track curated assets under assets/)
 *.wav
 *.mp3
+!assets/**/*.wav
+!assets/**/*.mp3
 
 # macOS
 .DS_Store
