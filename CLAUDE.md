@@ -48,7 +48,7 @@ IMPORTANT: Follow these steps for every task.
 
 1. **Use the Task-Routing Guide below** — find the relevant file(s) before scanning broadly
 2. **Read docs first** — each doc file has a QUICK-REF header; read that before the full doc
-   - `docs/model_implementation_guides/` — engine internals (ACE-Step, Kokoro, F5-TTS, Chatterbox, HeartMuLa, Lyria, Pedalboard)
+   - `docs/model_implementation_guides/` — engine internals (ACE-Step, Kokoro, F5-TTS, Lyria, Pedalboard)
    - `docs/optimization_and_processing/` — audio pipeline and post-processing
    - `docs/prompting_guides/` — prompt engineering per engine
    - `docs/ARCHITECTURE.md` — full technical deep-dive (FX params, QA thresholds, memory patterns)
@@ -88,11 +88,11 @@ app.py / scripts/generate.py
                          f5_tts/preprocessor.py :: prepare_segments()      [if f5]
      2. TTS synthesis    KokoroEngine.synthesize()  → 24 kHz mono float32
                          F5Engine.synthesize()       → 24 kHz mono float32
-                         ChatterboxEngine.synthesize() → 24 kHz mono float32
+                         Engine.synthesize() → 24 kHz mono float32
      3. unload TTS, load music engine
      4. music gen        AceStepEngine.generate()   → 48 kHz mono float32
                            [optional] melody_audio_path → loaded as numpy + sr, passed as melody_audio/melody_sample_rate kwargs
-                         HeartMulaEngine.generate()  → 48 kHz mono float32
+                         Engine.generate()  → 48 kHz mono float32
                          LyriaEngine.generate()      → 48 kHz mono float32
      5. stem sep         StemSeparator.remove_drums_and_vocals()            [optional]
      6. TTS upsample     audio_processor.upsample_audio() 24 kHz → 48 kHz
@@ -113,9 +113,7 @@ app.py / scripts/generate.py
 |--------|-----------|--------|--------|
 | Kokoro TTS | 24 kHz | → upsampled to 48 kHz | mono float32 |
 | F5-TTS | 24 kHz | → upsampled to 48 kHz | mono float32 |
-| Chatterbox TTS | 24 kHz | → upsampled to 48 kHz | mono float32 |
 | ACE-Step 1.5 | 48 kHz | 48 kHz | mono float32 |
-| HeartMuLa | 48 kHz | 48 kHz | mono float32 |
 | Lyria RealTime | 48 kHz | 48 kHz | mono float32 |
 
 Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa soxr_vhq`.
@@ -134,15 +132,13 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 | F5 engine | `core/f5_tts/engine.py` | `F5Engine` | `load_model()`, `synthesize()` |
 | F5 preproc | `core/f5_tts/preprocessor.py` | — | `parse_script()`, `normalize_for_f5()`, `split_into_chunks()` |
 | F5 voice registry | `core/f5_tts/voice_registry.py` | `VoiceRegistry` | `scan()`, `get_voice()` |
-| Chatterbox engine | `core/chatterbox_tts/engine.py` | `ChatterboxEngine` | `load_model()`, `synthesize()`, `get_available_voices()` |
 
 **Music & Pipeline:**
 
 | Component | File | Class | Key Methods |
 |-----------|------|-------|-------------|
-| Pipeline | `core/pipeline.py` | `MeditationPipeline` | `generate()`, `_enhance_heartmula_prompt()`, `_enhance_acestep_prompt()` |
+| Pipeline | `core/pipeline.py` | `MeditationPipeline` | `generate()`, `_enhance__prompt()`, `_enhance_acestep_prompt()` |
 | ACE-Step | `core/acestep_engine.py` | `AceStepEngine` | `load_model()`, `generate()`, `_generate_infinite()`, `_enhance_prompt()` |
-| HeartMuLa | `core/heart_mula/engine.py` | `HeartMulaEngine` | `load_model()`, `generate()`, `_generate_mlx()`, `_generate_mps()` |
 | Lyria | `core/lyria/engine.py` | `LyriaEngine` | `load_model()`, `generate()`, `_run_session()` |
 | Lyria prompts | `core/lyria/prompts.py` | — | `parse_weighted_prompts()` |
 | Audio FX | `core/audio_processor.py` | — | `make_{engine}_music_chain()`, `make_vocal_pocket_chain()`, `make_master_chain()`, `upsample_audio()` |
@@ -161,7 +157,6 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 | Constant | Value | File | Note |
 |----------|-------|------|------|
 | TTS output SR | 24 000 Hz | `core/speech_engine.py` | All TTS engines |
-| Mix SR (all engines) | 48 000 Hz | `core/pipeline.py:213` | ACE-Step / HeartMuLa / Lyria / F5 paths |
 | Fallback mix SR | 44 100 Hz | `core/pipeline.py:213` | Only when no music engine selected |
 | Export LUFS target | −16.0 | `core/pipeline.py` | Matches Apple Music; avoids platform re-limiting |
 | Kokoro crossfade | 7 200 samples | `core/kokoro_tts/postprocessor.py` | 300ms at 24 kHz |
@@ -172,35 +167,19 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 | ACE-Step LM temp | 0.65 | `core/acestep_engine.py` | `_LM_TEMPERATURE` — balances variety with calm predictability |
 | ACE-Step ADG | `False` | `core/acestep_engine.py` | `_USE_ADG` — disabled; SFT adherence baked in, ADG doubles passes without benefit |
 | ACE-Step genesis | 90 s | `core/acestep_engine.py` | `GENESIS_LEN` in `_generate_infinite` — long-form Phase 1 anchor |
-| HeartMuLa CFG | 2.5 | `core/heart_mula/engine.py` | `_LM_CFG_SCALE` |
-| HeartMuLa temp | 0.75 | `core/heart_mula/engine.py` | `_LM_TEMPERATURE` |
-| HeartMuLa top_k | 30 | `core/heart_mula/engine.py` | `_LM_TOP_K` |
-| HeartMuLa codec guidance | 1.25 | `core/heart_mula/engine.py` | `_CODEC_GUIDANCE_SCALE` |
-| HeartMuLa codec steps | 12 | `core/heart_mula/engine.py` | `_CODEC_NUM_STEPS` |
-| HeartMuLa max seg | 240 s | `core/heart_mula/engine.py` | `MAX_SEGMENT_SEC` |
 | Lyria max session | 570 s | `core/lyria/engine.py` | `_MAX_SESSION_SEC` (9.5 min cap) |
-| Chatterbox exaggeration | 0.45 | `core/chatterbox_tts/engine.py` | `_DEFAULT_EXAGGERATION` — moderate warmth + care for meditation |
-| Chatterbox cfg_weight | 0.2 | `core/chatterbox_tts/engine.py` | `_DEFAULT_CFG_WEIGHT` — lower = slower, deliberate pacing |
-| Chatterbox sentence pause | 1.0 s | `core/chatterbox_tts/engine.py` | `INTER_SENTENCE_PAUSE_SEC` |
-| Chatterbox ellipsis pause | 1.8 s | `core/chatterbox_tts/engine.py` | `ELLIPSIS_PAUSE_SEC` — contemplative pause after `...` |
-| Chatterbox trim threshold | −45 dB | `core/chatterbox_tts/engine.py` | `_TRIM_THRESHOLD_DB` — trailing silence detection |
-| MPS watermark | 0.7 | `core/heart_mula/engine.py` | `PYTORCH_MPS_HIGH_WATERMARK_RATIO` |
 
 ## Checkpoint Locations
 
 | Engine | Backend | Path |
 |--------|---------|------|
 | ACE-Step 1.5 | MLX + MPS | `./ACE-Step-1.5/checkpoints/` |
-| HeartMuLa LM | MPS | `./ckpt/HeartMuLa-oss-3B/` |
-| HeartCodec | MPS | `./ckpt/HeartCodec-oss/` |
-| HeartMuLa LM | MLX | `./ckpt-mlx/heartmula/` |
-| HeartCodec | MLX | `./ckpt-mlx/heartcodec/` |
+|  | MPS | `./ckpt/-oss/` |
+|  | MLX | `./ckpt-mlx//` |
 | Kokoro-82M | HF hub (auto) | `~/.cache/huggingface/` |
 | F5-TTS | HF hub (auto) | `~/.cache/huggingface/` |
 | HT Demucs | torch hub (auto) | `~/.cache/torch/hub/` |
 | Convolution IRs | local | `assets/impulse_responses/{warm_studio,wooden_hall,stone_chapel}.wav` |
-| Chatterbox TTS | HF hub (auto) | `~/.cache/huggingface/` |
-| Chatterbox voice assets | local | `core/chatterbox_tts/assets/reference_audio/` |
 | F5 voice assets | local | `core/f5_tts/assets/reference_audio/` · `.../reference_transcript/` · `.../voices.toml` |
 
 ## Task-Routing Guide
@@ -211,8 +190,6 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 | Voice blend presets | `core/kokoro_tts/voice_manager.py` | — |
 | Add / edit F5 voice | `core/f5_tts/assets/` (audio + transcript) | `core/f5_tts/voice_registry.py` |
 | Kokoro prosody / punctuation | `core/kokoro_tts/preprocessor.py` | — |
-| Chatterbox emotion / voice cloning | `core/chatterbox_tts/engine.py` (constants + synthesize) | `app.py` (UI sliders) |
-| Chatterbox reference voices | `core/chatterbox_tts/assets/reference_audio/` | `core/chatterbox_tts/engine.py :: get_available_voices()` |
 | Voice FX chain (EQ, reverb, compression) | `core/kokoro_tts/postprocessor.py :: build_voice_chain()` | `core/f5_tts/postprocessor.py` |
 | Music FX chain (per engine) | `core/audio_processor.py :: make_{engine}_music_chain()` | — |
 | Vocal pocket / intelligibility EQ | `core/audio_processor.py :: make_vocal_pocket_chain()` | — |
@@ -221,8 +198,7 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 | LUFS target | `core/pipeline.py` | `core/mixer.py :: export_audio()` |
 | ACE-Step generation params | `core/acestep_engine.py` (module-level constants) | — |
 | ACE-Step reference audio (melody conditioning) | `core/pipeline.py` (`melody_audio_path` param) | `core/acestep_engine.py :: _prepare_reference_audio()` |
-| HeartMuLa generation params | `core/heart_mula/engine.py` (module-level constants) | — |
-| Prompt enhancement logic | `core/pipeline.py :: _enhance_heartmula_prompt()` | `core/acestep_engine.py :: _enhance_prompt()` |
+| Prompt enhancement logic | `core/pipeline.py :: _enhance__prompt()` | `core/acestep_engine.py :: _enhance_prompt()` |
 | QA checks / thresholds | `core/qa_monitor.py` | `docs/ARCHITECTURE.md#qa-checks` |
 | Stem separation behavior | `core/stem_separator.py` | `scripts/separate_worker.py` |
 | Export format / sample rate | `core/mixer.py :: export_audio()` | `core/pipeline.py` (`export_sr`) |
@@ -234,10 +210,8 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 
 | Chain function | Applied to | Key plugins (in order) |
 |----------------|-----------|------------------------|
-| `build_voice_chain()` | Kokoro voice | NoiseGate(−40dB) → HPF(80Hz) → Peak(−2.5dB@400Hz) → LowShelf(+1.5dB@200Hz) → Compressor(2.5:1@−22dB,15ms/150ms) → HiShelf(+1dB@10kHz) → ConvReverb(warm_studio,15%wet) → Limiter(−1dBTP) |
-| `build_chatterbox_voice_chain()` | Chatterbox voice | NoiseGate(−45dB) → HPF(80Hz) → Peak(−1.5dB@400Hz) → LowShelf(+2.0dB@180Hz) → Compressor(2.5:1@−22dB,15ms/150ms) → HiShelf(+1.5dB@10kHz) → ConvReverb(warm_studio,15%wet) → Limiter(−1dBTP) |
+| `build_voice_chain()` | Kokoro voice | NoiseGate(−40dB) → HPF(80Hz) → Peak(−2.5dB@400Hz) → LowShelf(+1.5dB@200Hz) → Compressor(2.5:1@−28dB,15ms/150ms) → HiShelf(+1dB@10kHz) → ConvReverb(warm_studio,18%wet) → Limiter(−1dBTP) |
 | `build_f5_voice_chain()` | F5-TTS voice | De-esser(4–8kHz) → NoiseGate → HPF → EQ chain → Compressor → Limiter — see `core/f5_tts/postprocessor.py` |
-| `make_heartmula_music_chain()` | HeartMuLa 48kHz | NoiseGate(−52dB) → HPF(60Hz) → LowShelf(+1.5dB@100Hz) → LowShelf(+2.0dB@150Hz) → Peak(−1dB@220Hz) → Peak(−2dB@4kHz,Q=0.5) → HiShelf(−2dB@9.5kHz) → LPF(14kHz) → ConvReverb(stone_chapel,15%wet) → Compressor(2:1@−20dB) → Limiter(−0.5dB) |
 | `make_acestep_music_chain()` | ACE-Step 48kHz | NoiseGate(−55dB) → HPF(60Hz) → LowShelf(+1.5dB@200Hz) → Peak(−1.5dB@3kHz) → LPF(16kHz) → Compressor(2.0:1@−20dB) → Limiter(−0.5dB) |
 | `make_lyria_music_chain()` | Lyria 48kHz | HPF(60Hz) → Peak(−1.5dB@250Hz) → Peak(−2.0dB@4500Hz,Q=0.7) → HiShelf(−2.5dB@9kHz) → Compressor(2:1@−18dB) → Limiter(−0.5dB) |
 | `make_vocal_pocket_chain()` | Music (all engines) | HPF(30Hz) → Peak(−3dB@350Hz,Q=0.7) → Peak(−3.5dB@1.5kHz,Q=0.7) → Peak(−2dB@3kHz,Q=0.8) |
@@ -261,13 +235,13 @@ All chains in `core/audio_processor.py`. IRs in `assets/impulse_responses/` (def
 - **ACE-Step timeout**: Always pass `compile_model=True` to `initialize_service()` — without it, generation takes ~9s/step and times out (~135s JIT overhead on first run, then ~4× faster per step)
 - **transformers version**: Pinned to `>=4.51.0,<4.58.0` for ACE-Step compatibility — do not upgrade
 - **Kokoro on CPU**: Intentionally forced to CPU — MPS causes deallocation bus errors. British voices (`bf_*`, `bm_*`) require `KPipeline(lang_code="b")`
-- **HeartMuLa simultaneous loading (MLX)**: Both LM (bf16) + codec (fp32) loaded together (~12 GB). `mx.set_memory_limit(30GB)`, `mx.set_cache_limit(4GB)`. MPS: `lazy_load=True` still handles lifecycle.
-- **HeartCodec dtype**: Always fp32 — bf16 causes metallic artifacts. MLX passes `mx.float32`; MPS passes `{"codec": torch.float32}`.
-- **HeartMuLa MPS watermark**: `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7` (set in `engine.py`). Values below 0.5 cause OOM during 3B LM generation.
-- **HeartMuLa checkpoints**: Must be present before selecting HeartMuLa — see Checkpoint Locations table above.
+- ** simultaneous loading (MLX)**: Both LM (bf16) + codec (fp32) loaded together (~12 GB). `mx.set_memory_limit(30GB)`, `mx.set_cache_limit(4GB)`. MPS: `lazy_load=True` still handles lifecycle.
+- ** dtype**: Always fp32 — bf16 causes metallic artifacts. MLX passes `mx.float32`; MPS passes `{"codec": torch.float32}`.
+- ** MPS watermark**: `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7` (set in `engine.py`). Values below 0.5 cause OOM during 3B LM generation.
+- ** checkpoints**: Must be present before selecting  — see Checkpoint Locations table above.
 - **Active ducking function**: `mixer.mix()` calls `apply_multiband_ducking()` by default (`multiband=True`). Falls back to `apply_envelope_ducking()` when `multiband=False`. `apply_rms_ducking()` exists but is not used in production. Default `duck_amount_db=−12.0` (in `pipeline.py`); `hold_ms=1200` (in `mix()` `_duck_kwargs`) bridges slow meditation phrase gaps — do not reduce below 800ms.
-- **Chatterbox MPS torch.load patch**: Engine patches `torch.load` with `weights_only=False` + MPS `map_location` for Apple Silicon compatibility (from Chatterbox's official `example_for_mac.py`). Patch is applied in a try/finally block and restored after loading.
-- **Chatterbox voice cloning**: Reference audio 5-15s `.wav` — no transcript needed (unlike F5-TTS). Falls back to default voice if file not found. Assets dir: `core/chatterbox_tts/assets/reference_audio/`.
-- **Chatterbox pacing**: The `speed` parameter is accepted for ABC compliance but does not control Chatterbox pacing. Pacing is controlled by `exaggeration` (emotion intensity) and `cfg_weight`. Low cfg_weight (0.2) = slow, deliberate meditation delivery. Chatterbox also applies per-chunk RMS normalization, segment fades, and pyworld pitch humanization (same as Kokoro) for natural expressiveness.
-- **Chatterbox breath sounds**: `[breath]` markers produce room-tone pauses (not breath WAVs) because Chatterbox generates naturalistic breathing via its exaggeration parameter.
+- ** MPS torch.load patch**: Engine patches `torch.load` with `weights_only=False` + MPS `map_location` for Apple Silicon compatibility (from 's official `example_for_mac.py`). Patch is applied in a try/finally block and restored after loading.
+- ** voice cloning**: Reference audio 5-15s `.wav` — no transcript needed (unlike F5-TTS). Falls back to default voice if file not found. Assets dir: `core/_tts/assets/reference_audio/`.
+- ** pacing**: The `speed` parameter is accepted for ABC compliance but does not control  pacing. Pacing is controlled by `exaggeration` (emotion intensity) and `cfg_weight`. Low cfg_weight (0.2) = slow, deliberate meditation delivery.  also applies per-chunk RMS normalization, segment fades, and pyworld pitch humanization (same as Kokoro) for natural expressiveness.
+- ** breath sounds**: `[breath]` markers produce room-tone pauses (not breath WAVs) because  generates naturalistic breathing via its exaggeration parameter.
 - **Mix sample rate**: All music engine paths use `mix_sr = 48000` (`pipeline.py:213`). The 44.1 kHz fallback is only used when no music engine is active.
