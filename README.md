@@ -15,7 +15,7 @@ MoodScape is a locally-run AI pipeline that synthesizes professional guided medi
 **AI engines included:**
 - **Kokoro TTS** — fast, lightweight narration (82M params, preset voice blends, CPU)
 - **F5-TTS** — zero-shot voice cloning from any 10s reference recording (MPS)
-- **** — high-quality text-to-music with structural section control (3B params, MLX/MPS, 44.1 kHz native)
+- **IndexTTS-2** — zero-shot voice cloning with decoupled emotion control (MPS, no transcript required)
 - **ACE-Step 1.5** — high-fidelity text-to-music with LM planning (MLX, 48 kHz native)
 - **Lyria RealTime** — Google DeepMind cloud music generation (48 kHz, no local GPU needed)
 
@@ -34,10 +34,10 @@ Script text
     ▼
 [TTS Engine]      core/kokoro_tts/  (CPU, 24 kHz mono float32)
                   core/f5_tts/      (MPS, 24 kHz mono float32)
+                  core/index_tts/   (MPS, 24 kHz mono float32)
     │             → TTS unloaded; memory freed before music loads
     ▼
-[Music Engine]    core//engine.py (MLX/MPS, 44.1 kHz)
-                  core/acestep_engine.py    (ACE-Step 1.5, MLX, 48 kHz)
+[Music Engine]    core/acestep/engine.py    (ACE-Step 1.5, MLX, 48 kHz)
                   core/lyria/engine.py      (Lyria RealTime, cloud, 48 kHz)
     │             → Music engine unloaded; memory freed
     ▼
@@ -64,13 +64,13 @@ WAV / MP3  (44.1 kHz or 48 kHz)
 | `core/pipeline.py` | End-to-end orchestration |
 | `core/kokoro_tts/` | Kokoro TTS — preprocessor, engine, postprocessor, voice manager |
 | `core/f5_tts/` | F5-TTS — preprocessor, engine, postprocessor, voice registry |
-| `core/acestep_engine.py` | ACE-Step 1.5 wrapper (MLX backend, 48 kHz) |
+| `core/index_tts/` | IndexTTS-2 — preprocessor, engine, postprocessor, voice + emotion registry |
+| `core/acestep/` | ACE-Step 1.5 wrapper (MLX backend, 48 kHz) |
 | `core/lyria/` | Lyria RealTime API — engine, weighted prompt parser |
 | `core/stem_separator.py` | HT Demucs source separation (4-source model) |
 | `core/audio_processor.py` | Pedalboard FX chains (voice / music / master) |
 | `core/mixer.py` | Ducking, overlay, fades, normalization, export |
 | `core/qa_monitor.py` | Output quality assurance and composite scoring |
-| `core/session_config.py` | Immutable reproducible generation config |
 | `core/speech_engine.py` | Abstract TTS interface (24 kHz mono float32 contract) |
 | `scripts/generate.py` | CLI batch runner |
 
@@ -82,6 +82,9 @@ WAV / MP3  (44.1 kHz or 48 kHz)
 
 | Platform | Supported Engines | Notes |
 |----------|-------------------|-------|
+| Apple Silicon (M1/M2/M3, 36+ GB unified RAM) | All — Kokoro (CPU), F5-TTS (MPS), IndexTTS-2 (MPS), ACE-Step (MLX), Lyria (cloud) | Primary target; 36 GB recommended for ACE-Step + Demucs headroom |
+| Apple Silicon (16–24 GB) | Kokoro, F5-TTS, Lyria | ACE-Step + IndexTTS-2 may OOM at peak; use Lyria for music if so |
+| Linux + CUDA GPU | Kokoro, F5-TTS, IndexTTS-2, Lyria | ACE-Step MLX path is Apple-only; Linux CUDA fork exists upstream |
 
 ### Python & System Dependency
 
@@ -151,9 +154,9 @@ python app.py
 
 1. **Choose Generation Mode** — `Instrumental + Vocal` (default), `Vocals Only`, or `Instrumental Only`
 2. **Write your meditation script** in the left panel — use [pause tags](#script-format) for timed silences
-3. **Choose TTS Engine** — `Kokoro` for preset voices, `F5-TTS` for zero-shot voice cloning
-4. **Select a Voice** — Kokoro preset from the dropdown, or F5-TTS voice scanned from `core/f5_tts/assets/`
-5. **Choose Music Engine** — `ACE-Step 1.5`, ``, or `Lyria RealTime`
+3. **Choose TTS Engine** — `Kokoro` for preset voices, `F5-TTS` for zero-shot voice cloning, `IndexTTS-2` for zero-shot cloning + decoupled emotion control
+4. **Select a Voice** — Kokoro preset, F5-TTS voice from `core/f5_tts/assets/`, or IndexTTS-2 speaker from `reference_audio/vocals/`
+5. **Choose Music Engine** — `ACE-Step 1.5` or `Lyria RealTime`
 6. **Write a Music Prompt** — describe the background music style (see [Music Engines](#music-engines) for prompt tips per engine)
 7. **Configure ACE-Step or Lyria settings** if selected (BPM, key, density, quality mode)
 8. **Expand Audio Settings** to tune ducking, reverb, fade durations, reverb IR, and stem export
@@ -188,7 +191,7 @@ python scripts/generate.py my_script.txt \
 | `--stems` | off | Save separate `voice.wav` and `music.wav` alongside the mix |
 | `--upsample` | off | Export at 48 kHz instead of 44.1 kHz |
 
-> **Note:** The CLI currently uses Kokoro TTS and  (default). F5-TTS, ACE-Step, and Lyria are available via the web UI.
+> **Note:** The CLI currently uses Kokoro TTS and ACE-Step 1.5 (defaults). F5-TTS, IndexTTS-2, and Lyria are available via the web UI.
 
 ---
 
@@ -283,6 +286,22 @@ Multi-phase voices (opening / body / closing) are configured in `core/f5_tts/ass
 
 See [`docs/model_implementation_guides/f5_tts.md`](docs/model_implementation_guides/f5_tts.md) for reference audio requirements, multi-phase configuration, and synthesis parameters.
 
+### IndexTTS-2 (Zero-Shot Voice Cloning + Emotion Control)
+
+Clones any voice from a 5–15s `.wav` recording — no transcript required (unlike F5-TTS). Emotion is **decoupled** from speaker identity: pick a speaker reference and an emotion reference independently.
+
+**To add a custom voice:**
+1. Place a clean 5–15s `.wav` in `reference_audio/vocals/`
+2. Restart the app — the voice appears in the dropdown automatically
+
+**To add a custom emotion:**
+1. Place an emotion-bearing `.wav` (calm, warm, energetic, …) in `reference_audio/instrumental/`
+2. Restart the app — or upload directly from the Gradio UI
+
+**Setup**: IndexTTS-2 weights must be downloaded manually — see [`docs/setup_and_execution/index_tts_setup.md`](docs/setup_and_execution/index_tts_setup.md).
+
+The default "calm" emotion vector (`[0,…,0,1.0]` with `emo_alpha=0.70`) is tuned for meditation delivery. See [`docs/model_implementation_guides/index_tts.md`](docs/model_implementation_guides/index_tts.md).
+
 ---
 
 ## Music Engines
@@ -336,7 +355,7 @@ See [`docs/model_implementation_guides/lyria.md`](docs/model_implementation_guid
 | Setting | Options | Default | Description |
 |---------|---------|---------|-------------|
 | Generation Mode | Instrumental + Vocal / Vocals Only / Instrumental Only | Instrumental + Vocal | What the pipeline produces |
-| TTS Engine | Kokoro / F5-TTS | Kokoro | Voice synthesis engine |
+| TTS Engine | Kokoro / F5-TTS / IndexTTS-2 | Kokoro | Voice synthesis engine |
 | Output Format | WAV / MP3 | WAV | WAV = lossless; MP3 = compressed |
 
 ### Voice Settings
@@ -394,23 +413,28 @@ All engine-specific guides, prompt engineering references, and processing detail
 
 ```
 docs/
+├── ARCHITECTURE.md                    ← Full pipeline, FX params, QA thresholds, memory patterns
+├── COMPONENT_REGISTRY.md              ← Class & method map for every core/ module
+├── TASK_ROUTING.md                    ← "I want to change X — where do I look?"
+├── GOTCHAS.md                         ← Full common-gotchas list
 ├── model_implementation_guides/
 │   ├── kokoro_tts.md           ← Kokoro internals, voice blending, preprocessing, FX chain
 │   ├── f5_tts.md               ← F5-TTS zero-shot cloning, multi-phase voices, chained reference
-│   ├── .md            ←  3B LM + MLX/MPS, lazy loading, segment-and-crossfade
+│   ├── index_tts.md            ← IndexTTS-2 zero-shot cloning + decoupled emotion control
 │   ├── ace-step.md             ← ACE-Step architecture, MLX backend, MESA framework, weight download
 │   ├── lyria.md                ← Lyria RealTime API, weighted prompts, session limits, SynthID
 │   └── pedalboard.md           ← Pedalboard FX chain design, all plugin parameters
 ├── prompting_guides/
 │   ├── vocal_kokoro_instructions.md   ← How to write scripts for Kokoro TTS
 │   ├── vocal_f5_instructions.md       ← How to write scripts for F5-TTS + phase guide
-│   ├── _instructions.md      ←  tag-based prompting (meditation presets + examples)
+│   ├── vocal_indextts_instructions.md ← How to write scripts for IndexTTS-2 + emotion control
 │   └── ace_step_instructions.md       ← ACE-Step MESA framework + story mode prompting
 ├── optimization_and_processing/
 │   ├── audio_processing.md            ← Ducking, FX chains, sample rate strategy, stereo-to-mono
 │   └── post-processing-pipeline.md    ← Export, LUFS, master chain, streaming export
 └── setup_and_execution/
-    ├── app-running-instructions.md    ← Environment setup walkthrough
+    ├── index_tts_setup.md             ← IndexTTS-2 weight download + voice management
+    ├── checkpoint_locations.md        ← Where every model's weights live
     └── local-target-env.md            ← Apple Silicon hardware specs, ML stack, memory management
 ```
 
