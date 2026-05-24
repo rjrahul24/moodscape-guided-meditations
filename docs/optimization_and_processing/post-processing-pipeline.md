@@ -54,29 +54,38 @@ Kokoro TTS (24 kHz, CPU)
 └──────────────────────────────────────┘
   │
   ▼
+┌──────────────────────────────────────┐
+│ Pitch humanization (per speech chunk)│
+│   • pyworld: drift ±6¢ @ 0.5 Hz     │
+│   • vibrato ±3¢ @ 5 Hz              │
+│   • jitter ±2¢ (random)             │
+│   • formant shift 0.97 (3% lower)   │
+│   • applied to speech only; pauses  │
+│     and room-tone chunks are skipped │
+└──────────────────────────────────────┘
+  │
+  ▼
 Upsample → mix sample rate (soxr_vhq for all TTS engines)
   │
   ▼
 ┌──────────────────────────────────────┐
 │ Unified Voice FX: build_voice_chain()│
-│   1. NoiseGate (-60 dB)             │
+│   1. NoiseGate (-40 dB)             │
 │   2. Highpass 80 Hz                  │
-│   3. LowShelf +2.0 dB @ 200 Hz      │
-│   4. PeakFilter -2 dB @ 350 Hz      │
-│      (Q=1.0, mud cut)              │
-│   5. Compressor 2:1 @ -18 dB        │
-│      (gentle glue)                  │
-│   6. PeakFilter +1.0 dB @ 3 kHz      │
-│      (Q=0.6, broad presence boost)    │
-│   7. HighShelf -3.0 dB @ 7.5 kHz     │
-│      (de-harsh shelf)                │
-│   8. Convolution reverb (space)      │
-│   9. Lowpass 9.5 kHz (Nyquist mask, │
-│      after reverb)                  │
-│  10. Limiter -1 dBFS                 │
+│   3. PeakFilter -2.5 dB @ 400 Hz    │
+│      (Q=1.0, mud cut)               │
+│   4. LowShelf +1.5 dB @ 200 Hz      │
+│      (warmth / proximity effect)    │
+│   5. Compressor 2.5:1 @ -28 dB      │
+│      (15ms/150ms; catches whisper-  │
+│       level meditation delivery)    │
+│   6. HighShelf +1.0 dB @ 10 kHz    │
+│      (air / intimacy)               │
+│   7. Convolution reverb (18% wet)   │
+│   8. Limiter -1.0 dBTP              │
 │                                      │
-│  Tape saturation (drive=1.05) is     │
-│  applied before the chain.           │
+│  Soft tanh saturation (drive=1.5,   │
+│  12% wet) is applied before chain.  │
 └──────────────────────────────────────┘
 ```
 
@@ -129,7 +138,7 @@ Upsample → mix sample rate (soxr_vhq)
 ### Shared Path (Both Engines)
 
 ```
-HeartMuLa Pre-EQ (HeartMuLa only)
+ Pre-EQ ( only)
   • Spectral repair: noisereduce (stationary, prop_decrease=0.45)
   • Tape saturation: asymmetric soft clipping (drive=0.2, bias=0.10)
 
@@ -139,12 +148,12 @@ ACE-Step Pre-EQ (ACE-Step only — see audio_processing.md §3)
 
 Music FX Chain (engine-specific EQ — see audio_processing.md §3)
 
-Neural Enhancement (HeartMuLa only — optional)
+Neural Enhancement ( only — optional)
   • Apollo GAN (ICASSP 2025) — codec artifact removal
   • Loads after music engine unloads (~7 GB)
   • Graceful fallback if Apollo not installed
 
-ACE-Step / HeartMuLa Post-EQ (ACE-Step and HeartMuLa)
+ACE-Step /  Post-EQ (ACE-Step and )
   • Organic noise floor: pink noise at -58 dB, LPF 8 kHz
 
 Vocal Pocket Carving (applied to music before mixing)
@@ -244,12 +253,10 @@ Selectable in the UI under "Reverb Space". Applied via Pedalboard `Convolution` 
 | `core/kokoro_tts/postprocessor.py` | Per-chunk cleanup, crossfade assembly, spectral gating, unified voice FX chain (`build_voice_chain()`) |
 | `core/f5_tts/postprocessor.py` | `F5MasteringEngine` — split-band de-esser, crossfade assembly, F5 Phase B EQ |
 | `core/breath_sounds.py` | Shared breath sample loader (cached, 75ms fade-in/out) |
-| `core/audio_processor.py` | Music FX chains (HeartMuLa/ACE-Step/Lyria), vocal pocket chain, master chain |
 | `core/mixer.py` | Multiband sidechain ducking (with hold), overlay, cosine crossfade looping, exponential fades, LUFS, streaming export |
 | `core/kokoro_tts/preprocessor.py` | Script parsing (breath/pause/voice), text expansion, IPA injection, prosody punctuation, token chunking |
 | `core/f5_tts/preprocessor.py` | Script parsing (breath/pause/voice), character-count chunking |
 | `core/qa_monitor.py` | QA: LUFS, clipping, spectral balance, silence gaps, silence ratio, spectral rolloff, onset strength, spectral smoothness, harmonic stability, onset density, dynamic range, voice-music ratio, ducking smoothness, composite score |
-| `core/neural_enhancer.py` | Apollo GAN neural post-processing (optional, HeartMuLa codec artifact removal) |
 | `core/stereo_upmix.py` | Haas-effect stereo upmixing (opt-in, music only) |
 | `core/pipeline.py` | Orchestrates the full signal chain end-to-end |
 
@@ -290,7 +297,7 @@ After the master chain, `qa_monitor.run_qa_checks()` runs 11 automated checks:
 - [x] Multiband sidechain ducking: 60ms lookahead, 80ms attack, 1000ms release, 1200ms hold
 - [x] Frequency-selective ducking: low 25%, mid 100%, high 50% of duck amount
 - [x] Equal-power cosine² crossfades: 300ms TTS assembly, 2s music, 2s music loop
-- [x] HeartMuLa seams: micro-crossfade (64-sample triangular at zero-crossing) after _stitch()
+- [x]  seams: micro-crossfade (64-sample triangular at zero-crossing) after _stitch()
 - [x] Exponential fade curves (default) for natural meditation transitions
 - [x] Streaming export in 20s chunks — no full-array load at export time
 - [x] LUFS target: -16 LUFS integrated (per session)

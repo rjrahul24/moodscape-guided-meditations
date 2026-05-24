@@ -96,6 +96,8 @@ app.py / scripts/generate.py
                          LyriaEngine.generate()      → 48 kHz mono float32
      5. stem sep         StemSeparator.remove_drums_and_vocals()            [optional]
      6. TTS upsample     audio_processor.upsample_audio() 24 kHz → 48 kHz
+    6b. voice humanize   kokoro_tts/postprocessor :: humanize_voice() per speech chunk
+                         (pitch drift ±6¢, vibrato ±3¢, jitter ±2¢, formant 0.97)
      7. voice FX         kokoro_tts/postprocessor :: build_voice_chain() + apply_fx()
     7b. voice norm       mixer.normalize_loudness() → −18 LUFS pre-mix
      8. music FX         audio_processor :: make_{engine}_music_chain() + make_vocal_pocket_chain()
@@ -160,6 +162,10 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 | Fallback mix SR | 44 100 Hz | `core/pipeline.py:213` | Only when no music engine selected |
 | Export LUFS target | −16.0 | `core/pipeline.py` | Matches Apple Music; avoids platform re-limiting |
 | Kokoro crossfade | 7 200 samples | `core/kokoro_tts/postprocessor.py` | 300ms at 24 kHz |
+| Kokoro humanize drift | 6.0 cents (0.5 Hz) | `core/kokoro_tts/postprocessor.py` | Slow pitch drift; vocal fold tension simulation |
+| Kokoro humanize vibrato | 3.0 cents (5 Hz) | `core/kokoro_tts/postprocessor.py` | Subtle vibrato; ±15 cents total headroom |
+| Kokoro humanize jitter | 2.0 cents | `core/kokoro_tts/postprocessor.py` | Random micro-jitter |
+| Kokoro formant shift | 0.97 | `core/kokoro_tts/postprocessor.py` | 3% lower formants; perceived warmth |
 | Kokoro max tokens | 150 | `core/kokoro_tts/preprocessor.py` | Per chunk |
 | F5 max chars | 300 | `core/f5_tts/preprocessor.py` | Per chunk |
 | ACE-Step CFG | 5.5 | `core/acestep_engine.py` | `_GUIDANCE_SCALE` — SFT sweet spot |

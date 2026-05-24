@@ -81,12 +81,12 @@ Where `X` is an integer or a decimal number (float). Both forms are valid:
 
 ### Paragraph Breaks as Automatic Pauses
 
-Any double newline (`\n\n`) in the script is automatically converted to a `[pause:2.5s]` marker before parsing. Single newlines have no special effect — they are treated as a space within the same speech segment.
+Any double newline (`\n\n`) in the script is automatically converted to a `[pause:6.5s]` pause before parsing. The 6.5-second duration was chosen for spacious meditation pacing — it provides a generous breath between major script sections. Single newlines have no special effect — they are treated as a space within the same speech segment. Use explicit `[pause:Xs]` markers if you need a shorter or longer inter-paragraph pause.
 
 ```
 This is one sentence on a single line. [pause:3s]      ← explicit 3-second pause
 
-This is a new paragraph.                               ← blank line above → auto 2.5s pause
+This is a new paragraph.                               ← blank line above → auto 6.5s pause
 ```
 
 ### Consecutive Pause Merging
@@ -96,7 +96,7 @@ The parser **merges consecutive pauses** into one. If two pause markers appear b
 ```
 [pause:3s] [pause:2s]    →  becomes a single 5-second pause
 [pause:3s]               }
-                         }  blank line converts to [pause:2.5s],
+                         }  blank line converts to [pause:6.5s],
 Next sentence            }  total pause = 5.5s before "Next sentence"
 ```
 
@@ -330,7 +330,7 @@ If you do not use IPA injection, common Sanskrit terms that Kokoro typically mis
 | Stacking consecutive pauses | They merge — the total may not match your intent | Use a single pause with the total duration |
 | Very long sentences (>30 words) | May hit token limits, unnatural delivery | Break into shorter sentences |
 | Putting stage directions in the script | Kokoro reads them aloud | Remove all stage directions; put only spoken text in the script |
-| Relying on line breaks for pauses | Single `\n` has no pause effect; only `\n\n` (blank line) adds 1.5s | Use explicit `[pause:Xs]` markers for precise control |
+| Relying on line breaks for pauses | Single `\n` has no pause effect; only `\n\n` (blank line) adds 6.5s | Use explicit `[pause:Xs]` markers for precise control |
 | Going below speed 0.65 | Distorted, robotic audio | Use 0.85–0.95 range; the app clamps at 0.65 |
 | Numbers and symbols | Kokoro may or may not expand them correctly | Spell out: "four" not "4", "fifty percent" not "50%", "minus" not "−" |
 

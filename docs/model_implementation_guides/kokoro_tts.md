@@ -522,7 +522,7 @@ MoodScape uses a multi-stage postprocessing pipeline tailored to Kokoro's ISTFTN
 2. HighpassFilter (80 Hz) — removes sub-bass rumble and plosives
 3. LowShelfFilter (+2 dB @ 200 Hz) — warmth / proximity effect
 4. PeakFilter (-2 dB @ 350 Hz, Q=1.0) — mud cut
-5. Compressor (2:1, -18 dB threshold, 10ms/100ms) — dynamics control
+5. Compressor (2.5:1, **-28 dB** threshold, 15ms/150ms) — dynamics control; catches whisper-level delivery
 6. PeakFilter (**+1.0 dB @ 3 kHz, Q=0.6**) — broad presence boost for intelligibility and forward warmth; wide Q=0.6 lifts the full 2–5 kHz upper midrange gently, preserving natural expressiveness without amplifying single resonances
 7. HighShelfFilter (**-3.0 dB @ 7.5 kHz**) — single de-harsh shelf taming ISTFTNet vocoder HF artifacts without killing 'air'
 8. Convolution reverb — space (IR: warm_studio / wooden_hall / stone_chapel)
@@ -620,13 +620,26 @@ The `preprocess_for_meditation()` pipeline applies these transforms in order:
 - **SLERP interpolation** replaces linear blending. Spherical linear interpolation preserves embedding norms on the style space hypersphere, producing smoother blends (linear interpolation shrinks norms by ~29% at midpoint for orthogonal vectors).
 - **Per-sentence voice jitter** (`add_voice_jitter`, amount=0.001) adds subtle Gaussian noise to the voice tensor per sentence, creating natural micro-variation in timbre. Kept very low (0.001) to avoid audible timbre shifts at pause boundaries.
 
-### Pitch Humanization & Formant Warmth (`postprocessor.py` — DISABLED)
+### Pitch Humanization & Formant Warmth (`postprocessor.py` — ACTIVE, per-speech-chunk)
 
-`humanize_voice(audio, sr)` exists in the codebase but is **not called** in the active pipeline. pyworld's WORLD vocoder resynthesis degrades Kokoro's neural vocoder output (ISTFTNet), causing both flatness and harshness. The function is retained for potential future use with a higher-quality resynthesis approach.
+`humanize_voice(audio, sr)` is called **per speech sentence** inside `KokoroEngine.synthesize()`, immediately after `apply_segment_fades()`. It is applied only to speech chunks — room-tone pause segments are excluded to avoid pyworld pitch-tracker artifacts at speech→silence boundaries.
+
+Parameters (all conservative — total modulation stays under ±15 cents):
+
+| Parameter | Value | Effect |
+|-----------|-------|--------|
+| `drift_hz` | 0.5 | Slow drift frequency (vocal fold tension simulation) |
+| `drift_cents` | 6.0 | Slow drift amplitude |
+| `vibrato_hz` | 5.0 | Subtle vibrato rate |
+| `vibrato_cents` | 3.0 | Vibrato amplitude |
+| `jitter_cents` | 2.0 | Random micro-jitter |
+| `formant_shift` | 0.97 | 3% lower formants (perceived warmth) |
+
+Academic basis: small pyworld perturbations (±6–15 cents) on neural vocoder output are validated for prosodic parameter manipulation without audible degradation (arXiv 2409.12176). The key constraint is keeping total modulation under ±15 cents.
 
 ### Voice FX Chain (`postprocessor.py`)
 
-The voice FX chain uses gentle glue compression (2:1 @ -18 dB) rather than aggressive parallel compression. The EQ is subtractive: +2.0 dB low shelf @ 200 Hz for warmth, -2.5 dB cut @ 3 kHz (Q=0.8) targeting metallic resonance, -4.0 dB high shelf @ 7.5 kHz for de-harshness. Tape saturation (drive=1.05) adds subtle harmonic warmth before the Pedalboard chain. This preserves the natural smoothness of Kokoro's neural vocoder output while actively removing harshness.
+The voice FX chain uses gentle glue compression (2.5:1 @ **-28 dB**) rather than aggressive parallel compression — the lower threshold catches whisper-level meditation delivery. The EQ chain: -2.5 dB peak @ 400 Hz (Q=1.0) for mud cut, +1.5 dB low shelf @ 200 Hz for warmth, +1.0 dB high shelf @ 10 kHz for air and intimacy. Convolution reverb at **18% wet** (warm_studio IR) adds intimate acoustic space. Soft tanh saturation (drive=1.5, 12% wet blend) adds subtle even harmonics for warmth before the Pedalboard chain. This preserves the natural smoothness of Kokoro's neural vocoder output while actively removing harshness.
 
 ### Room-Tone Pauses (`postprocessor.py` + `engine.py`)
 
@@ -644,7 +657,6 @@ The voice FX chain uses gentle glue compression (2:1 @ -18 dB) rather than aggre
 | Use `librosa` time-stretch for pacing | Degrades voice quality | Use Kokoro's `speed` parameter |
 | Go below `speed=0.65` | Artifacts and distorted prosody | Clamp to `max(speed, 0.65)` |
 | Export MP3 during synthesis | Click artifacts in silences | WAV first, MP3 only at final export |
-| Load both TTS and HeartMuLa simultaneously | OOM on 8–16 GB GPU | Sequential loading with `unload_model()` |
 | Ignore `PYTORCH_ENABLE_MPS_FALLBACK=1` | MPS crashes on some ops | Always set before any torch import |
 
 ---
