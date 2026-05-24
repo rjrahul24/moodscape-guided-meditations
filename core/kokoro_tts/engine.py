@@ -20,6 +20,7 @@ from core.kokoro_tts.postprocessor import (
     apply_segment_fades,
     reduce_synthesis_noise,
     generate_room_tone,
+    humanize_voice,
 )
 from core.kokoro_tts.preprocessor import annotate_speed, clamp_speed, split_into_sentences
 
@@ -211,6 +212,11 @@ class KokoroEngine(SpeechEngine):
                     if speech_parts:
                         speech_audio = crossfade_chunks(speech_parts)
                         speech_audio = apply_segment_fades(speech_audio)
+                        # Stage 2c: Pitch humanization per speech chunk.
+                        # Applied here (not on full assembly) so pyworld never
+                        # processes room-tone silence — avoids pitch-tracker artifacts
+                        # at speech→pause boundaries.
+                        speech_audio = humanize_voice(speech_audio, sr=SAMPLE_RATE)
                     else:
                         speech_audio = np.zeros(int(0.1 * SAMPLE_RATE), dtype=np.float32)
 
@@ -262,13 +268,6 @@ class KokoroEngine(SpeechEngine):
         # Stage 2b: Spectral gating — remove low-level ISTFTNet synthesis hiss.
         # Runs on the full assembled audio so the noise profile estimate is stable.
         voice_audio = reduce_synthesis_noise(voice_audio, sr=SAMPLE_RATE)
-
-        # Stage 2c: Pitch humanization + formant warmth via pyworld.
-        # Adds micro-pitch drift (~0.5 Hz / ±6 cents), subtle vibrato (5 Hz / ±3 cents),
-        # random jitter (±2 cents), and 3% formant shift — all invisible to the ear
-        # but transforming the robotic flatness of TTS into perceived expressiveness.
-        from core.kokoro_tts.postprocessor import humanize_voice
-        voice_audio = humanize_voice(voice_audio, sr=SAMPLE_RATE)
 
         return voice_audio, voice_activity
 

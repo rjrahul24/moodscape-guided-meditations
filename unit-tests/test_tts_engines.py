@@ -71,5 +71,62 @@ class TestTTSEngines(unittest.TestCase):
         self.assertLess(len(trimmed), len(audio))
         self.assertGreaterEqual(len(trimmed), len(signal))
 
+import torch
+from unittest.mock import MagicMock, patch
+
+from core.kokoro_tts.engine import KokoroEngine, SAMPLE_RATE
+
+
+def _fake_voice() -> torch.Tensor:
+    """Deterministic fake voice tensor matching Kokoro's (511, 1, 256) shape."""
+    torch.manual_seed(0)
+    return torch.randn(511, 1, 256)
+
+
+class TestHumanizeVoiceScope(unittest.TestCase):
+    """humanize_voice must be called per speech sentence, not on full assembly."""
+
+    def _make_engine_with_mock_pipeline(self):
+        """Return a KokoroEngine with a mocked KPipeline that yields 0.3s audio."""
+        engine = KokoroEngine()
+        fake_audio = np.ones(int(0.3 * SAMPLE_RATE), dtype=np.float32) * 0.1
+        mock_pipe = MagicMock()
+        mock_pipe.return_value = [("graphemes", "phonemes", fake_audio)]
+        engine.pipeline = mock_pipe
+        engine.pipeline_en_gb = None
+        return engine
+
+    @patch('core.kokoro_tts.voice_manager.load_voice_tensor')
+    @patch('core.kokoro_tts.voice_manager.get_voice', return_value='af_heart')
+    @patch('core.kokoro_tts.engine.humanize_voice')
+    def test_humanize_called_per_speech_sentence_not_on_full_audio(
+        self, mock_humanize, mock_get_voice, mock_load_tensor
+    ):
+        mock_load_tensor.return_value = _fake_voice()
+        mock_humanize.side_effect = lambda audio, sr: audio  # passthrough
+
+        engine = self._make_engine_with_mock_pipeline()
+        segments = [
+            {"type": "speech", "text": "Breathe in deeply."},
+            {"type": "pause", "duration_sec": 3.0},
+            {"type": "speech", "text": "Now exhale slowly."},
+        ]
+        voice_audio, _ = engine.synthesize(segments, voice="af_heart")
+
+        # Must be called once per speech sentence (2 sentences → 2 calls)
+        self.assertEqual(
+            mock_humanize.call_count, 2,
+            f"Expected 2 calls (one per speech sentence), got {mock_humanize.call_count}"
+        )
+        # Each call must receive a chunk shorter than the full assembled audio
+        total_len = len(voice_audio)
+        for i, call in enumerate(mock_humanize.call_args_list):
+            chunk_len = len(call[0][0])  # first positional argument
+            self.assertLess(
+                chunk_len, total_len,
+                f"Call {i}: humanize_voice received full-length audio ({chunk_len} >= {total_len})"
+            )
+
+
 if __name__ == '__main__':
     unittest.main()
