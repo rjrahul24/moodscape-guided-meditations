@@ -2,7 +2,7 @@
 **Files:** `core/acestep/engine.py`
 **Class:** `AceStepEngine` — `load_model()` / `generate()` / `_generate_infinite()` / `_enhance_prompt()`
 **Constants:** `_GUIDANCE_SCALE=5.5` · `_INFERENCE_STEPS=50` · `_LM_TEMPERATURE=0.65` · `_USE_ADG=False` · `_CFG_INTERVAL_END=0.8` · `_STORY_CROSSFADE_SEC=6.0`
-**Contract:** Output — 48 kHz mono float32 · Checkpoints — `./ACE-Step-1.5/checkpoints/`
+**Contract:** Output — 48 kHz mono float32 · Checkpoints — `./models/acestep/checkpoints/`
 **MANDATORY:** `compile_model=True` to `initialize_service()` — without it, ~9s/step → timeout
 **Tasks:**
 - Tune generation params → module-level constants at top of `core/acestep/engine.py`
@@ -97,8 +97,8 @@ python -c "from acestep.llm_inference import LLMHandler; print('LLM Handler OK')
 
 | Artifact | Path | Description |
 |----------|------|-------------|
-| **DiT config** | `./ACE-Step-1.5/` | Diffusion Transformer with `acestep-v15-sft` config |
-| **LLM checkpoint** | `./ACE-Step-1.5/checkpoints/` | Language Model `acestep-5Hz-lm-4B` (preferred) or `acestep-5Hz-lm-1.7B` (fallback) |
+| **DiT config** | `./models/acestep/` | Diffusion Transformer with `acestep-v15-sft` config |
+| **LLM checkpoint** | `./models/acestep/checkpoints/` | Language Model `acestep-5Hz-lm-4B` (preferred) or `acestep-5Hz-lm-1.7B` (fallback) |
 
 ---
 

@@ -2,8 +2,8 @@
 **Files:** `core/f5_tts/engine.py` · `core/f5_tts/preprocessor.py` · `core/f5_tts/voice_registry.py` · `core/f5_tts/postprocessor.py`
 **Class:** `F5Engine` — `load_model()` / `synthesize()` · zero-shot voice cloning · voice resolved at construction
 **Constants:** `_NFE_STEPS=32` · `MAX_CHUNK_CHARS=300` · `_VAD_GAIN_FLOOR=0.15` · `_CFG_STRENGTH=2.0` · `_DEFAULT_SPEED=0.88`
-**Contract:** Output — 24 kHz mono float32 · Voice assets `core/f5_tts/assets/`
-**Voice assets:** `reference_audio/*.wav` (24kHz mono, ~10s) + `reference_transcript/*.txt` + `voices.toml` (multi-phase)
+**Contract:** Output — 24 kHz mono float32 · Voice assets `assets/speakers/`
+**Voice assets:** `assets/speakers/*.wav` (24kHz mono, ~10s) + `assets/speakers/transcripts/*.txt` + `assets/speakers/voices.toml` (multi-phase)
 **Tasks:**
 - Add new voice → drop `.wav` + `.txt` in assets dirs (auto-discovered by `VoiceRegistry.scan()`)
 - Multi-phase voice → edit `voices.toml`
@@ -47,12 +47,12 @@ core/f5_tts/
 ├── engine.py                -- F5Engine(SpeechEngine): synthesis, VAD, assembly
 ├── preprocessor.py          -- character-aware script chunker (300-char limit)
 ├── postprocessor.py         -- F5MasteringEngine, split-band de-esser, voice FX chain
-├── voice_registry.py        -- voice asset discovery and multi-phase resolution
-└── assets/
-    ├── README.md            -- reference audio format requirements
-    ├── voices.toml          -- multi-phase voice definitions
-    ├── reference_audio/     -- .wav files (24 kHz, mono, 16-bit PCM)
-    └── reference_transcript/ -- .txt transcripts (verbatim)
+└── voice_registry.py        -- voice asset discovery and multi-phase resolution
+
+assets/speakers/             -- shared with IndexTTS-2 (top-level)
+├── *.wav                    -- 24 kHz, mono, 16-bit PCM reference clips
+├── transcripts/             -- .txt transcripts (verbatim; F5-only)
+└── voices.toml              -- multi-phase voice definitions
 ```
 
 ---
@@ -67,12 +67,13 @@ engine = F5Engine(voice_slug="female_meditative_warm")
 
 ### VoiceRegistry System
 
-The `voice_registry.py` module discovers voices by scanning `core/f5_tts/assets/`:
+The `voice_registry.py` module discovers voices by scanning the unified speakers pool at `assets/speakers/`:
 
-1. Scans `reference_audio/*.wav` for audio files
-2. Matches each `.wav` with a corresponding `.txt` transcript in `reference_transcript/`
-3. Validates transcript is non-empty
-4. Layers multi-phase definitions from `voices.toml` (TOML format with phase names as keys)
+1. Scans `assets/speakers/*.wav` for audio files
+2. Matches each `.wav` with a corresponding `.txt` transcript in `assets/speakers/transcripts/`
+3. Voices without a transcript are skipped silently (they're picked up by IndexTTS-2 instead, which doesn't need transcripts)
+4. Validates transcript is non-empty
+5. Layers multi-phase definitions from `assets/speakers/voices.toml` (TOML format with phase names as keys)
 
 ### Multi-Phase Voices
 

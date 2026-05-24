@@ -104,7 +104,7 @@ sudo dnf install espeak-ng
 
 ### ACE-Step Model Weights
 
-ACE-Step requires local model weights in `ACE-Step-1.5/checkpoints/`. The weights are not included in this repository. See [`docs/model_implementation_guides/ace-step.md`](docs/model_implementation_guides/ace-step.md) for download instructions. Without the weights, selecting ACE-Step in the UI will fail silently.
+ACE-Step requires local model weights in `models/acestep/checkpoints/`. The weights are not included in this repository. See [`docs/model_implementation_guides/ace-step.md`](docs/model_implementation_guides/ace-step.md) for download instructions. Without the weights, selecting ACE-Step in the UI will fail silently.
 
 ### Environment Variables
 
@@ -155,7 +155,7 @@ python app.py
 1. **Choose Generation Mode** — `Instrumental + Vocal` (default), `Vocals Only`, or `Instrumental Only`
 2. **Write your meditation script** in the left panel — use [pause tags](#script-format) for timed silences
 3. **Choose TTS Engine** — `Kokoro` for preset voices, `F5-TTS` for zero-shot voice cloning, `IndexTTS-2` for zero-shot cloning + decoupled emotion control
-4. **Select a Voice** — Kokoro preset, F5-TTS voice from `core/f5_tts/assets/`, or IndexTTS-2 speaker from `reference_audio/vocals/`
+4. **Select a Voice** — Kokoro preset, F5-TTS voice from `assets/speakers/`, or IndexTTS-2 speaker from `assets/speakers/`
 5. **Choose Music Engine** — `ACE-Step 1.5` or `Lyria RealTime`
 6. **Write a Music Prompt** — describe the background music style (see [Music Engines](#music-engines) for prompt tips per engine)
 7. **Configure ACE-Step or Lyria settings** if selected (BPM, key, density, quality mode)
@@ -278,11 +278,11 @@ Clones any voice from a 10–12 second `.wav` recording. No fine-tuning required
 **To add a custom voice:**
 1. Record a clean 10–12s `.wav` at 24 kHz mono (or any rate — it will be resampled)
 2. Write a verbatim transcript of exactly what was said
-3. Place the `.wav` in `core/f5_tts/assets/reference_audio/`
-4. Place the `.txt` transcript in `core/f5_tts/assets/reference_transcript/`
+3. Place the `.wav` in `assets/speakers/`
+4. Place the `.txt` transcript in `assets/speakers/transcripts/`
 5. Restart the app — the voice appears in the dropdown automatically
 
-Multi-phase voices (opening / body / closing) are configured in `core/f5_tts/assets/voices.toml`. Speed default: **0.80** for F5-TTS.
+Multi-phase voices (opening / body / closing) are configured in `assets/speakers/voices.toml`. Speed default: **0.80** for F5-TTS.
 
 See [`docs/model_implementation_guides/f5_tts.md`](docs/model_implementation_guides/f5_tts.md) for reference audio requirements, multi-phase configuration, and synthesis parameters.
 
@@ -291,11 +291,11 @@ See [`docs/model_implementation_guides/f5_tts.md`](docs/model_implementation_gui
 Clones any voice from a 5–15s `.wav` recording — no transcript required (unlike F5-TTS). Emotion is **decoupled** from speaker identity: pick a speaker reference and an emotion reference independently.
 
 **To add a custom voice:**
-1. Place a clean 5–15s `.wav` in `reference_audio/vocals/`
+1. Place a clean 5–15s `.wav` in `assets/speakers/`
 2. Restart the app — the voice appears in the dropdown automatically
 
 **To add a custom emotion:**
-1. Place an emotion-bearing `.wav` (calm, warm, energetic, …) in `reference_audio/instrumental/`
+1. Place an emotion-bearing `.wav` (calm, warm, energetic, …) in `assets/emotions/`
 2. Restart the app — or upload directly from the Gradio UI
 
 **Setup**: IndexTTS-2 weights must be downloaded manually — see [`docs/setup_and_execution/index_tts_setup.md`](docs/setup_and_execution/index_tts_setup.md).
@@ -320,7 +320,7 @@ The default "calm" emotion vector (`[0,…,0,1.0]` with `emo_alpha=0.70`) is tun
 
 > **First-run JIT compilation**: ACE-Step uses `compile_model=True` to prevent generation timeouts. The first generation after app startup takes ~135 extra seconds for MLX JIT compilation. Subsequent runs are ~4× faster. This is expected — do not cancel.
 
-> **Local model weights required**: Weights must be present at `ACE-Step-1.5/checkpoints/` before selecting this engine. See [`docs/model_implementation_guides/ace-step.md`](docs/model_implementation_guides/ace-step.md).
+> **Local model weights required**: Weights must be present at `models/acestep/checkpoints/` before selecting this engine. See [`docs/model_implementation_guides/ace-step.md`](docs/model_implementation_guides/ace-step.md).
 
 Prompts use the **MESA framework** (Mood + Elements + Structure + Application). Structural section tags (`[Intro]`, `[Verse]`, `[Bridge]`, `[Outro]`) are auto-inserted based on duration.
 
@@ -477,8 +477,8 @@ Unit test coverage: mixer, audio_processor, qa_monitor, stem_separator, TTS engi
 |---------|----------|
 | Lyria error: `GOOGLE_API_KEY not set` | Add `GOOGLE_API_KEY=...` to `.env` and restart the app |
 | ACE-Step generation times out | First run after app start takes ~135s for JIT compilation — wait it out. Subsequent runs are fast. |
-| ACE-Step: `FileNotFoundError` for checkpoints | Model weights missing from `ACE-Step-1.5/checkpoints/` — see `docs/model_implementation_guides/ace-step.md` |
-| F5-TTS: no voices in dropdown | Add `.wav` + `.txt` pairs to `core/f5_tts/assets/reference_audio/` and `reference_transcript/` |
+| ACE-Step: `FileNotFoundError` for checkpoints | Model weights missing from `models/acestep/checkpoints/` — see `docs/model_implementation_guides/ace-step.md` |
+| F5-TTS: no voices in dropdown | Add `.wav` to `assets/speakers/` and a matching `.txt` to `assets/speakers/transcripts/` |
 | Output is completely silent | Check Generation Mode — "Vocals Only" produces no music; "Instrumental Only" produces no voice |
 
 ### macOS / Apple Silicon

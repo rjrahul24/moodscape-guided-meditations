@@ -2,11 +2,11 @@
 **Files:** `core/index_tts/engine.py` · `core/index_tts/preprocessor.py` · `core/index_tts/voice_registry.py` · `core/index_tts/postprocessor.py`
 **Class:** `IndexTTSEngine` — `load_model()` / `synthesize()` · zero-shot voice cloning with emotion control · voice resolved at construction
 **Constants:** `MAX_CHUNK_CHARS=250` · `_VAD_GAIN_FLOOR=0.15` · `_DEFAULT_SPEED=1.0`
-**Contract:** Output — 24 kHz mono float32 · Speaker assets `reference_audio/vocals/` · Emotion assets `reference_audio/instrumental/`
-**Checkpoints:** `model_checkpoints/indextts2/` (manual download from HuggingFace `IndexTeam/IndexTTS-2`)
+**Contract:** Output — 24 kHz mono float32 · Speaker assets `assets/speakers/` · Emotion assets `assets/emotions/`
+**Checkpoints:** `models/indextts2/` (manual download from HuggingFace `IndexTeam/IndexTTS-2`)
 **Tasks:**
-- Add new voice → drop `.wav` in `reference_audio/vocals/` (auto-discovered by `voice_registry.scan_voices()`)
-- Add emotion → drop `.wav` in `reference_audio/instrumental/` (auto-discovered by `voice_registry.scan_emotions()`)
+- Add new voice → drop `.wav` in `assets/speakers/` (auto-discovered by `voice_registry.scan_voices()`)
+- Add emotion → drop `.wav` in `assets/emotions/` (auto-discovered by `voice_registry.scan_emotions()`)
 - Tune chunking → `preprocessor.py :: MAX_CHUNK_CHARS`
 - Tune VAD behavior → `engine.py :: _apply_silero_vad()`
 - Tune voice FX → `postprocessor.py :: build_index_voice_chain()`
@@ -54,11 +54,11 @@ core/index_tts/
 ├── postprocessor.py         — IndexTTSMasteringEngine, split-band de-esser, voice FX chain
 └── voice_registry.py        — voice and emotion asset discovery
 
-reference_audio/             — (project root) shared reference audio directory
+assets/             — (project root) shared reference audio directory
 ├── vocals/                  — speaker reference WAV files (for voice cloning)
 └── instrumental/            — emotion reference WAV files (for emotion control)
 
-model_checkpoints/           — (project root) model weights
+models/           — (project root) model weights
 └── indextts2/               — IndexTTS-2 checkpoints (manual download)
     ├── config.yaml
     ├── bigvgan_v2_24khz_100band_256x/
@@ -75,11 +75,11 @@ model_checkpoints/           — (project root) model weights
 IndexTTS-2 voice resolution is simpler than F5-TTS because no transcript is required:
 
 ```
-reference_audio/vocals/calm_meditation.wav  → slug: "calm_meditation"
-reference_audio/vocals/gentle_guide.wav     → slug: "gentle_guide"
+assets/speakers/calm_meditation.wav  → slug: "calm_meditation"
+assets/speakers/gentle_guide.wav     → slug: "gentle_guide"
 ```
 
-Each `.wav` file in `reference_audio/vocals/` is automatically discovered and appears in the Gradio UI dropdown. The filename (without extension) becomes the voice slug, which is transformed to a human-readable label in the UI.
+Each `.wav` file in `assets/speakers/` is automatically discovered and appears in the Gradio UI dropdown. The filename (without extension) becomes the voice slug, which is transformed to a human-readable label in the UI.
 
 ### Voice Requirements
 
@@ -96,8 +96,8 @@ Each `.wav` file in `reference_audio/vocals/` is automatically discovered and ap
 Emotion reference audio works similarly:
 
 ```
-reference_audio/instrumental/calm.wav     → slug: "calm"
-reference_audio/instrumental/warm.wav     → slug: "warm"
+assets/emotions/calm.wav     → slug: "calm"
+assets/emotions/warm.wav     → slug: "warm"
 ```
 
 Users can also upload custom emotion audio directly in the Gradio UI.
@@ -310,8 +310,8 @@ IndexTTS-2 is exposed in the Gradio UI via `app.py`:
 | Widget | Type | Description |
 |---|---|---|
 | Voice Engine radio | `gr.Radio` | Added "IndexTTS-2" as third choice |
-| Voice dropdown | `gr.Dropdown` | Populated from `reference_audio/vocals/*.wav` |
-| Emotion dropdown | `gr.Dropdown` | Populated from `reference_audio/instrumental/*.wav` + "None (neutral)" |
+| Voice dropdown | `gr.Dropdown` | Populated from `assets/speakers/*.wav` |
+| Emotion dropdown | `gr.Dropdown` | Populated from `assets/emotions/*.wav` + "None (neutral)" |
 | Emotion audio upload | `gr.Audio` | Optional user-uploaded emotion reference WAV |
 | Speed slider | `gr.Slider` | 0.70–1.30, default 1.0 |
 
@@ -346,18 +346,18 @@ Visibility callbacks ensure only the active engine's controls are shown.
 
 ```bash
 # Using huggingface-cli (recommended)
-huggingface-cli download IndexTeam/IndexTTS-2 --local-dir=model_checkpoints/indextts2
+huggingface-cli download IndexTeam/IndexTTS-2 --local-dir=models/indextts2
 
 # Or using Git LFS
 git lfs install
-git clone https://huggingface.co/IndexTeam/IndexTTS-2 model_checkpoints/indextts2
+git clone https://huggingface.co/IndexTeam/IndexTTS-2 models/indextts2
 ```
 
 ### Verification
 
 ```bash
 # Check that config.yaml exists
-ls model_checkpoints/indextts2/config.yaml
+ls models/indextts2/config.yaml
 ```
 
 If checkpoints are missing, `IndexTTSEngine.load_model()` raises a `FileNotFoundError` with download instructions.
@@ -371,4 +371,4 @@ If checkpoints are missing, `IndexTTSEngine.load_model()` raises a `FileNotFound
 3. **Qwen3 text encoder** — the embedded text encoder may have specific dtype requirements; float32 is the safe choice
 4. **Autoregressive hallucination** — longer inputs (>250 chars) can cause repetition; mitigated by shorter chunk limit
 5. **No multi-phase voices** — unlike F5-TTS, IndexTTS-2's voice registry currently does not support `voices.toml` multi-phase definitions (can be added later)
-6. **Manual checkpoint download** — unlike Kokoro/F5 which auto-download, IndexTTS-2 checkpoints must be manually downloaded to `model_checkpoints/indextts2/`
+6. **Manual checkpoint download** — unlike Kokoro/F5 which auto-download, IndexTTS-2 checkpoints must be manually downloaded to `models/indextts2/`

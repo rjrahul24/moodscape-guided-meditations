@@ -3,8 +3,8 @@
 **Script tags:** `[pause:Xs]` · `[breath]` · `\n\n` paragraph break (3.5s) · `[voice:phase_name]` for multi-phase
 **Chunk limit:** 250 chars (auto-split at sentence boundaries)
 **Text rules:** colons → commas · ellipses → periods · em-dashes → commas · hyphens in compounds removed
-**Voice assets:** `reference_audio/vocals/*.wav` (24kHz mono, 5-10s) — no transcript required
-**Emotion assets:** `reference_audio/instrumental/*.wav` (24kHz mono, 3-10s) or user-uploaded via Gradio UI
+**Voice assets:** `assets/speakers/*.wav` (24kHz mono, 5-10s) — no transcript required
+**Emotion assets:** `assets/emotions/*.wav` (24kHz mono, 3-10s) or user-uploaded via Gradio UI
 **See also:** `docs/model_implementation_guides/index_tts.md` · `CLAUDE.md#task-routing-guide`
 <!-- ────────────────────────────────────────────────────────────────── -->
 
@@ -185,7 +185,7 @@ Selecting an emotion in the Gradio dropdown or uploading a custom emotion clip s
 
 ### Available emotion reference WAVs
 
-Emotion is controlled via reference audio clips placed in `reference_audio/instrumental/`:
+Emotion is controlled via reference audio clips placed in `assets/emotions/`:
 
 | Emotion | File | Best For |
 |---|---|---|
@@ -297,7 +297,7 @@ ffmpeg -i input.mp3 -ar 24000 -ac 1 -sample_fmt s16 voice_name.wav
 | Setting | Recommended Value | Notes |
 |---|---|---|
 | **TTS Voice Engine** | IndexTTS-2 | Autoregressive voice cloning with emotion control |
-| **Voice** | (select your voice) | Choose from voices in `reference_audio/vocals/` |
+| **Voice** | (select your voice) | Choose from voices in `assets/speakers/` |
 | **Emotion** | Calm | Recommended for most meditations |
 | **Custom Emotion Audio** | (optional) | Upload WAV for custom emotion |
 | **Speaking Speed** | 1.0 | Natural rhythm (default) |

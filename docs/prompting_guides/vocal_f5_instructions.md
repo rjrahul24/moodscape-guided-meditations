@@ -3,7 +3,7 @@
 **Script tags:** `[pause:Xs]` · `[breath]` · `\n\n` paragraph break (3.0s) · `[voice:phase_name]` for multi-phase
 **Chunk limit:** 300 chars (auto-split at sentence boundaries)
 **F5-specific text rules:** colons → commas · ellipses → periods · em-dashes → commas · hyphens in compounds removed
-**Voice assets:** `core/f5_tts/assets/reference_audio/*.wav` (24kHz mono, ~10s) + matching `.txt` transcripts
+**Voice assets:** `assets/speakers/*.wav` (24kHz mono, ~10s) + matching `.txt` transcripts
 **Multi-phase:** defined in `voices.toml` — opening / body / closing phases with different reference audio
 **See also:** `docs/model_implementation_guides/f5_tts.md` · `CLAUDE.md#task-routing-guide`
 <!-- ────────────────────────────────────────────────────────────────── -->
@@ -171,8 +171,8 @@ F5-TTS voices are zero-shot cloned from reference audio clips. The following voi
 
 To register a new voice:
 
-1. Place a 24 kHz mono WAV file in `core/f5_tts/assets/reference_audio/your_voice_name.wav`
-2. Place a verbatim transcript in `core/f5_tts/assets/reference_transcript/your_voice_name.txt`
+1. Place a 24 kHz mono WAV file in `assets/speakers/your_voice_name.wav`
+2. Place a verbatim transcript in `assets/speakers/transcripts/your_voice_name.txt`
 3. Restart the app — the voice will appear in the dropdown automatically
 
 The slug is derived from the filename (e.g. `your_voice_name.wav` → slug `your_voice_name`).
@@ -299,7 +299,7 @@ A single voice can have multiple **phases** for different sections of a meditati
 ### Defining Phases in voices.toml
 
 ```toml
-# core/f5_tts/assets/voices.toml
+# assets/speakers/voices.toml
 
 [female_meditative_warm]
 default = { audio = "female_meditative_warm.wav", transcript = "female_meditative_warm.txt" }

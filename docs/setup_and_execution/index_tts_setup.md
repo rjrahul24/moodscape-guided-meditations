@@ -14,21 +14,21 @@ All required pip packages have been installed:
 
 ### 2. Model Weights ✅
 IndexTTS-2 model checkpoints are present:
-- Location: `./model_checkpoints/indextts2/`
+- Location: `./models/indextts2/`
 - Contents: Full model including GPT, acoustic features, vocoder, BPE tokenizer
 - No additional downloads required — weights were pre-downloaded
 
 ### 3. Reference Audio ✅
 Default reference audio samples have been created for immediate testing:
 
-#### Speaker Voices (`reference_audio/vocals/`)
+#### Speaker Voices (`assets/speakers/`)
 | Voice | Description |
 |-------|-------------|
 | `calm_guide.wav` | Gentle, calm meditation voice |
 | `warm_teacher.wav` | Warm, nurturing tone |
 | `peaceful_voice.wav` | Peaceful, serene voice |
 
-#### Emotion Presets (`reference_audio/instrumental/`)
+#### Emotion Presets (`assets/emotions/`)
 | Emotion | Description |
 |---------|-------------|
 | `calm.wav` | Peaceful, restful emotion |
@@ -41,7 +41,7 @@ Default reference audio samples have been created for immediate testing:
 ## Usage in the App
 
 ### Voice Selection
-IndexTTS-2 is now available as a TTS engine in the Gradio UI. Voices are auto-discovered from `reference_audio/vocals/`:
+IndexTTS-2 is now available as a TTS engine in the Gradio UI. Voices are auto-discovered from `assets/speakers/`:
 ```python
 from core.index_tts.engine import IndexTTSEngine
 
@@ -66,9 +66,9 @@ audio, sr = engine.synthesize(
    ffmpeg -i input.mp3 -ar 24000 -ac 1 -sample_fmt s16 my_voice.wav
    ```
 
-3. **Place in `reference_audio/vocals/`**:
+3. **Place in `assets/speakers/`**:
    ```
-   reference_audio/vocals/my_voice.wav
+   assets/speakers/my_voice.wav
    ```
 
 4. **Restart the app** — the voice will auto-appear in the UI dropdown.
@@ -77,9 +77,9 @@ audio, sr = engine.synthesize(
 
 1. **Record a 3–10 second emotion reference clip** (instrumental or voice)
 2. **Convert to 24 kHz mono WAV**
-3. **Place in `reference_audio/instrumental/`**:
+3. **Place in `assets/emotions/`**:
    ```
-   reference_audio/instrumental/my_emotion.wav
+   assets/emotions/my_emotion.wav
    ```
 
 ## Technical Details
@@ -103,8 +103,8 @@ audio, sr = engine.synthesize(
 ### File Locations
 ```
 project_root/
-├── model_checkpoints/indextts2/          — Model weights (no change needed)
-├── reference_audio/
+├── models/indextts2/          — Model weights (no change needed)
+├── assets/
 │   ├── vocals/                           — Speaker references (add custom voices here)
 │   └── instrumental/                     — Emotion references (add custom emotions here)
 ├── core/index_tts/
@@ -137,11 +137,11 @@ print('✓ Engine initialized successfully')
 ## Common Issues
 
 ### Issue: "No IndexTTS-2 voices found"
-- **Cause**: `reference_audio/vocals/` is empty or doesn't exist
-- **Fix**: Run the reference audio generation script or add custom `.wav` files to `reference_audio/vocals/`
+- **Cause**: `assets/speakers/` is empty or doesn't exist
+- **Fix**: Run the reference audio generation script or add custom `.wav` files to `assets/speakers/`
 
 ### Issue: Engine initialization fails with FileNotFoundError
-- **Cause**: The `voice_slug` parameter doesn't match any file in `reference_audio/vocals/`
+- **Cause**: The `voice_slug` parameter doesn't match any file in `assets/speakers/`
 - **Fix**: Check available voices with `scan_voices()` and use a valid slug
 
 ### Issue: Audio generation produces NaN or metallic artifacts

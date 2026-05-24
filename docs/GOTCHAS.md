@@ -13,7 +13,7 @@ Hard-won lessons. The most load-bearing entries are repeated in `CLAUDE.md`; the
 - **Timeout fix**: Always pass `compile_model=True` to `initialize_service()` — without it generation takes ~9s/step and times out. First run has ~135s JIT overhead, then ~4× faster per step.
 - **transformers version pin**: `>=4.51.0,<4.58.0` is required for ACE-Step compatibility — do not upgrade.
 - **ADG disabled**: `_USE_ADG=False`. SFT adherence is baked in; ADG doubles forward passes without quality benefit.
-- **Local checkpoint dir**: `ACE-Step-1.5/checkpoints/` (relative — run from project root).
+- **Local checkpoint dir**: `models/acestep/checkpoints/` (relative — run from project root).
 
 ## Kokoro TTS
 
@@ -23,19 +23,19 @@ Hard-won lessons. The most load-bearing entries are repeated in `CLAUDE.md`; the
 
 ## F5-TTS
 
-- **Requires verbatim transcript**: Each reference audio in `core/f5_tts/assets/reference_audio/` needs a matching `reference_transcript/*.txt`.
+- **Requires verbatim transcript**: Each reference audio in `assets/speakers/` needs a matching `.txt` of the same slug under `assets/speakers/transcripts/`.
 - **VAD on**: Silero VAD is loaded via `torch.hub.load('snakers4/silero-vad', 'silero_vad')` to trim silence at chunk boundaries.
 
 ## IndexTTS-2
 
 - **MPS NaN**: BigVGANv2 vocoder may produce NaN values on MPS — mitigated by `torch.clamp(mel, -10, 10)`. Force `use_fp16=False, use_deepspeed=False, use_cuda_kernel=False` on Apple Silicon.
-- **Checkpoints — manual download**: `huggingface-cli download IndexTeam/IndexTTS-2 --local-dir=model_checkpoints/indextts2`. Engine raises `FileNotFoundError` with instructions if missing.
+- **Checkpoints — manual download**: `huggingface-cli download IndexTeam/IndexTTS-2 --local-dir=models/indextts2`. Engine raises `FileNotFoundError` with instructions if missing.
 - **No transcript needed**: Unlike F5-TTS, IndexTTS-2 only needs a speaker reference WAV.
 - **Calm vector is the default**: When no emotion audio is selected, `infer()` is called with `emo_vector=[0,…,0,1.0]` + `emo_alpha=0.70`. Do NOT use `use_emo_text` — the Qwen3 text path conflates "calm/serene" with "sad/melancholic".
 - **Speed slider is a no-op**: v2 API does not expose reliable time-stretching (Issue #422). Pacing comes from the calm vector + preprocessor pause durations + 600ms inter-chunk room-tone gap.
 - **Per-chunk VRAM cleanup**: Engine calls `torch.mps.empty_cache()` (or CUDA equivalent) after every chunk to mitigate the known BigVGAN/CFM memory leak (upstream Issue #364) on long sessions.
 - **Meditation lexicon**: `INDEX_MEDITATION_LEXICON` in the preprocessor phoneticizes sanskrit/pali terms (Om, pranayama, savasana, …) AFTER the compound-hyphen stripper so the syllabification hyphens survive. Add new terms there.
-- **Emotion is decoupled from speaker**: Emotion reference clips go in `reference_audio/instrumental/`. The Gradio UI also accepts a custom emotion upload.
+- **Emotion is decoupled from speaker**: Emotion reference clips go in `assets/emotions/`. The Gradio UI also accepts a custom emotion upload.
 
 ## Mixing & Mastering
 
