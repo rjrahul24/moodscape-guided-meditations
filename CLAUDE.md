@@ -62,10 +62,10 @@ IMPORTANT: Follow these steps for every task.
 ## Build & Test
 
 ```bash
-.venv/bin/python -m pytest unit-tests/ -v                                    # all unit tests
-.venv/bin/python -m pytest unit-tests/test_mixer.py -v                       # single file
-.venv/bin/python -m pytest unit-tests/test_meditation_mastering.py::test_mastering -v
-.venv/bin/python -m pytest integration-tests/ -v                             # slower, full pipeline
+.venv/bin/python -m pytest tests/unit/ -v                                    # all unit tests
+.venv/bin/python -m pytest tests/unit/test_mixer.py -v                       # single file
+.venv/bin/python -m pytest tests/unit/test_meditation_mastering.py::test_mastering -v
+.venv/bin/python -m pytest tests/integration/ -v                             # slower, full pipeline
 python scripts/generate.py <script_file> --voice <voice_name> --output <output.wav>
 ```
 

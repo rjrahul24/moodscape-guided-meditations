@@ -455,22 +455,22 @@ Controls: BPM (40–140), Density (0.0–1.0), Brightness (0.0–1.0), Guidance 
 
 | Test file | What it covers |
 |-----------|---------------|
-| `unit-tests/test_mixer.py` | `apply_rms_ducking`, `apply_envelope_ducking`, `overlay_tracks`, `apply_fades`, `normalize_loudness`, `resample_for_export` |
-| `unit-tests/test_audio_processor.py` | All 5 Pedalboard chains + `apply_fx()` + `upsample_audio()` |
-| `unit-tests/test_qa_monitor.py` | All 11 QA checks + composite score |
-| `unit-tests/test_meditation_mastering.py` | Full mastering chain (ducking → FX → export) |
-| `unit-tests/test_stem_separator.py` | Demucs subprocess isolation |
-| `unit-tests/test_voice_manager.py` | Kokoro voice blending, presets, British voice detection |
-| `unit-tests/test_kokoro_postprocessor.py` | `process_chunk`, `crossfade_chunks`, `build_voice_chain` |
-| `unit-tests/test_tts_engines.py` | `KokoroEngine` + `F5Engine` load/unload/synthesize |
-| `unit-tests/test_text_preprocessor.py` | `expand_text`, `inject_phonemes`, `enhance_prosody_punctuation` |
-| `unit-tests/test_script_parser.py` | `parse_script` — pause/breath/speech segments |
-| `unit-tests/test_f5_preprocessor.py` | `normalize_for_f5`, `split_into_chunks`, VAD |
-| `unit-tests/test_f5_params.py` | F5 parameter validation |
-| `unit-tests/test_f5_phases.py` | Multi-phase voice switching |
-| `unit-tests/test_f5_pacing.py` | WPM-based pacing, `fix_duration` |
-| `unit-tests/test_acestep_engine.py` | ACE-Step generation, MESA prompt enhancement |
-| `unit-tests/test_acestep_infinite.py` | Two-phase long-form generation (genesis + repaint continuation) |
-| `unit-tests/test_stitch_client.py` | `StitchClient.generate_design_concept()` |
-| `integration-tests/test_integration_modes.py` | Full pipeline (all mode combinations) |
-| `integration-tests/test_stress.py` | Load testing, memory management across sessions |
+| `tests/unit/test_mixer.py` | `apply_rms_ducking`, `apply_envelope_ducking`, `overlay_tracks`, `apply_fades`, `normalize_loudness`, `resample_for_export` |
+| `tests/unit/test_audio_processor.py` | All 5 Pedalboard chains + `apply_fx()` + `upsample_audio()` |
+| `tests/unit/test_qa_monitor.py` | All 11 QA checks + composite score |
+| `tests/unit/test_meditation_mastering.py` | Full mastering chain (ducking → FX → export) |
+| `tests/unit/test_stem_separator.py` | Demucs subprocess isolation |
+| `tests/unit/test_voice_manager.py` | Kokoro voice blending, presets, British voice detection |
+| `tests/unit/test_kokoro_postprocessor.py` | `process_chunk`, `crossfade_chunks`, `build_voice_chain` |
+| `tests/unit/test_tts_engines.py` | `KokoroEngine` + `F5Engine` load/unload/synthesize |
+| `tests/unit/test_text_preprocessor.py` | `expand_text`, `inject_phonemes`, `enhance_prosody_punctuation` |
+| `tests/unit/test_script_parser.py` | `parse_script` — pause/breath/speech segments |
+| `tests/unit/test_f5_preprocessor.py` | `normalize_for_f5`, `split_into_chunks`, VAD |
+| `tests/unit/test_f5_params.py` | F5 parameter validation |
+| `tests/unit/test_f5_phases.py` | Multi-phase voice switching |
+| `tests/unit/test_f5_pacing.py` | WPM-based pacing, `fix_duration` |
+| `tests/unit/test_acestep_engine.py` | ACE-Step generation, MESA prompt enhancement |
+| `tests/unit/test_acestep_infinite.py` | Two-phase long-form generation (genesis + repaint continuation) |
+| `tests/unit/test_stitch_client.py` | `StitchClient.generate_design_concept()` |
+| `tests/integration/test_integration_modes.py` | Full pipeline (all mode combinations) |
+| `tests/integration/test_stress.py` | Load testing, memory management across sessions |

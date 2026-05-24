@@ -420,16 +420,16 @@ docs/
 
 ```bash
 # Run all unit tests (fast, no models loaded)
-.venv/bin/python -m pytest unit-tests/ -v
+.venv/bin/python -m pytest tests/unit/ -v
 
 # Run a single test file
-.venv/bin/python -m pytest unit-tests/test_mixer.py -v
+.venv/bin/python -m pytest tests/unit/test_mixer.py -v
 
 # Run a single test function
-.venv/bin/python -m pytest unit-tests/test_meditation_mastering.py::test_mastering -v
+.venv/bin/python -m pytest tests/unit/test_meditation_mastering.py::test_mastering -v
 
 # Integration tests (loads models — much slower)
-.venv/bin/python -m pytest integration-tests/ -v
+.venv/bin/python -m pytest tests/integration/ -v
 ```
 
 Unit test coverage: mixer, audio_processor, qa_monitor, stem_separator, TTS engines (Kokoro + F5), script preprocessor, F5 pacing/chained-reference/params, ACE-Step long-form. Integration tests cover full pipeline mode combinations and stress scenarios.
