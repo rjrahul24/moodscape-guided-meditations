@@ -1,7 +1,6 @@
 import unittest
 import numpy as np
 from core.audio_processor import (
-    make_heartmula_music_chain,
     make_acestep_music_chain,
     make_lyria_music_chain,
     make_vocal_pocket_chain,
@@ -15,8 +14,6 @@ from core.audio_processor import (
 class TestAudioProcessor(unittest.TestCase):
     def test_chains_creation(self):
         # Ensure all chains instantiate without error
-        hmc = make_heartmula_music_chain()
-        self.assertIsNotNone(hmc)
         amc = make_acestep_music_chain()
         self.assertIsNotNone(amc)
         lmc = make_lyria_music_chain()
@@ -64,7 +61,7 @@ class TestAudioProcessor(unittest.TestCase):
     def test_apply_fx_1d(self):
         # A simple array 24000 samples (1 sec)
         audio = np.random.uniform(-0.5, 0.5, 24000).astype(np.float32)
-        chain = make_heartmula_music_chain()
+        chain = make_acestep_music_chain()
         out = apply_fx(audio, chain, sample_rate=24000)
         self.assertEqual(audio.shape, out.shape)
         self.assertEqual(out.dtype, np.float32)

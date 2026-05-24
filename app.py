@@ -56,6 +56,7 @@ from dotenv import load_dotenv
 from core.kokoro_tts.engine import KokoroEngine
 from core.pipeline import MeditationPipeline
 from core.f5_tts import voice_registry as _f5_registry
+from core.index_tts import voice_registry as _indextts_registry
 
 # Load environment variables (like HF_TOKEN) from .env file
 load_dotenv()
@@ -68,6 +69,18 @@ F5_VOICE_SLUGS = sorted(_F5_VOICE_REGISTRY.keys())
 # (label, value) pairs — label is human-readable, value is the slug for the pipeline.
 F5_VOICE_CHOICES = [(slug.replace("_", " ").title(), slug) for slug in F5_VOICE_SLUGS]
 F5_VOICE_DEFAULT = F5_VOICE_CHOICES[0][1] if F5_VOICE_CHOICES else None
+
+# ── IndexTTS-2 voice and emotion registries (scanned at startup) ──────────────
+
+_INDEXTTS_VOICE_REGISTRY = _indextts_registry.scan_voices()
+INDEXTTS_VOICE_SLUGS = sorted(_INDEXTTS_VOICE_REGISTRY.keys())
+INDEXTTS_VOICE_CHOICES = [(slug.replace("_", " ").title(), slug) for slug in INDEXTTS_VOICE_SLUGS]
+INDEXTTS_VOICE_DEFAULT = INDEXTTS_VOICE_CHOICES[0][1] if INDEXTTS_VOICE_CHOICES else None
+
+_INDEXTTS_EMOTION_REGISTRY = _indextts_registry.scan_emotions()
+INDEXTTS_EMOTION_SLUGS = sorted(_INDEXTTS_EMOTION_REGISTRY.keys())
+INDEXTTS_EMOTION_CHOICES = [("None (neutral)", "")] + [(slug.replace("_", " ").title(), slug) for slug in INDEXTTS_EMOTION_SLUGS]
+INDEXTTS_EMOTION_DEFAULT = INDEXTTS_EMOTION_CHOICES[0][1]
 
 # ── Voice choices for Kokoro engine ──────────────────────────────────────────
 
@@ -198,6 +211,10 @@ def generate_meditation(
     reverb_ir_choice,
     quality_mode_flag,
     stereo_output_flag,
+    indextts_voice_slug,
+    indextts_emotion_slug,
+    indextts_emotion_audio_file,
+    indextts_speed,
 ):
     # Initial status
     yield None, _render_status("Initializing Pipeline", 0.0)
@@ -224,6 +241,8 @@ def generate_meditation(
     # Map TTS engine label to key
     if tts_engine_choice == "F5-TTS":
         tts_engine = "f5"
+    elif tts_engine_choice == "IndexTTS-2":
+        tts_engine = "indextts"
     else:
         tts_engine = "kokoro"
 
@@ -265,6 +284,10 @@ def generate_meditation(
                 tts_engine=tts_engine,
                 f5_voice_slug=f5_voice_slug if tts_engine == "f5" else None,
                 f5_target_wpm=int(f5_wpm) if tts_engine == "f5" and f5_wpm > 0 else None,
+                indextts_voice_slug=indextts_voice_slug if tts_engine == "indextts" else None,
+                indextts_emotion_slug=indextts_emotion_slug if tts_engine == "indextts" and indextts_emotion_slug else None,
+                indextts_emotion_audio_path=indextts_emotion_audio_file if tts_engine == "indextts" and indextts_emotion_audio_file else None,
+                indextts_speed=float(indextts_speed) if tts_engine == "indextts" else 1.0,
                 reverb_ir=reverb_ir_choice,
                 quality_mode=bool(quality_mode_flag),
                 stereo_output=bool(stereo_output_flag),
@@ -309,7 +332,7 @@ def generate_meditation(
     duration = _get_duration(output_path)
     minutes = int(duration // 60)
     seconds = int(duration % 60)
-    tts_label = {"f5": "F5-TTS", "kokoro": "Kokoro"}.get(tts_engine, "Kokoro")
+    tts_label = {"f5": "F5-TTS", "kokoro": "Kokoro", "indextts": "IndexTTS-2"}.get(tts_engine, "Kokoro")
     detail = f"Synthesized with {tts_label} + {music_model_choice} · {minutes}m {seconds}s"
     yield output_path, _render_status("Generation Complete", 1.0, detail, elapsed=elapsed)
 
@@ -842,7 +865,7 @@ with gr.Blocks(
                     elem_classes="pill-radio",
                 )
                 tts_engine_radio = gr.Radio(
-                    choices=["Kokoro", "F5-TTS"],
+                    choices=["Kokoro", "F5-TTS", "IndexTTS-2"],
                     value="Kokoro",
                     label="Voice Engine",
                     elem_classes="pill-radio",
@@ -866,6 +889,32 @@ with gr.Blocks(
                         0, 150, 0, step=5,
                         label="Pacing (WPM)",
                         info="0 = natural rhythm (recommended), 90-110 = meditation, 120-150 = narration",
+                    )
+                with gr.Group(visible=False, elem_id="indextts-group") as indextts_settings:
+                    indextts_voice_dropdown = gr.Dropdown(
+                        choices=INDEXTTS_VOICE_CHOICES if INDEXTTS_VOICE_CHOICES else ["(no voices — add .wav to reference_audio/vocals/)"],
+                        value=INDEXTTS_VOICE_DEFAULT,
+                        label="Voice",
+                        interactive=bool(INDEXTTS_VOICE_CHOICES),
+                        elem_classes="dropdown-container",
+                    )
+                    indextts_emotion_dropdown = gr.Dropdown(
+                        choices=INDEXTTS_EMOTION_CHOICES,
+                        value=INDEXTTS_EMOTION_DEFAULT,
+                        label="Emotion",
+                        elem_classes="dropdown-container",
+                        info="Select emotion preset or upload custom emotion audio below",
+                    )
+                    indextts_emotion_audio = gr.Audio(
+                        label="Custom Emotion Reference (optional)",
+                        type="filepath",
+                        sources=["upload"],
+                    )
+                    indextts_speed_slider = gr.Slider(
+                        0.70, 1.30, 1.0, step=0.05,
+                        label="Speaking Speed (disabled for IndexTTS)",
+                        info="IndexTTS-2 pacing is set by the calm emotion preset + pause durations; this slider is a no-op.",
+                        interactive=False,
                     )
 
             # Section 2: Mix & Effects
@@ -952,6 +1001,7 @@ with gr.Blocks(
         show_lyria = (current_music_model == "Lyria RealTime") and not is_voc
         show_kokoro = (current_tts_engine == "Kokoro") and not is_inst
         show_f5 = (current_tts_engine == "F5-TTS") and not is_inst
+        show_indextts = (current_tts_engine == "IndexTTS-2") and not is_inst
         return (
             gr.update(visible=not is_inst),   # script_input
             gr.update(visible=not is_voc),    # music_prompt
@@ -965,12 +1015,13 @@ with gr.Blocks(
             gr.update(visible=show_acestep),  # acestep_metadata
             gr.update(visible=show_lyria),    # lyria_settings
             gr.update(visible=show_f5),       # f5_settings
+            gr.update(visible=show_indextts), # indextts_settings
         )
 
     generation_mode.change(
         fn=toggle_mode_settings,
         inputs=[generation_mode, music_model_dropdown, tts_engine_radio],
-        outputs=[script_input, music_prompt, music_duration, kokoro_settings, speed_slider, duck_slider, reverb_slider, reference_audio, acestep_quality, acestep_metadata, lyria_settings, f5_settings],
+        outputs=[script_input, music_prompt, music_duration, kokoro_settings, speed_slider, duck_slider, reverb_slider, reference_audio, acestep_quality, acestep_metadata, lyria_settings, f5_settings, indextts_settings],
     )
 
     def toggle_music_engine_ui(model, mode):
@@ -989,22 +1040,28 @@ with gr.Blocks(
         is_inst = mode == "Instrumental Only"
         show_kokoro = (tts_engine == "Kokoro") and not is_inst
         show_f5 = (tts_engine == "F5-TTS") and not is_inst
+        show_indextts = (tts_engine == "IndexTTS-2") and not is_inst
         # Set engine-optimal speed default
         if tts_engine == "F5-TTS":
+            speed_val = 0.90
+            speed_label = "Speaking Speed (0.85-0.95 = meditation ideal)"
+        elif tts_engine == "IndexTTS-2":
             speed_val = 1.0
-            speed_label = "Speaking Speed (1.0 = natural, use slow reference for pace)"
+            speed_label = "Speaking Speed (controlled via IndexTTS-2 panel)"
+        else:
             speed_val = 0.90
             speed_label = "Speaking Speed (0.85-0.95 = meditation ideal)"
         return (
             gr.update(visible=show_kokoro),
             gr.update(visible=show_f5),
+            gr.update(visible=show_indextts),
             gr.update(value=speed_val, label=speed_label),
         )
 
     tts_engine_radio.change(
         fn=toggle_tts_engine_ui,
         inputs=[tts_engine_radio, generation_mode],
-        outputs=[kokoro_settings, f5_settings, speed_slider],
+        outputs=[kokoro_settings, f5_settings, indextts_settings, speed_slider],
     )
 
     generate_btn.click(
@@ -1039,6 +1096,10 @@ with gr.Blocks(
             reverb_ir_dropdown,
             quality_mode_checkbox,
             stereo_output_checkbox,
+            indextts_voice_dropdown,
+            indextts_emotion_dropdown,
+            indextts_emotion_audio,
+            indextts_speed_slider,
         ],
         outputs=[audio_output, status_display],
         show_progress="full",

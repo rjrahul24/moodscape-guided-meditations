@@ -1,6 +1,6 @@
 """AI Source Separation via HT Demucs — removes drums and vocals from generated music.
 
-Music generation models (HeartMuLa, ACE-Step) sometimes produce unwanted percussive
+Music generation models (ACE-Step) sometimes produce unwanted percussive
 hits or vocal-like artefacts despite "no drums, no vocals" prompting.  Running the
 generated audio through Meta's HT Demucs source separation model and discarding the
 drums and vocals stems provides a robust safety net that guarantees a purely ambient,

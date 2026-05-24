@@ -47,15 +47,13 @@ ACE-Step 1.5 is an open-source **text-to-music foundation model** with a two-bra
 
 | Feature | Benefit for Meditation |
 |---------|----------------------|
-| **48 kHz native output** | Higher fidelity than HeartMuLa's 44.1 kHz — richer harmonics in singing bowls, pads |
 | **Structural coherence up to 10 min** | LM planner ensures the track evolves meaningfully over long durations without drifting |
 | **Chain-of-Thought planning** | Can be directed to plan slow, meditative arcs with controlled BPM (40–60) |
 | **`instrumental=True` mode** | Hard-codes no vocal generation — critical for meditation backgrounds |
 | **MLX backend** | Native Apple Silicon Metal GPU acceleration — fully utilizes the M1 Max's 24-core GPU |
 
-### ACE-Step vs HeartMuLa — Which to Choose?
+### ACE-Step vs  — Which to Choose?
 
-| Criteria | HeartMuLa | ACE-Step 1.5 |
 |----------|-----------|--------------|
 | **Native sample rate** | 44.1 kHz | 48 kHz |
 | **Long-form approach** | Sliding window continuation (30s segments stitched) | Two-phase pipeline (90s genesis + overlapping repaint continuation, 20s context per call) |
@@ -200,7 +198,7 @@ silence between notes, dry reverb, high clarity, introspective
 
 ### Class Interface
 
-`AceStepEngine` mirrors `HeartMulaEngine`'s interface:
+`AceStepEngine` mirrors `Engine`'s interface:
 
 | Method | Signature | Returns |
 |--------|-----------|---------|
@@ -303,12 +301,11 @@ music_engine.unload_model()
 
 ### Prompt Enhancement Routing
 
-- **HeartMuLa:** `_enhance_music_prompt()` — caps at 45 words
 - **ACE-Step:** `_enhance_acestep_prompt(prompt, duration_hint)` — MESA framework with duration-aware lyrics
 
 ### Pre-Mix Loudness
 
-ACE-Step output is normalized to **-14 LUFS** before mixing (matching the final streaming standard). HeartMuLa uses -20 LUFS; Lyria uses -16 LUFS.
+ACE-Step output is normalized to **-14 LUFS** before mixing (matching the final streaming standard).  uses -20 LUFS; Lyria uses -16 LUFS.
 
 ---
 
@@ -316,7 +313,7 @@ ACE-Step output is normalized to **-14 LUFS** before mixing (matching the final 
 
 ### ACE-Step Controls
 
-- `music_model_dropdown`: Choices = ["HeartMuLa", "ACE-Step 1.5", "Lyria RealTime"]
+- `music_model_dropdown`: Choices = ["", "ACE-Step 1.5", "Lyria RealTime"]
 - `acestep_quality`: Radio button for "Full Quality (SFT)" vs "Turbo (Fast)"
 - `acestep_bpm`: Slider 40–100, default 50
 - `acestep_key`: Dropdown for musical key, default "Auto"

@@ -1,6 +1,6 @@
 <!-- QUICK-REF ──────────────────────────────────────────────────────── -->
 **Files:** `core/audio_processor.py` · `core/mixer.py` · `core/kokoro_tts/postprocessor.py` · `core/f5_tts/postprocessor.py`
-**Key functions:** `make_heartmula_music_chain()` · `make_acestep_music_chain()` · `make_lyria_music_chain()` · `make_vocal_pocket_chain()` · `make_master_chain()` · `build_voice_chain()` · `apply_fx()`
+**Key functions:** `make__music_chain()` · `make_acestep_music_chain()` · `make_lyria_music_chain()` · `make_vocal_pocket_chain()` · `make_master_chain()` · `build_voice_chain()` · `apply_fx()`
 **Mix defaults:** `music_volume_db=−14.0` · `duck_amount_db=−12.0` · `hold_ms=1200` · `target_lufs=−16.0` · export streamed in 20s chunks
 **Active ducking:** `mixer.mix()` calls `apply_multiband_ducking()` by default (`multiband=True`). Falls back to `apply_envelope_ducking()` when `multiband=False`. `apply_rms_ducking()` exists but is NOT used in production.
 **IR files:** `assets/impulse_responses/{warm_studio,wooden_hall,stone_chapel}.wav` · default: `warm_studio`
@@ -44,7 +44,7 @@ The full signal flow through Pedalboard in MoodScape:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Kokoro TTS Output                HeartMuLa Output          │
+│  Kokoro TTS Output                 Output          │
 │  float32, mono, 24000 Hz          float32, 44100 Hz         │
 └──────────┬──────────────────────────────────────────────────┘
            │                              │
@@ -97,7 +97,7 @@ The full signal flow through Pedalboard in MoodScape:
 ## 3. Sample Rate Alignment
 
 **Pre-Mix Standardization:**
-Audio from multiple models (Kokoro at 24kHz, HeartMuLa at 44.1kHz) must be standardized to a common studio rate to prevent pitch-shifting "chipmunk" artifacts. MoodScape standardizes aggressively on **44.1kHz** immediately after generation using `torchaudio.functional.resample`.
+Audio from multiple models (Kokoro at 24kHzat 44.1kHz) must be standardized to a common studio rate to prevent pitch-shifting "chipmunk" artifacts. MoodScape standardizes aggressively on **44.1kHz** immediately after generation using `torchaudio.functional.resample`.
 
 ```python
 def resample_to_44100(audio: np.ndarray, orig_sr: int) -> np.ndarray:
@@ -137,12 +137,12 @@ Background music receives spectral masking to preserve vocal clarity while maint
 
 - `PeakFilter (300Hz, +2dB)`: Adds low-end warmth to ambient pads.
 - `PeakFilter (1800Hz, -3dB)`: Carves a vocal pocket notch — deeper and slightly higher than before for better speech clarity.
-- `HighShelfFilter (10kHz, -4dB)`: Gently softens HeartMuLa's high-frequency content above 10kHz while preserving all ambient harmonic content between 3–10kHz.
+- `HighShelfFilter (10kHz, -4dB)`: Gently softens 's high-frequency content above 10kHz while preserving all ambient harmonic content between 3–10kHz.
 
 > **Note:** The previous implementation used a `LowpassFilter(3000Hz)` which was a brick-wall cut that destroyed all harmonic content above 3kHz. The `HighShelfFilter` replaces this with a gentle slope that preserves the natural timbre of ambient pads.
 
 ```python
-def make_heartmula_music_chain() -> Pedalboard:
+def make__music_chain() -> Pedalboard:
     return Pedalboard([
         PeakFilter(cutoff_frequency_hz=300, gain_db=2.0, q=0.7),      # Low-end warmth
         PeakFilter(cutoff_frequency_hz=1800, gain_db=-3.0, q=0.6),   # Vocal pocket notch

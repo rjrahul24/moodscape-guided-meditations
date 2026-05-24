@@ -115,6 +115,7 @@ app.py / scripts/generate.py
 |--------|-----------|--------|--------|
 | Kokoro TTS | 24 kHz | → upsampled to 48 kHz | mono float32 |
 | F5-TTS | 24 kHz | → upsampled to 48 kHz | mono float32 |
+| IndexTTS-2 | 24 kHz | → upsampled to 48 kHz | mono float32 |
 | ACE-Step 1.5 | 48 kHz | 48 kHz | mono float32 |
 | Lyria RealTime | 48 kHz | 48 kHz | mono float32 |
 
@@ -134,6 +135,10 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 | F5 engine | `core/f5_tts/engine.py` | `F5Engine` | `load_model()`, `synthesize()` |
 | F5 preproc | `core/f5_tts/preprocessor.py` | — | `parse_script()`, `normalize_for_f5()`, `split_into_chunks()` |
 | F5 voice registry | `core/f5_tts/voice_registry.py` | `VoiceRegistry` | `scan()`, `get_voice()` |
+| IndexTTS engine | `core/index_tts/engine.py` | `IndexTTSEngine` | `load_model()`, `synthesize()` |
+| IndexTTS preproc | `core/index_tts/preprocessor.py` | — | `parse_script()`, `normalize_for_indextts()`, `split_into_chunks()` |
+| IndexTTS postproc | `core/index_tts/postprocessor.py` | `IndexTTSMasteringEngine` | `master_vocals()`, `build_index_voice_chain()` |
+| IndexTTS voice reg | `core/index_tts/voice_registry.py` | — | `scan_voices()`, `scan_emotions()`, `get_voice()`, `get_emotion()` |
 
 **Music & Pipeline:**
 
@@ -168,6 +173,13 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 | Kokoro formant shift | 0.97 | `core/kokoro_tts/postprocessor.py` | 3% lower formants; perceived warmth |
 | Kokoro max tokens | 150 | `core/kokoro_tts/preprocessor.py` | Per chunk |
 | F5 max chars | 300 | `core/f5_tts/preprocessor.py` | Per chunk |
+| IndexTTS max chars | 220 | `core/index_tts/preprocessor.py` | Per chunk; tightened from 250 to keep BPE-token count under the 120-token attention window |
+| IndexTTS calm vector | `[0,…,0,1.0]` | `core/index_tts/engine.py` | 8D `emo_vector` default — pure calm dimension, deterministic |
+| IndexTTS emo_alpha | 0.70 | `core/index_tts/engine.py` | 70% emotion override + 30% speaker-timbre preservation |
+| IndexTTS top_p | 0.85 | `core/index_tts/engine.py` | Tighter nucleus → fewer hallucinated breaths |
+| IndexTTS temperature | 0.70 | `core/index_tts/engine.py` | Lower temp → prosodic stability over long passages |
+| IndexTTS interval_silence | 200 ms | `core/index_tts/engine.py` | API-internal silence between micro-segments |
+| IndexTTS max tokens/seg | 120 | `core/index_tts/engine.py` | Hard ceiling matching T2S attention window |
 | ACE-Step CFG | 5.5 | `core/acestep_engine.py` | `_GUIDANCE_SCALE` — SFT sweet spot |
 | ACE-Step steps | 50 | `core/acestep_engine.py` | `_INFERENCE_STEPS` |
 | ACE-Step LM temp | 0.65 | `core/acestep_engine.py` | `_LM_TEMPERATURE` — balances variety with calm predictability |
@@ -187,6 +199,8 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 | HT Demucs | torch hub (auto) | `~/.cache/torch/hub/` |
 | Convolution IRs | local | `assets/impulse_responses/{warm_studio,wooden_hall,stone_chapel}.wav` |
 | F5 voice assets | local | `core/f5_tts/assets/reference_audio/` · `.../reference_transcript/` · `.../voices.toml` |
+| IndexTTS-2 | HF hub (manual) | `model_checkpoints/indextts2/` |
+| IndexTTS voice assets | local | `reference_audio/vocals/` (speakers) · `reference_audio/instrumental/` (emotions) |
 
 ## Task-Routing Guide
 
@@ -195,6 +209,8 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 | TTS chunk splitting | `core/kokoro_tts/preprocessor.py` | `core/f5_tts/preprocessor.py` |
 | Voice blend presets | `core/kokoro_tts/voice_manager.py` | — |
 | Add / edit F5 voice | `core/f5_tts/assets/` (audio + transcript) | `core/f5_tts/voice_registry.py` |
+| Add / edit IndexTTS voice | `reference_audio/vocals/` (WAV only) | `core/index_tts/voice_registry.py` |
+| Add / edit IndexTTS emotion | `reference_audio/instrumental/` (WAV only) | `core/index_tts/voice_registry.py` |
 | Kokoro prosody / punctuation | `core/kokoro_tts/preprocessor.py` | — |
 | Voice FX chain (EQ, reverb, compression) | `core/kokoro_tts/postprocessor.py :: build_voice_chain()` | `core/f5_tts/postprocessor.py` |
 | Music FX chain (per engine) | `core/audio_processor.py :: make_{engine}_music_chain()` | — |
@@ -218,6 +234,7 @@ Upsample method: `audio_processor.upsample_audio(high_accuracy=True)` = `librosa
 |----------------|-----------|------------------------|
 | `build_voice_chain()` | Kokoro voice | NoiseGate(−40dB) → HPF(80Hz) → Peak(−2.5dB@400Hz) → LowShelf(+1.5dB@200Hz) → Compressor(2.5:1@−28dB,15ms/150ms) → HiShelf(+1dB@10kHz) → ConvReverb(warm_studio,18%wet) → Limiter(−1dBTP) |
 | `build_f5_voice_chain()` | F5-TTS voice | De-esser(4–8kHz) → NoiseGate → HPF → EQ chain → Compressor → Limiter — see `core/f5_tts/postprocessor.py` |
+| `build_index_voice_chain()` | IndexTTS-2 voice | De-esser(3.75–7.25kHz) → NoiseGate(−42dB) → HPF(75Hz) → EQ chain → Compressor(−22dB) → Limiter — see `core/index_tts/postprocessor.py` |
 | `make_acestep_music_chain()` | ACE-Step 48kHz | NoiseGate(−55dB) → HPF(60Hz) → LowShelf(+1.5dB@200Hz) → Peak(−1.5dB@3kHz) → LPF(16kHz) → Compressor(2.0:1@−20dB) → Limiter(−0.5dB) |
 | `make_lyria_music_chain()` | Lyria 48kHz | HPF(60Hz) → Peak(−1.5dB@250Hz) → Peak(−2.0dB@4500Hz,Q=0.7) → HiShelf(−2.5dB@9kHz) → Compressor(2:1@−18dB) → Limiter(−0.5dB) |
 | `make_vocal_pocket_chain()` | Music (all engines) | HPF(30Hz) → Peak(−3dB@350Hz,Q=0.7) → Peak(−3.5dB@1.5kHz,Q=0.7) → Peak(−2dB@3kHz,Q=0.8) |
@@ -251,3 +268,11 @@ All chains in `core/audio_processor.py`. IRs in `assets/impulse_responses/` (def
 - ** pacing**: The `speed` parameter is accepted for ABC compliance but does not control  pacing. Pacing is controlled by `exaggeration` (emotion intensity) and `cfg_weight`. Low cfg_weight (0.2) = slow, deliberate meditation delivery.  also applies per-chunk RMS normalization, segment fades, and pyworld pitch humanization (same as Kokoro) for natural expressiveness.
 - ** breath sounds**: `[breath]` markers produce room-tone pauses (not breath WAVs) because  generates naturalistic breathing via its exaggeration parameter.
 - **Mix sample rate**: All music engine paths use `mix_sr = 48000` (`pipeline.py:213`). The 44.1 kHz fallback is only used when no music engine is active.
+- **IndexTTS-2 MPS NaN**: BigVGANv2 vocoder may produce NaN values on MPS — mitigated by `torch.clamp(mel, -10, 10)`. Force `use_fp16=False, use_deepspeed=False, use_cuda_kernel=False` on Apple Silicon.
+- **IndexTTS-2 checkpoints**: Manual download required — `huggingface-cli download IndexTeam/IndexTTS-2 --local-dir=model_checkpoints/indextts2`. Engine raises `FileNotFoundError` with instructions if missing.
+- **IndexTTS-2 no transcript**: Unlike F5-TTS, IndexTTS-2 does NOT require verbatim transcript files — only speaker reference WAV is needed.
+- **IndexTTS-2 calm vector is the default**: When no emotion audio is selected, `infer()` is called with `emo_vector=[0,…,0,1.0]` + `emo_alpha=0.70`. Audio-ref selection overrides the vector. Do NOT use `use_emo_text` — the Qwen3 path conflates "calm/serene" with "sad/melancholic".
+- **IndexTTS-2 speed slider is a no-op**: The v2 API does not expose reliable time-stretching (Issue #422). The Gradio slider is marked non-interactive and the engine logs a one-time warning if `speed != 1.0`. Pacing comes from the calm vector + preprocessor pause durations + 600ms inter-chunk room-tone gap.
+- **IndexTTS-2 per-chunk VRAM**: The engine calls `torch.mps.empty_cache()` (or `torch.cuda.empty_cache()`) after every chunk to mitigate the known BigVGAN/CFM memory leak (upstream Issue #364) on long meditation sessions.
+- **IndexTTS-2 meditation lexicon**: `INDEX_MEDITATION_LEXICON` in the preprocessor phoneticizes sanskrit/pali terms (Om, pranayama, savasana, …) AFTER the compound-hyphen stripper so the syllabification hyphens survive. Add new terms there.
+- **IndexTTS-2 emotion**: Emotion is decoupled from speaker identity. Emotion reference clips go in `reference_audio/instrumental/`. Users can also upload custom emotion audio in the Gradio UI.

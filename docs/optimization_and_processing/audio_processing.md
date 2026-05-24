@@ -1,7 +1,7 @@
 <!-- QUICK-REF ──────────────────────────────────────────────────────── -->
 **Files:** `core/pipeline.py` · `core/audio_processor.py` · `core/mixer.py`
 **Key functions:** `upsample_audio()` · `apply_envelope_ducking()` · `normalize_loudness()` · `export_audio()`
-**Mix SR:** 48 kHz for all music engine paths (ACE-Step / HeartMuLa / Lyria / F5) — see `pipeline.py:213`
+**Mix SR:** 48 kHz for all music engine paths (ACE-Step /  / Lyria / F5) — see `pipeline.py:213`
 **Active ducking:** `apply_envelope_ducking()` — called inside `mix()`; `apply_rms_ducking()` exists but is NOT used
 **Upsample method:** `librosa soxr_vhq` (highest accuracy, zero-crossing safe)
 **Export:** 20s chunk streaming via Pedalboard AudioFile; LUFS pre-computed as single scalar
@@ -20,7 +20,6 @@ Generative AI audio models operate at different native rates:
 |--------|-------------|-------|
 | Kokoro TTS | 24 kHz | CPU-only on Apple Silicon |
 | F5-TTS | 24 kHz | MPS (Apple Silicon GPU) |
-| HeartMuLa | 48 kHz | MPS on Apple Silicon / MLX primary |
 | ACE-Step 1.5 | **48 kHz** stereo | MLX backend |
 | Lyria RealTime | 48 kHz stereo | Cloud WebSocket API |
 
@@ -28,7 +27,7 @@ Generative AI audio models operate at different native rates:
 
 All audio is upsampled to a *mix sample rate* before Pedalboard FX and mixing. The mix rate depends on the music engine selected:
 
-- **All music engine paths** (ACE-Step, HeartMuLa, Lyria): mix at **48 kHz** — see `pipeline.py:213`.
+- **All music engine paths** (ACE-Step, Lyria): mix at **48 kHz** — see `pipeline.py:213`.
 - The mix sample rate is also the default export rate (configurable in the UI via "48 kHz Output" checkbox).
 - TTS audio (24 kHz) is upsampled to the mix rate using high-accuracy resampling for all engines:
   - All TTS engines: `librosa.resample(res_type="soxr_vhq")` — highest accuracy mode, minimises zero-crossing errors
@@ -62,7 +61,7 @@ Before mixing, `make_vocal_pocket_chain()` in `core/audio_processor.py` carves s
 
 Three engine-specific chains exist in `core/audio_processor.py`:
 
-### HeartMuLa (`make_heartmula_music_chain`)
+###  (`make__music_chain`)
 ```python
 PeakFilter(300 Hz, +2.0 dB, Q=0.7)       # Low-end warmth
 PeakFilter(5500 Hz, +0.8 dB, Q=0.6)      # Clarity/air presence
@@ -122,7 +121,7 @@ Crossfade technique varies by context:
 
 - **ACE-Step story mode** (`acestep_engine.py`): **STFT crossfade** in log-magnitude domain — interpolates magnitudes in dB (perceptually linear) for smoother transitions on sustained drones and singing bowls. Falls back to cosine² if energy anomaly detected (>3 dB deviation). 6-second crossfade.
 - **ACE-Step continuation** (`acestep_engine.py`): 2-second equal-power cosine² crossfade at each cover segment seam (operates on torch tensors).
-- **HeartMuLa segment stitching** (`core/heart_mula/engine.py`): 2-second macro crossfade at each segment seam, plus a **micro-crossfade** (64-sample triangular window at zero-crossing) to eliminate residual HF clicks.
+- ** segment stitching** (`core//engine.py`): 2-second macro crossfade at each segment seam, plus a **micro-crossfade** (64-sample triangular window at zero-crossing) to eliminate residual HF clicks.
 - **Music looping** (`mixer.py`): 2-second crossfade when music is looped to cover the full meditation duration.
 - **TTS chunk assembly**: 300ms cosine-squared crossfade for both Kokoro and F5-TTS engines.
 

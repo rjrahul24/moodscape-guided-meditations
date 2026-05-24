@@ -6,7 +6,7 @@ band-split processing, band-sequence modeling, and band-reconstruction
 to target mid-to-high frequency degradation characteristic of RVQ codecs
 like HeartCodec.
 
-Memory: ~7 GB.  Loads AFTER HeartMuLa unloads (sequential in the pipeline).
+Memory: ~7 GB.  Loads AFTER music engine unloads (sequential in the pipeline).
 
 Requires:
     git clone https://github.com/JusperLee/Apollo
@@ -38,7 +38,7 @@ def enhance_with_apollo(
     sample_rate: int = 48000,
     target_sr: int = 44100,
 ) -> np.ndarray:
-    """Remove codec artifacts from HeartMuLa output using Apollo.
+    """Remove codec artifacts using Apollo.
 
     Apollo processes at 44.1 kHz, so we resample in/out if needed.
     Falls back gracefully if Apollo is not installed.
