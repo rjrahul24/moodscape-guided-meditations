@@ -79,14 +79,14 @@ class SpeechEngine(ABC):
 - Story mode: `_generate_story()` — per-stage prompt + 6s equal-power crossfades
 - `_enhance_prompt(user_prompt, duration_hint)` — MESA framework → `(caption, lyrics)` tuple
 
-**HeartMulaEngine** (`core/heart_mula/engine.py`):
+**Engine** (`core//engine.py`):
 - Detects MLX vs. MPS backend at `load_model()` time
 - **MLX simultaneous loading:** Both LM (bf16) + codec (fp32) loaded together (~12 GB). `mx.set_memory_limit(30GB)`, `mx.set_cache_limit(4GB)`.
 - **Best-of-N selection:** Multiple candidates generated per segment; best selected via `compute_composite_score()` QA ranking
 - **Scheduling:** `cfg_scale=1.8`, `temperature=0.75`, `top_k=30`, `codec_guidance_scale=1.25`, `codec_num_steps=12`
 - **Token continuation:** Long-form segments reuse trailing tokens as context for seamless transitions
 - **MPS path:** heartlib's `lazy_load=True` + `__call__` API (writes to temp file internally)
-- HeartCodec dtype: **always fp32** — `mx.float32` (MLX) / `{"codec": torch.float32}` (MPS)
+-  dtype: **always fp32** — `mx.float32` (MLX) / `{"codec": torch.float32}` (MPS)
 - Long-form (>240s): `_generate_segments()` — 240s segments with 8s cosine crossfades
 - `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7` set in engine module scope (not just `__init__`)
 
@@ -137,7 +137,7 @@ Voice activity mask realigned after FX (reverb tail can alter array length).
 Pre-mix LUFS normalization per engine (`pipeline.py`, step 8):
 - Lyria: −16 LUFS
 - ACE-Step: −14 LUFS
-- HeartMuLa: −17 LUFS
+- : −17 LUFS
 
 Then engine-specific chain applied, followed by vocal pocket:
 ```
@@ -194,19 +194,16 @@ make_vocal_pocket_chain()    →  apply_audio_fx()   # carves 300Hz/1kHz/3kHz la
 
 | # | Plugin | Key params |
 |---|--------|-----------|
-| pre | Tape saturation | tanh(audio × 1.05) before chain |
-| 1 | NoiseGate | threshold=−60 dB, ratio=20:1 (allows room-tone at −55 dBFS through) |
+| 1 | NoiseGate | threshold=−40 dB, ratio=2.5 |
 | 2 | HighpassFilter | cutoff=80 Hz |
-| 3 | LowShelfFilter | cutoff=200 Hz, gain=+2.0 dB |
-| 4 | PeakFilter | freq=350 Hz, gain=−2.0 dB, Q=1.0 (mud cut) |
-| 5 | Compressor | threshold=−18 dB, ratio=2:1 |
-| 6 | PeakFilter | freq=3 000 Hz, gain=**+1.0 dB**, Q=0.6 (broad presence boost for intelligibility & warmth) |
-| 7 | HighShelfFilter | cutoff=7 500 Hz, gain=**−3.0 dB** (de-harsh shelf) |
-| 8 | Convolution | IR file, wet=reverb_amount (0.0–0.5) |
-| 9 | LowpassFilter | cutoff=9 500 Hz (Nyquist mask after reverb) |
-| 10 | Limiter | threshold=−1.0 dBFS |
+| 3 | PeakFilter | freq=400 Hz, gain=−2.5 dB, Q=1.0 (mud cut) |
+| 4 | LowShelfFilter | cutoff=200 Hz, gain=+1.5 dB (warmth) |
+| 5 | Compressor | threshold=**−28 dB**, ratio=2.5:1, attack=15ms, release=150ms |
+| 6 | HighShelfFilter | cutoff=10 000 Hz, gain=+1.0 dB (air) |
+| 7 | Convolution | IR file, wet=**0.18** default (18%) |
+| 8 | Limiter | threshold=−1.0 dBFS |
 
-### `make_heartmula_music_chain()` (`core/audio_processor.py`)
+### `make__music_chain()` (`core/audio_processor.py`)
 
 | # | Plugin | Key params |
 |---|--------|-----------|
@@ -326,10 +323,10 @@ Never load two engines simultaneously. Peak memory per phase:
 - Kokoro: ~200 MB (CPU RAM only)
 - F5-TTS: ~1.5 GB (MPS)
 - ACE-Step: ~8–12 GB (MLX unified RAM, with compile)
-- HeartMuLa (LM + codec simultaneous): ~12 GB (MLX bf16 LM + fp32 codec)
+-  (LM + codec simultaneous): ~12 GB (MLX bf16 LM + fp32 codec)
 - HT Demucs: ~168 MB (CPU, subprocess)
 
-### HeartMuLa Simultaneous Loading (MLX)
+###  Simultaneous Loading (MLX)
 
 Both LM (bf16) and codec (fp32) are loaded together (~12 GB total). Memory limits set before loading:
 
@@ -338,8 +335,8 @@ mx.set_memory_limit(30 * 1024**3)  # 30 GB
 mx.set_cache_limit(4 * 1024**3)    # 4 GB
 
 # Load both models simultaneously
-lm_model = load_lm_from_pretrained("./ckpt-mlx/heartmula/", dtype=mx.bfloat16)
-codec_model = load_codec_from_pretrained("./ckpt-mlx/heartcodec/", dtype=mx.float32)
+lm_model = load_lm_from_pretrained("./ckpt-mlx//", dtype=mx.bfloat16)
+codec_model = load_codec_from_pretrained("./ckpt-mlx//", dtype=mx.float32)
 
 # Best-of-N generation with scheduling
 tokens = lm_model.generate(tags, lyrics, cfg_scale=1.8, temperature=0.75, top_k=30)
@@ -370,7 +367,7 @@ The worker process holds Demucs weights; when it exits, all its memory is reclai
 
 ### MPS Memory Ceiling
 
-`PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7` set as `os.environ` in `core/heart_mula/engine.py` module scope (before any torch import in that file). 0.7 × 36 GB = 25.2 GB ceiling. Values below 0.5 cause OOM during 3B LM generation.
+`PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7` set as `os.environ` in `core//engine.py` module scope (before any torch import in that file). 0.7 × 36 GB = 25.2 GB ceiling. Values below 0.5 cause OOM during 3B LM generation.
 
 ### atexit Hook
 
@@ -399,10 +396,10 @@ ACE-Step 1.5 (48 kHz mono float32, native)
   → make_vocal_pocket_chain() @ 48 kHz
   → mix() @ 48 kHz
 
-HeartMuLa (48 kHz mono float32, native)
+ (48 kHz mono float32, native)
   → normalize_loudness(premix_lufs=-17)
   → reduce_music_noise() + apply_tape_saturation()
-  → make_heartmula_music_chain() @ 48 kHz
+  → make__music_chain() @ 48 kHz
   → add_organic_noise_floor()
   → make_vocal_pocket_chain() @ 48 kHz
   → mix() @ 48 kHz
@@ -439,7 +436,7 @@ mix() output (48 kHz mono float32)
 - Auto-prepended base tags: `ambient, meditation, calm, peaceful, warm, spacious, soft dynamics, gentle, soothing, high fidelity, studio quality, clean production`
 - Auto-appended negatives: `no vocals, instrumental`
 
-### HeartMuLa — Eight Pillars (`core/pipeline.py :: _enhance_heartmula_prompt()`)
+###  — Eight Pillars (`core/pipeline.py :: _enhance__prompt()`)
 
 Tag priority (high → low): Genre (95%) → Timbre (50%) → Mood (32%) → Instrument (25%) → Scene
 - Max 7–9 tags total
@@ -472,7 +469,6 @@ Controls: BPM (40–140), Density (0.0–1.0), Brightness (0.0–1.0), Guidance 
 | `unit-tests/test_f5_params.py` | F5 parameter validation |
 | `unit-tests/test_f5_phases.py` | Multi-phase voice switching |
 | `unit-tests/test_f5_pacing.py` | WPM-based pacing, `fix_duration` |
-| `unit-tests/test_heartmula_engine.py` | HeartMuLa lazy loading, segment generation |
 | `unit-tests/test_acestep_engine.py` | ACE-Step generation, MESA prompt enhancement |
 | `unit-tests/test_acestep_infinite.py` | Two-phase long-form generation (genesis + repaint continuation) |
 | `unit-tests/test_stitch_client.py` | `StitchClient.generate_design_concept()` |

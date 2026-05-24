@@ -124,6 +124,13 @@ class TestBritishVoice(unittest.TestCase):
         self.assertFalse(is_british_voice("af_heart"))
         self.assertFalse(is_british_voice("am_adam"))
 
+    def test_pure_calm_preset_not_british(self):
+        """pure_calm blend uses only af_* voices — must not trigger British pipeline."""
+        self.assertFalse(is_british_voice("pure_calm"))
+
+    def test_balanced_calm_preset_not_british(self):
+        self.assertFalse(is_british_voice("balanced_calm"))
+
 
 class TestBlendWithExtrapolation(unittest.TestCase):
 
