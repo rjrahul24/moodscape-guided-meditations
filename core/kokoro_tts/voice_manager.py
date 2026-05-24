@@ -177,7 +177,7 @@ def blend_with_extrapolation(voice_weights: dict[str, float]) -> torch.Tensor:
         raise ValueError("voice_weights must contain at least one entry")
 
     # Renormalize to primary voice norm — prevents amplitude drift from subtraction
-    if primary_norm and primary_norm > 1e-6:
+    if primary_norm is not None and primary_norm > 1e-6:
         current_norm = float(torch.norm(result.flatten()))
         if current_norm > 1e-6:
             result = result * (primary_norm / current_norm)
