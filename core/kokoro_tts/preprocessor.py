@@ -374,6 +374,54 @@ _SENSORY_WORDS = frozenset({
 # Conjunctions eligible for sentence-break promotion in _vary_sentence_lengths
 _VARIATION_CONJUNCTIONS = frozenset({'and', 'as', 'while', 'letting', 'allowing'})
 
+# ── Stress annotation targets ─────────────────────────────────────────────
+# Words where reducing lexical stress (-1) creates a calmer, less charged
+# delivery — the word sounds "already released" rather than emphasized.
+_STRESS_REDUCE_WORDS: list[str] = [
+    "tension", "tense", "worry", "worries",
+    "stress", "fear", "pain", "hurry", "thoughts", "distraction",
+]
+
+# Words that serve as gentle affirmations — (+1) makes them land with
+# warmth and intentional calm rather than flat declarative delivery.
+_STRESS_BOOST_WORDS: list[str] = [
+    "peace", "calm", "still", "stillness",
+    "safe", "whole", "free", "light", "gently", "softly",
+]
+
+
+def _apply_stress_markers(text: str) -> str:
+    """Wrap targeted words with misaki stress annotation syntax.
+
+    Uses misaki's built-in stress control:
+      [word](-1) — reduces lexical stress by one level (softer, less charged)
+      [word](+1) — boosts lexical stress by one level (gentle affirmation)
+
+    The (?<!\\[) lookbehind prevents double-wrapping words already inside
+    an IPA injection block [word](/IPA/) produced by inject_phonemes().
+
+    Args:
+        text: Text that has already been through inject_phonemes().
+
+    Returns:
+        Text with stress annotations inserted around targeted words.
+    """
+    for word in _STRESS_REDUCE_WORDS:
+        text = re.sub(
+            rf'(?<!\[)\b({word})\b',
+            r'[\1](-1)',
+            text,
+            flags=re.IGNORECASE,
+        )
+    for word in _STRESS_BOOST_WORDS:
+        text = re.sub(
+            rf'(?<!\[)\b({word})\b',
+            r'[\1](+1)',
+            text,
+            flags=re.IGNORECASE,
+        )
+    return text
+
 
 def _convert_to_contractions(text: str) -> str:
     """Convert formal phrasing to contractions for warmer, conversational delivery.
@@ -443,21 +491,22 @@ def preprocess_for_meditation(text: str) -> str:
     1. Expand digits/abbreviations to spoken forms.
     2. Convert formal phrasing to contractions for warmth.
     3. Inject IPA phonemes for Sanskrit/yoga terms.
-    4. Insert commas at natural phrasing boundaries (enhance_prosody_punctuation).
-    5. Inject contemplative ellipses before sensory/somatic words.
-    6. Vary sentence lengths for prosodic diversity.
-    7. Add ellipsis transition before any inline [pause:] markers.
-    8. Normalise ellipsis to exactly three dots.
+    4. Apply stress reduction/boost markers (tension words softer,
+       affirmation words gently emphasised).
+    5. Insert commas at natural phrasing boundaries.
+    6. Inject contemplative ellipses before sensory/somatic words.
+    7. Vary sentence lengths for prosodic diversity.
+    8. Add ellipsis transition before any inline [pause:] markers.
+    9. Normalise ellipsis to exactly three dots.
     """
     text = expand_for_tts(text)
     text = _convert_to_contractions(text)
     text = inject_phonemes(text)
+    text = _apply_stress_markers(text)       # step 4 — after IPA so collision guard works
     text = enhance_prosody_punctuation(text)
     text = _inject_sensory_ellipses(text)
     text = _vary_sentence_lengths(text)
-    # Soft ellipsis transition into an explicit pause marker (graceful handoff)
     text = re.sub(r'(\w)\s*(\[pause:)', r'\1... \2', text)
-    # Normalise any multi-dot sequences to clean three-dot ellipsis
     text = re.sub(r'\.{2,}', '...', text)
     text = re.sub(r'  +', ' ', text)
     return text.strip()

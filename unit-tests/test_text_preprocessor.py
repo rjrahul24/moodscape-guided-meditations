@@ -7,6 +7,7 @@ from core.kokoro_tts.preprocessor import (
     _convert_to_contractions,
     _inject_sensory_ellipses,
     _vary_sentence_lengths,
+    _apply_stress_markers,
 )
 
 
@@ -130,6 +131,45 @@ class TestAnnotateSpeed(unittest.TestCase):
         self.assertEqual(clamp_speed(0.50), 0.65)
         self.assertEqual(clamp_speed(0.65), 0.65)
         self.assertEqual(clamp_speed(0.90), 0.90)
+
+
+class TestApplyStressMarkers(unittest.TestCase):
+
+    def test_tension_word_reduced(self):
+        result = _apply_stress_markers("Release the tension in your shoulders.")
+        self.assertIn("[tension](-1)", result)
+
+    def test_stress_word_reduced(self):
+        result = _apply_stress_markers("Let go of all stress and worry.")
+        self.assertIn("[stress](-1)", result)
+        self.assertIn("[worry](-1)", result)
+
+    def test_peace_word_boosted(self):
+        result = _apply_stress_markers("You are filled with peace.")
+        self.assertIn("[peace](+1)", result)
+
+    def test_calm_word_boosted(self):
+        result = _apply_stress_markers("Feel completely calm and still.")
+        self.assertIn("[calm](+1)", result)
+        self.assertIn("[still](+1)", result)
+
+    def test_no_double_wrap_on_ipa_block(self):
+        """Words already inside [word](/IPA/) blocks must not be wrapped again."""
+        text = "[calm](/kˈɑːm/) is what you seek."
+        result = _apply_stress_markers(text)
+        # Should NOT produce [[calm]
+        self.assertNotIn("[[calm]", result)
+
+    def test_case_insensitive_matching(self):
+        result = _apply_stress_markers("TENSION in your body.")
+        self.assertIn("(-1)", result)
+
+    def test_stress_markers_appear_in_full_preprocess_pipeline(self):
+        """_apply_stress_markers is called inside preprocess_for_meditation."""
+        text = "Release all tension. Find your peace."
+        result = preprocess_for_meditation(text)
+        self.assertIn("(-1)", result)  # tension → (-1)
+        self.assertIn("(+1)", result)  # peace → (+1)
 
 
 if __name__ == '__main__':
