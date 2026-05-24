@@ -35,9 +35,9 @@ from core.index_tts import voice_registry
 
 logger = logging.getLogger(__name__)
 
-# Checkpoint location (project root / model_checkpoints / indextts2)
+# Checkpoint location (project root / models / indextts2)
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
-_CHECKPOINT_DIR = _PROJECT_ROOT / "model_checkpoints" / "indextts2"
+_CHECKPOINT_DIR = _PROJECT_ROOT / "models" / "indextts2"
 _CHECKPOINT_CFG = _CHECKPOINT_DIR / "config.yaml"
 
 # Trailing-silence trimmer threshold and natural decay tail.
@@ -261,7 +261,7 @@ class IndexTTSEngine(SpeechEngine):
                 f"IndexTTS-2 checkpoints not found at '{_CHECKPOINT_DIR}'. "
                 f"Download them with:\n"
                 f"  huggingface-cli download IndexTeam/IndexTTS-2 "
-                f"--local-dir=model_checkpoints/indextts2"
+                f"--local-dir=models/indextts2"
             )
 
         self._device = _select_device()

@@ -27,12 +27,7 @@ build/
 # Model cache (large files downloaded at runtime)
 ~/.cache/huggingface/
 .cache/
-ACE-Step-1.5/
 ckpt/
 ckpt-mlx/
-checkpoints/
-model_checkpoints/
+models/
 docs/temp/
-
-# Runtime assets (user-managed; not source-controlled)
-reference_audio/

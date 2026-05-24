@@ -143,7 +143,7 @@ class AceStepEngine:
         # device="auto" resolves to "mps" on Apple Silicon.
         # use_mlx_dit=True (default) activates MLX-accelerated DiT inference.
         status_msg, success = self._dit.initialize_service(
-            project_root="./ACE-Step-1.5",
+            project_root="./models/acestep",
             config_path=config_path,
             device="auto",
             use_mlx_dit=True,
@@ -163,7 +163,7 @@ class AceStepEngine:
         for lm_path in ("acestep-5Hz-lm-4B", "acestep-5Hz-lm-1.7B"):
             try:
                 llm_status, llm_success = self._llm.initialize(
-                    checkpoint_dir="./ACE-Step-1.5/checkpoints",
+                    checkpoint_dir="./models/acestep/checkpoints",
                     lm_model_path=lm_path,
                     backend="mlx",
                     device="auto",
