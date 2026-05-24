@@ -11,6 +11,7 @@ from core.kokoro_tts.voice_manager import (
     MEDITATION_PRESETS,
     is_british_voice,
 )
+from core.kokoro_tts.voice_manager import blend_with_extrapolation
 
 
 def _make_voice(seed: int = 0) -> torch.Tensor:
@@ -122,6 +123,62 @@ class TestBritishVoice(unittest.TestCase):
     def test_american_not_british(self):
         self.assertFalse(is_british_voice("af_heart"))
         self.assertFalse(is_british_voice("am_adam"))
+
+
+class TestBlendWithExtrapolation(unittest.TestCase):
+
+    @patch('core.kokoro_tts.voice_manager.load_voice_tensor')
+    def test_returns_correct_shape(self, mock_load):
+        mock_load.side_effect = lambda vid: _make_voice(
+            {"af_heart": 0, "af_sarah": 1, "af_aoede": 2, "af_bella": 3}.get(vid, 0)
+        )
+        result = blend_with_extrapolation(
+            {"af_heart": 0.60, "af_sarah": 0.30, "af_aoede": 0.10, "af_bella": -0.05}
+        )
+        self.assertEqual(result.shape, (511, 1, 256))
+
+    @patch('core.kokoro_tts.voice_manager.load_voice_tensor')
+    def test_no_nan_values(self, mock_load):
+        mock_load.side_effect = lambda vid: _make_voice(
+            {"af_heart": 0, "af_sarah": 1, "af_bella": 2}.get(vid, 0)
+        )
+        result = blend_with_extrapolation(
+            {"af_heart": 0.60, "af_sarah": 0.30, "af_bella": -0.05}
+        )
+        self.assertFalse(
+            torch.any(torch.isnan(result)).item(),
+            "blend_with_extrapolation produced NaN values"
+        )
+
+    @patch('core.kokoro_tts.voice_manager.load_voice_tensor')
+    def test_norm_renormalized_near_primary(self, mock_load):
+        """After subtractive blending, result norm should stay near primary voice norm."""
+        primary = _make_voice(0)
+
+        def _side(vid):
+            return primary if vid == "af_heart" else _make_voice(1)
+
+        mock_load.side_effect = _side
+        result = blend_with_extrapolation({"af_heart": 0.60, "af_bella": -0.05})
+        primary_norm = float(torch.norm(primary.flatten().float()))
+        result_norm = float(torch.norm(result.flatten().float()))
+        self.assertAlmostEqual(
+            result_norm, primary_norm, delta=primary_norm * 0.20,
+            msg=f"Result norm {result_norm:.3f} too far from primary norm {primary_norm:.3f}"
+        )
+
+    @patch('core.kokoro_tts.voice_manager.load_voice_tensor')
+    def test_pure_calm_preset_returns_tensor(self, mock_load):
+        mock_load.side_effect = lambda vid: _make_voice(0)
+        result = get_voice("pure_calm")
+        self.assertIsInstance(result, torch.Tensor)
+        self.assertEqual(result.shape, (511, 1, 256))
+
+    @patch('core.kokoro_tts.voice_manager.load_voice_tensor')
+    def test_pure_calm_preset_no_nan(self, mock_load):
+        mock_load.side_effect = lambda vid: _make_voice(0)
+        result = get_voice("pure_calm")
+        self.assertFalse(torch.any(torch.isnan(result)).item())
 
 
 if __name__ == '__main__':

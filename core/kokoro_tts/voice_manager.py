@@ -35,6 +35,16 @@ MEDITATION_PRESETS = {
         "description": "Maximum breathiness, deep relaxation (research-validated)",
         "blend": {"af_sky": 0.65, "af_sarah": 0.35},
     },
+    "pure_calm": {
+        "description": "Ultra-low tension — warmth with conversational energy subtracted",
+        "blend": {
+            "af_heart":  0.60,   # primary warmth and stability
+            "af_sarah":  0.30,   # soft, natural breathiness
+            "af_aoede":  0.10,   # musical prosody quality
+            "af_bella": -0.05,   # subtract 5% of energetic/tension traits
+        },
+        "method": "extrapolation",
+    },
 }
 
 # Voices that require the British English pipeline (lang_code='b')
@@ -127,6 +137,54 @@ def slerp_blend(voice_weights: dict[str, float]) -> torch.Tensor:
     return result
 
 
+def blend_with_extrapolation(voice_weights: dict[str, float]) -> torch.Tensor:
+    """Blend voice tensors with support for negative (subtractive) weights.
+
+    Negative weights subtract that voice's characteristics from the blend,
+    useful for removing tension, energy, or specific tonal qualities that
+    exist across multiple training voices.
+
+    After blending, the result is L2-renormalized to the primary (first
+    positive-weight) voice's norm, preventing amplitude drift caused by
+    the subtraction operation.
+
+    Args:
+        voice_weights: e.g. {"af_heart": 0.6, "af_sarah": 0.3,
+                             "af_aoede": 0.1, "af_bella": -0.05}
+                       Positive weights add traits; negative weights subtract.
+                       The first positive-weight voice is the primary voice
+                       whose norm is used for renormalization.
+
+    Returns:
+        Blended voice tensor of the same shape as the input tensors.
+
+    Raises:
+        ValueError: If voice_weights is empty.
+    """
+    result: torch.Tensor | None = None
+    primary_norm: float | None = None
+
+    for voice_id, weight in voice_weights.items():
+        tensor = load_voice_tensor(voice_id).float()
+        if result is None:
+            result = tensor * weight
+            # Capture norm of primary (first) voice for renormalization
+            primary_norm = float(torch.norm(tensor.flatten()))
+        else:
+            result = result + tensor * weight
+
+    if result is None:
+        raise ValueError("voice_weights must contain at least one entry")
+
+    # Renormalize to primary voice norm — prevents amplitude drift from subtraction
+    if primary_norm and primary_norm > 1e-6:
+        current_norm = float(torch.norm(result.flatten()))
+        if current_norm > 1e-6:
+            result = result * (primary_norm / current_norm)
+
+    return result
+
+
 def add_voice_jitter(voice_tensor: torch.Tensor, amount: float = 0.001) -> torch.Tensor:
     """Add subtle random perturbation to a voice tensor for natural variation.
 
@@ -150,16 +208,21 @@ def get_voice(voice_spec: str):
     Accepts:
       - Single voice ID: "af_heart" → returns string
       - Comma-separated blend: "af_heart,af_nicole" → returns blended tensor (equal weight)
-      - Preset name: "golden_hour" → returns blended tensor from preset
+      - Preset name: "golden_hour" → returns blended tensor from preset via SLERP
+      - Extrapolation preset: "pure_calm" → uses blend_with_extrapolation() (negative weights)
 
     Blends use SLERP interpolation to preserve embedding norms.
+    Extrapolation presets use blend_with_extrapolation() with L2 renormalization.
 
     Returns:
         str | torch.Tensor
     """
     # Check if it is a preset
     if voice_spec in MEDITATION_PRESETS:
-        return slerp_blend(MEDITATION_PRESETS[voice_spec]["blend"])
+        preset = MEDITATION_PRESETS[voice_spec]
+        if preset.get("method") == "extrapolation":
+            return blend_with_extrapolation(preset["blend"])
+        return slerp_blend(preset["blend"])
 
     # Check if it is a comma-separated blend
     if "," in voice_spec:
