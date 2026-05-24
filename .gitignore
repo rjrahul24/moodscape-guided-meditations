@@ -30,4 +30,9 @@ build/
 ACE-Step-1.5/
 ckpt/
 ckpt-mlx/
+checkpoints/
+model_checkpoints/
 docs/temp/
+
+# Runtime assets (user-managed; not source-controlled)
+reference_audio/
