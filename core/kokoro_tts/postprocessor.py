@@ -460,7 +460,7 @@ def humanize_voice(
 # Stage 3: Pedalboard FX chains (Kokoro-specific)
 # =====================================================================
 
-def build_voice_chain(reverb_amount: float = 0.15, ir_name: str = "warm_studio") -> Pedalboard:
+def build_voice_chain(reverb_amount: float = 0.18, ir_name: str = "warm_studio") -> Pedalboard:
     """Unified Kokoro voice chain — studio-grade meditation signal flow.
 
     Tuned per audio-opt research to simulate close-mic proximity effect and
@@ -477,16 +477,17 @@ def build_voice_chain(reverb_amount: float = 0.15, ir_name: str = "warm_studio")
       4. LowShelf +1.5 dB @ 200 Hz: warmth / close-mic proximity effect.
          Research: +3dB low-shelf at 120-200Hz simulates proximity effect;
          +1.5 dB is conservative to avoid boominess on headphones.
-      5. Compressor 2.5:1 @ -22 dB, 15ms/150ms: gentle but responsive
-         compression. Research: aim for 3-6 dB max gain reduction.
+      5. Compressor 2.5:1 @ -28 dB, 15ms/150ms: catches whisper-level
+         meditation delivery that fell below the old -22 dB threshold.
+         ~2-3 dB additional GR on soft phrases — transparent but consistent.
          Faster attack (15ms) catches transients; faster release (150ms)
          follows meditation speech rhythm naturally.
       6. HighShelf +1.0 dB @ 10 kHz: "air" frequency boost for intimacy.
          Research: high-shelf at 10-12kHz by +1dB adds air/intimacy.
          Replaces previous -3.5 dB cut at 7.5 kHz + 9.5 kHz LPF which
          made voice sound dull and muffled.
-      7. Convolution reverb: plate IR at 15% wet for intimate room
-         presence. Research: plate reverbs are the professional standard
+      7. Convolution reverb: plate IR at 18% wet for enveloping acoustic
+         space. Research: plate reverbs are the professional standard
          for intimate voice.
       8. Limiter -1.0 dBTP: true peak safety. Research recommends -1.0
          dBTP for meditation content.
@@ -504,46 +505,11 @@ def build_voice_chain(reverb_amount: float = 0.15, ir_name: str = "warm_studio")
         PeakFilter(cutoff_frequency_hz=400, gain_db=-2.5, q=1.0),
         LowShelfFilter(cutoff_frequency_hz=200, gain_db=1.5),
         # ── Dynamics ──
-        Compressor(threshold_db=-22, ratio=2.5, attack_ms=15.0, release_ms=150.0),
+        # 2.5:1 @ -28 dB: catches whisper-level meditation delivery below the old -22 dB threshold.
+        # ~2-3 dB additional GR on soft phrases — transparent but consistent.
+        Compressor(threshold_db=-28, ratio=2.5, attack_ms=15.0, release_ms=150.0),
         # ── Air / intimacy ──
         HighShelfFilter(cutoff_frequency_hz=10000, gain_db=1.0),
-        # ── Space ──
-        Convolution(
-            impulse_response_filename=ir_path,
-            mix=reverb_amount,
-        ),
-        # ── Protection ──
-        Limiter(threshold_db=-1.0),
-    ])
-
-
-def build_chatterbox_voice_chain(reverb_amount: float = 0.15, ir_name: str = "warm_studio") -> Pedalboard:
-    """Chatterbox-specific voice chain — tuned for its flow-matching vocoder.
-
-    Differs from Kokoro's chain:
-      - NoiseGate at -45 dB (less aggressive — Chatterbox output is cleaner
-        than Kokoro's ISTFTNet; -40 dB may gate soft phonemes after pauses).
-      - Reduced 400 Hz cut (-1.5 dB vs -2.5 dB — no ISTFTNet boxiness).
-      - More warmth: LowShelf +2.0 dB @ 180 Hz (proximity warmth to
-        counteract Chatterbox's cooler spectral character).
-      - More air: HighShelf +1.5 dB @ 10 kHz (clarity and intimate presence).
-    """
-    from core.audio_processor import IR_CATALOG, DEFAULT_IR
-
-    reverb_amount = float(np.clip(reverb_amount, 0.0, 0.5))
-    ir_path = IR_CATALOG.get(ir_name, IR_CATALOG[DEFAULT_IR])["path"]
-
-    return Pedalboard([
-        # ── Cleanup ──
-        NoiseGate(threshold_db=-45, ratio=2.5, attack_ms=1.0, release_ms=100),
-        HighpassFilter(cutoff_frequency_hz=80.0),
-        # ── Tone shaping ──
-        PeakFilter(cutoff_frequency_hz=400, gain_db=-1.5, q=1.0),
-        LowShelfFilter(cutoff_frequency_hz=180, gain_db=2.0),
-        # ── Dynamics ──
-        Compressor(threshold_db=-22, ratio=2.5, attack_ms=15.0, release_ms=150.0),
-        # ── Air / intimacy ──
-        HighShelfFilter(cutoff_frequency_hz=10000, gain_db=1.5),
         # ── Space ──
         Convolution(
             impulse_response_filename=ir_path,

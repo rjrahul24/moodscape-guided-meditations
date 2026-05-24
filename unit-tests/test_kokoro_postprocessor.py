@@ -3,6 +3,7 @@ import numpy as np
 from unittest.mock import patch
 
 from core.kokoro_tts.postprocessor import (
+    build_voice_chain,
     generate_room_tone,
     humanize_voice,
     process_chunk,
@@ -116,6 +117,42 @@ class TestNormalizeChunkRms(unittest.TestCase):
         silent = np.zeros(1000, dtype=np.float32)
         result = normalize_chunk_rms(silent)
         np.testing.assert_array_equal(result, silent)
+
+
+class TestBuildVoiceChainParameters(unittest.TestCase):
+    """Verify the tuned FX chain parameters match the spec."""
+
+    def test_compressor_threshold_is_minus_28(self):
+        from pedalboard import Compressor
+        chain = build_voice_chain()
+        compressor = next((p for p in chain if isinstance(p, Compressor)), None)
+        self.assertIsNotNone(compressor, "Expected a Compressor plugin in build_voice_chain()")
+        self.assertAlmostEqual(
+            compressor.threshold_db, -28.0, places=1,
+            msg=f"Compressor threshold should be -28 dB, got {compressor.threshold_db}"
+        )
+
+    def test_compressor_ratio_unchanged(self):
+        from pedalboard import Compressor
+        chain = build_voice_chain()
+        compressor = next((p for p in chain if isinstance(p, Compressor)), None)
+        self.assertAlmostEqual(compressor.ratio, 2.5, places=1)
+
+    def test_default_reverb_mix_is_0_18(self):
+        from pedalboard import Convolution
+        chain = build_voice_chain()
+        convolution = next((p for p in chain if isinstance(p, Convolution)), None)
+        self.assertIsNotNone(convolution, "Expected a Convolution plugin in build_voice_chain()")
+        self.assertAlmostEqual(
+            convolution.mix, 0.18, places=2,
+            msg=f"Default reverb mix should be 0.18, got {convolution.mix}"
+        )
+
+    def test_custom_reverb_amount_respected(self):
+        from pedalboard import Convolution
+        chain = build_voice_chain(reverb_amount=0.10)
+        convolution = next((p for p in chain if isinstance(p, Convolution)), None)
+        self.assertAlmostEqual(convolution.mix, 0.10, places=2)
 
 
 if __name__ == '__main__':
