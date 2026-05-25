@@ -24,3 +24,7 @@ diffusers>=0.30.0  # AutoencoderOobleck required by ace-step
 silero-vad
 git+https://github.com/index-tts/index-tts.git  # IndexTTS-2: zero-shot voice cloning with emotion control
 git+https://github.com/ace-step/ACE-Step-1.5.git
+# protobuf: onnx 1.21+ (via s3tokenizer/f5-tts) needs builder (added in 3.20).
+# google-api-core 2.30+ needs >=4.25.8. descript-audiotools & tensorboard 2.9
+# have stale <3.20 constraints but don't use protobuf at runtime.
+protobuf>=4.25.8,<7.0.0
