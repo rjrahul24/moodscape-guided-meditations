@@ -32,4 +32,5 @@ build/
 ckpt/
 ckpt-mlx/
 models/
+checkpoints/
 docs/temp/
