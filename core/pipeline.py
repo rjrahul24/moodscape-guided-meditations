@@ -574,7 +574,7 @@ class MeditationPipeline:
             # chunked streaming in `export_audio()`.
 
             # ── Step 10b: QA checks ─────────────────────────────────────────
-            qa_results = run_qa_checks(mixed, mix_sr)
+            qa_results = run_qa_checks(mixed, mix_sr, is_vocals_only=is_vocals)
             if qa_results["silence"]:
                 status_message += f"QA: {len(qa_results['silence'])} long silence(s) detected. "
             if not qa_results["clipping"]["passed"]:
