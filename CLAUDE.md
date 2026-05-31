@@ -8,6 +8,7 @@ AI-guided meditation audio generator (Gradio UI). Three TTS engines (Kokoro, F5-
 source .venv/bin/activate
 pip install -r requirements.txt
 brew install espeak-ng                 # Kokoro G2P dependency
+brew install rubberband                # IndexTTS-2 pacing time-stretch (falls back to librosa if absent)
 python app.py                          # Gradio UI at http://localhost:7860
 ```
 

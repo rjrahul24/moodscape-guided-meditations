@@ -10,7 +10,10 @@ This document summarizes the IndexTTS-2 integration for MoodScape Guided Meditat
 All required pip packages have been installed:
 - `indextts` (from `git+https://github.com/index-tts/index-tts.git`)
 - Supporting dependencies: `numpy`, `soundfile`, `torch`, `transformers`, etc.
-- See `requirements.txt` line 25 for the git dependency
+- See `requirements.txt` for the git dependency
+- **Pacing (optional, recommended):** `brew install rubberband` enables high-fidelity
+  pitch-preserving time-stretch for meditation pacing (`INDEXTTS_PACE_RATE`). Without the
+  `rubberband` CLI the engine falls back to librosa's phase-vocoder (lower fidelity).
 
 ### 2. Model Weights ✅
 IndexTTS-2 model checkpoints are present:

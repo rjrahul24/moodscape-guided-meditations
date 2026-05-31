@@ -63,21 +63,93 @@ _VAD_CROP_TAIL_MS = 100.0
 # Qwen3 text-emotion path's known "calm → sad" misclassification.
 INDEXTTS_CALM_VECTOR = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
 
-# Blend ratio: 0.70 = 70% emotion override + 30% speaker timbre preservation.
-# Below 0.3 fails to suppress reference arousal; at 1.0 timbre flattens.
-INDEXTTS_EMO_ALPHA = 0.70
+# Blend ratio: 0.65 = 65% emotion override + 35% speaker timbre preservation.
+# Slightly favours the speaker's natural emotion blend for a less synthetic feel.
+INDEXTTS_EMO_ALPHA = 0.65
 
-# Sampling: tighter nucleus + lower temperature → stable, breathy delivery
-# over long passages; reduces hallucinated breaths / arousal spikes.
-INDEXTTS_TOP_P = 0.85
-INDEXTTS_TEMPERATURE = 0.70
+# Sampling: pure stochastic (no beam search) at the trained-for top_p/top_k.
+# Temperature lifted just above prior 0.70 to recover prosodic variance the
+# previous setting flattened, while staying below the model default of 0.80.
+INDEXTTS_TOP_P = 0.80
+INDEXTTS_TEMPERATURE = 0.75
+INDEXTTS_TOP_K = 30
+INDEXTTS_NUM_BEAMS = 1
+INDEXTTS_REPETITION_PENALTY = 10.0
+INDEXTTS_MAX_MEL_TOKENS = 1815
 
-# API-internal silence between micro-segments (we add our own 600ms gap externally).
-INDEXTTS_INTERVAL_SILENCE_MS = 200
+# API-internal silence between micro-segments. Set to 0 — we add our own 600ms
+# room-tone gap plus a 300ms cosine crossfade externally; stacking the model's
+# default 200ms hard zero-pad on top produces an audibly long gap.
+INDEXTTS_INTERVAL_SILENCE_MS = 0
 
-# Hard ceiling matching the T2S transformer attention window.
-# Preprocessor chunk-cap is set conservatively below this in token-equivalent chars.
-INDEXTTS_MAX_TOKENS_PER_SEG = 120
+# Larger window → fewer chunk boundaries → less emotion drift, since IndexTTS-2
+# has no context carry-forward between segments. 180 sits in the safe 80-200
+# range and stays well under the GPT attention ceiling (~402).
+INDEXTTS_MAX_TOKENS_PER_SEG = 180
+
+# Pitch-preserving time-stretch ratio applied per speech chunk before assembly.
+# IndexTTS-2 inherits its tempo from the reference clip; common references read
+# at conversational pace (~130-150 WPM), well above the slow narration target
+# (~95-105 WPM) typical of meditation apps. Set to 1.0 to disable.
+INDEXTTS_PACE_RATE = 0.92
+
+
+def _apply_meditation_pace(audio: np.ndarray, rate: float, sr: int = SAMPLE_RATE) -> np.ndarray:
+    """Pitch-preserving time-stretch on a single IndexTTS-2 speech chunk.
+
+    rate < 1.0 lengthens the audio; rate == 1.0 returns the input unchanged.
+    Applied per-chunk so the assembly-time crossfade timing stays accurate.
+
+    Prefers Rubber Band (formant-aware, transparent on voice) via pyrubberband,
+    which shells out to the ``rubberband`` CLI. Falls back to librosa's
+    phase-vocoder if Rubber Band is unavailable, then to the unmodified input.
+    The phase-vocoder can smear/metallicise voice, so Rubber Band is preferred
+    for the meditation quality target.
+    """
+    if abs(rate - 1.0) < 1e-3:
+        return audio
+    arr = audio.astype(np.float32)
+    try:
+        import pyrubberband as pyrb
+        stretched = pyrb.time_stretch(arr, sr, rate)
+        logger.debug("Pacing via Rubber Band (rate=%.2f)", rate)
+        return np.asarray(stretched, dtype=np.float32)
+    except Exception as e:
+        logger.info("Rubber Band unavailable (%s); falling back to librosa phase-vocoder.", e)
+    try:
+        import librosa
+        stretched = librosa.effects.time_stretch(arr, rate=rate)
+        logger.debug("Pacing via librosa phase-vocoder (rate=%.2f)", rate)
+        return stretched.astype(np.float32)
+    except Exception as e:
+        logger.warning("Pacing time-stretch failed (rate=%.2f), keeping original: %s", rate, e)
+        return audio
+
+
+def _patch_bigvgan_mps_safety(tts_model) -> None:
+    """Wrap BigVGANv2 so mel inputs are clamped and outputs are NaN-scrubbed.
+
+    Two MPS-specific failure modes this guards against:
+      1. BigVGANv2 can emit NaN/Inf when mel inputs spike beyond ~|10| on MPS.
+      2. torch.clamp(32767 * wav, ...) inside infer_v2.py passes NaN through
+         on MPS — silently becoming -32767 clicks in the rendered audio.
+    """
+    import torch
+
+    bigvgan = getattr(tts_model, "bigvgan", None)
+    if bigvgan is None or not hasattr(bigvgan, "forward"):
+        logger.warning("IndexTTS-2 BigVGAN MPS safety patch skipped: no bigvgan.forward")
+        return
+
+    original_forward = bigvgan.forward
+
+    def safe_forward(mel, *args, **kwargs):
+        mel = torch.clamp(mel, -10.0, 10.0)
+        wav = original_forward(mel, *args, **kwargs)
+        return torch.nan_to_num(wav, nan=0.0, posinf=1.0, neginf=-1.0)
+
+    bigvgan.forward = safe_forward
+    logger.info("IndexTTS-2 BigVGAN wrapped with MPS NaN-safety patch")
 
 
 def _trim_trailing_silence(audio: np.ndarray, sr: int) -> np.ndarray:
@@ -278,6 +350,8 @@ class IndexTTSEngine(SpeechEngine):
             use_cuda_kernel=False,  # CUDA-only
         )
 
+        _patch_bigvgan_mps_safety(self._model)
+
         logger.info("IndexTTS-2 loaded successfully on %s", self._device)
 
     def unload_model(self) -> None:
@@ -383,7 +457,11 @@ class IndexTTSEngine(SpeechEngine):
                         interval_silence=INDEXTTS_INTERVAL_SILENCE_MS,
                         max_text_tokens_per_segment=INDEXTTS_MAX_TOKENS_PER_SEG,
                         top_p=INDEXTTS_TOP_P,
+                        top_k=INDEXTTS_TOP_K,
                         temperature=INDEXTTS_TEMPERATURE,
+                        num_beams=INDEXTTS_NUM_BEAMS,
+                        repetition_penalty=INDEXTTS_REPETITION_PENALTY,
+                        max_mel_tokens=INDEXTTS_MAX_MEL_TOKENS,
                         do_sample=True,
                         use_random=False,
                         verbose=False,
@@ -426,6 +504,9 @@ class IndexTTSEngine(SpeechEngine):
                     # Post-processing: trim trailing silence + VAD
                     arr = _trim_trailing_silence(arr, SAMPLE_RATE)
                     arr = _apply_silero_vad(arr, SAMPLE_RATE)
+
+                    # Slow to meditation pace (pitch-preserving) before assembly
+                    arr = _apply_meditation_pace(arr, INDEXTTS_PACE_RATE, sr=SAMPLE_RATE)
 
                     # Build voice activity mask
                     threshold = float(np.abs(arr).mean()) * 0.15

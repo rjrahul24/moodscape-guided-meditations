@@ -19,9 +19,11 @@ from core.text_utils import expand_text
 
 logger = logging.getLogger(__name__)
 
-MAX_CHUNK_CHARS = 220  # tightened from 250 — keeps BPE-token count safely under
-                       # IndexTTS-2's 120-token attention window, even for dense
-                       # text with sanskrit/pali terms that fracture into many tokens.
+MAX_CHUNK_CHARS = 360  # ≈180 BPE tokens, matching the engine's max_text_tokens
+                       # _per_segment. IndexTTS-2 has no context carry-forward
+                       # between segments, so fewer, longer chunks reduce emotion
+                       # drift across long meditation scripts. Sentence-boundary
+                       # snapping below this cap keeps prosodic arcs intact.
 _PARAGRAPH_PAUSE_SEC = 3.5
 
 # Meditation-domain pronunciation lexicon — applied BEFORE expand_text() and

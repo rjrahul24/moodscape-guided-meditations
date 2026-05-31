@@ -12,6 +12,8 @@ scipy
 soundfile
 pyloudnorm
 noisereduce
+librosa>=0.10.0           # phase-vocoder pacing fallback; audio utils
+pyrubberband             # high-fidelity pacing time-stretch (needs `brew install rubberband`)
 pyworld>=0.3.4
 python-dotenv
 google-genai>=1.16.0

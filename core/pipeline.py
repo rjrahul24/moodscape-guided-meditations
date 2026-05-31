@@ -301,7 +301,11 @@ class MeditationPipeline:
                 if mix_sr == 48000:
                     _progress(progress_cb, 0.39, "Neural denoising (DeepFilterNet MLX)...")
                     from core.deepfilter_enhancer import enhance_voice_deepfilter
-                    voice_audio = enhance_voice_deepfilter(voice_audio, sr=mix_sr)
+                    # IndexTTS-2's BigVGANv2 output is already clean — full-strength
+                    # denoising strips natural breaths and yields an "AI voice". Use a
+                    # light wet blend there; keep stronger denoising for noisier engines.
+                    df_wet = 0.10 if tts_engine == "indextts" else 1.0
+                    voice_audio = enhance_voice_deepfilter(voice_audio, sr=mix_sr, wet=df_wet)
 
                 # F5-TTS Phase B mastering (Kokoro skips — unified voice chain in Step 7)
                 if mastering_engine is not None:
