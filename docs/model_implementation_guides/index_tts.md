@@ -108,10 +108,20 @@ Users can also upload custom emotion audio directly in the Gradio UI.
 
 ### Recording for Voice Cloning
 
-- **Pace:** Speak at meditation pace (~100–120 WPM)
+- **Pace:** Speak at slow meditation pace (~95–105 WPM). IndexTTS-2 inherits its
+  tempo from the reference; faster references force the runtime
+  `INDEXTTS_PACE_RATE=0.92` time-stretch to do more work.
 - **Tone:** Warm, calm, compassionate — not whispered, not monotone
-- **Content:** 2–3 complete meditation sentences (IndexTTS-2 analyzes speech patterns from the reference)
-- **Duration:** 5–10 seconds (IndexTTS-2 works well with shorter clips than F5-TTS)
+- **Content:** 2–3 complete meditation sentences with varied prosody but
+  consistent calm emotion (IndexTTS-2 analyzes speech patterns from the reference)
+- **Duration:** 8–12 seconds (under IndexTTS-2's 15s hard truncation; below 8s
+  hurts prosodic coverage)
+- **Format:** 24 kHz mono WAV
+- **Level:** RMS −20 to −18 dB, true peak ≤ −3 dB
+- **Hygiene:** No music, no reverb tail, no plosives, no clicks. If sourced
+  from ElevenLabs IVC, light de-ess at 6.5 kHz before saving — IndexTTS-2
+  will faithfully clone over-smoothed sibilants and the 7–9 kHz ringing
+  IVC outputs are known for.
 - **Environment:** Quiet room, no HVAC/fan noise, pop filter recommended
 - **No transcript needed:** Unlike F5-TTS, IndexTTS-2 does not require a verbatim `.txt` transcript
 
@@ -136,7 +146,7 @@ The preprocessor follows the exact same pattern as F5-TTS with one key differenc
 
 | Setting | F5-TTS | IndexTTS-2 | Rationale |
 |---|---|---|---|
-| Chunk limit | 300 chars | **250 chars** | Autoregressive models hallucinate on longer inputs |
+| Chunk limit | 300 chars | **360 chars** | Larger window ⇒ fewer chunk boundaries ⇒ less emotion drift (IndexTTS-2 has no context carry-forward between segments) |
 | Paragraph pause | 3.0s | **3.5s** | BigVGANv2 acoustic tails benefit from more separation |
 | Text normalization | Same | Same | Both do their own G2P from raw text |
 | Pause/voice markers | Same | Same | Shared parsing logic |
