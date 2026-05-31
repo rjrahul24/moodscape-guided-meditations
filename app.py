@@ -146,38 +146,41 @@ def _render_status(message, fraction, detail="", elapsed=None):
         elapsed_html = f'<span class="status-elapsed">{elapsed_str}</span>'
 
     if fraction >= 1.0:
-        # Complete state — checkmark + message + elapsed
         return f"""
-        <div class="status-complete">
-            <span class="status-check">&#10003;</span>
-            <span class="status-msg">{message}</span>
-            {elapsed_html}
+        <div class="status-shell">
+            <div class="status-complete">
+                <span class="status-check">&#10003;</span>
+                <span class="status-msg">{message}</span>
+                {elapsed_html}
+            </div>
+            {f'<div class="status-detail">{detail}</div>' if detail else ''}
         </div>
-        {f'<div class="status-detail">{detail}</div>' if detail else ''}
         """
     elif fraction <= 0 and ("Error" in message or "Failed" in message):
-        # Error state
         return f"""
-        <div class="status-bar">
-            <span class="status-msg status-error">{message}</span>
-            {elapsed_html}
+        <div class="status-shell">
+            <div class="status-bar">
+                <span class="status-msg status-error">{message}</span>
+                {elapsed_html}
+            </div>
+            {f'<div class="status-detail status-error">{detail}</div>' if detail else ''}
         </div>
-        {f'<div class="status-detail status-error">{detail}</div>' if detail else ''}
         """
     else:
-        # In-progress state — show progress bar with elapsed timer
         return f"""
-        <div class="status-bar">
-            <span class="status-msg">{message}</span>
-            <span class="status-right">
-                <span class="status-pct">{percent}%</span>
-                {elapsed_html}
-            </span>
+        <div class="status-shell">
+            <div class="status-bar">
+                <span class="status-msg">{message}</span>
+                <span class="status-right">
+                    <span class="status-pct">{percent}%</span>
+                    {elapsed_html}
+                </span>
+            </div>
+            <div class="progress-track">
+                <div class="progress-fill" style="width: {percent}%"></div>
+            </div>
+            {f'<div class="status-detail">{detail}</div>' if detail else ''}
         </div>
-        <div class="progress-track">
-            <div class="progress-fill" style="width: {percent}%"></div>
-        </div>
-        {f'<div class="status-detail">{detail}</div>' if detail else ''}
         """
 
 
@@ -337,380 +340,481 @@ def generate_meditation(
     yield output_path, _render_status("Generation Complete", 1.0, detail, elapsed=elapsed)
 
 
-# CSS — The Ethereal Void (Lumina Night Design System)
+# ── Design System: "Sumi & Amber" ──────────────────────────────────────────
+# Warm monastic minimalism. Cormorant Garamond display serif + DM Sans body.
+# Palette: warm near-black + amber gold + sage. No purple gradients, no glass.
 CUSTOM_CSS = """
-/* ── FONTS ────────────────────────────────────────────────── */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+/* ── FONTS ─────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&family=JetBrains+Mono:wght@400;500&display=swap');
 
-/* ── DESIGN TOKENS ────────────────────────────────────────── */
+/* ── DESIGN TOKENS ──────────────────────────────────────────────── */
 :root {
-    --bg-primary: #131318;
-    --surface: #131318;
-    --surface-container-lowest: #0e0e13;
-    --surface-container-low: #1b1b20;
-    --surface-container-high: #2a292f;
-    --surface-variant: rgba(53,52,58,0.4); /* #35343a at 40% */
-    --surface-bright: #39383e;
-    
-    --primary: #d2bbff;
-    --primary-container: #7c3aed;
-    --primary-gradient: linear-gradient(135deg, #d2bbff 0%, #7c3aed 100%);
-    
-    --outline-variant: rgba(74,68,85,0.15); /* #4a4455 at 15% */
-    --text-display: #e4e1e9;
-    --text-primary: #e4e1e9;
-    --text-secondary: #ccc3d8; /* on_surface_variant */
-    --text-tertiary: #958da1; /* outline */
-    
-    --radius-sm: 8px;
-    --radius-md: 24px;
-    --radius-full: 9999px;
-    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    /* Backgrounds — warm charcoal, not cool grey */
+    --bg:              #0d0c09;
+    --surface-lo:      #141210;
+    --surface:         #1a1815;
+    --surface-hi:      #232019;
+    --surface-raised:  #2d2921;
+
+    /* Amber — candlelight, meditation bell, brass singing bowl */
+    --amber:           #c4a05c;
+    --amber-bright:    #deba7a;
+    --amber-dim:       #8a6e3e;
+    --amber-muted:     rgba(196, 160, 92, 0.14);
+    --amber-glow:      rgba(196, 160, 92, 0.06);
+    --amber-border:    rgba(196, 160, 92, 0.16);
+    --amber-border-hi: rgba(196, 160, 92, 0.38);
+
+    /* Sage — forest floor, fresh air */
+    --sage:            #6b8a72;
+    --sage-muted:      rgba(107, 138, 114, 0.18);
+
+    /* Text */
+    --text-1:          #ece6d8;
+    --text-2:          #ada69a;
+    --text-3:          #716960;
+    --text-4:          #403c36;
+
+    /* Semantic */
+    --error:           #c97b67;
+    --success:         #7fa882;
+
+    /* Typography */
+    --font-display: 'Cormorant Garamond', 'Palatino Linotype', Georgia, serif;
+    --font-body:    'DM Sans', system-ui, -apple-system, sans-serif;
+    --font-mono:    'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+
+    /* Geometry */
+    --r-xs: 3px;
+    --r-sm: 6px;
+    --r-md: 10px;
+    --r-lg: 16px;
+
+    /* Motion */
+    --ease: cubic-bezier(0.4, 0, 0.2, 1);
+    --t-fast: 150ms;
+    --t-base: 220ms;
+    --t-slow: 400ms;
 }
 
-/* ── BASE ─────────────────────────────────────────────────── */
+/* ── RESET & BASE ────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
-body { background: var(--bg-primary) !important; color: var(--text-primary) !important; }
+
+body {
+    background: var(--bg) !important;
+    color: var(--text-1) !important;
+    font-family: var(--font-body) !important;
+}
 
 .gradio-container {
+    font-family: var(--font-body) !important;
+    background: var(--bg) !important;
     min-height: 100vh !important;
-    font-family: var(--font-sans) !important;
-    background: var(--bg-primary) !important;
 }
 
-/* ── HEADER ───────────────────────────────────────────────── */
+/* ── HEADER ──────────────────────────────────────────────────────── */
 .app-header {
-    padding: 3rem 1rem 2rem;
-    text-align: left;
+    padding: 3rem 0 2rem;
+    border-bottom: 1px solid var(--amber-border);
+    margin-bottom: 2rem;
 }
 
-.app-header h1 {
-    font-family: var(--font-sans) !important;
-    font-size: 3.5rem !important; /* display-lg */
+.app-header-inner {
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+}
+
+/* Breathing orb — the signature element */
+.breath-orb {
+    position: relative;
+    width: 52px;
+    height: 52px;
+    flex-shrink: 0;
+}
+
+.breath-ring {
+    position: absolute;
+    inset: 0;
+    border: 1px solid var(--amber);
+    border-radius: 50%;
+    animation: breathe 7s ease-in-out infinite;
+}
+
+.breath-ring--2 {
+    animation-delay: -3.5s;
+    border-color: var(--sage);
+    opacity: 0.5;
+}
+
+@keyframes breathe {
+    0%, 100% { transform: scale(0.65); opacity: 0.55; }
+    50%       { transform: scale(1.0);  opacity: 0.12; }
+}
+
+.app-header-text { display: flex; flex-direction: column; gap: 0.35rem; }
+
+.app-wordmark {
+    font-family: var(--font-display) !important;
+    font-size: 3.6rem !important;
     font-weight: 600 !important;
-    color: var(--primary) !important;
-    letter-spacing: -0.02em !important;
-    margin-bottom: 0.5rem !important;
-    text-shadow: 0 0 24px rgba(210,187,255,0.4) !important;
-}
-
-.app-header p {
-    font-size: 1.0rem !important; /* body-lg */
-    color: var(--text-secondary) !important;
-    font-weight: 400 !important;
-    letter-spacing: 0.01em !important;
+    font-style: italic !important;
+    color: var(--amber) !important;
+    letter-spacing: -0.01em !important;
+    line-height: 1 !important;
     margin: 0 !important;
 }
 
-/* ── CANVAS ZONE (left column) ───────────────────────────── */
-.canvas-zone {
-    background: var(--surface-variant) !important;
-    backdrop-filter: blur(24px) !important;
-    -webkit-backdrop-filter: blur(24px) !important;
-    border: 1px solid var(--outline-variant) !important;
-    border-radius: var(--radius-md) !important;
-    padding: 2rem !important;
+.app-tagline {
+    font-family: var(--font-body) !important;
+    font-size: 0.72rem !important;
+    font-weight: 300 !important;
+    color: var(--text-3) !important;
+    letter-spacing: 0.18em !important;
+    text-transform: uppercase !important;
+    margin: 0 !important;
 }
 
-/* ── SETTINGS SIDEBAR (right column) ─────────────────────── */
+/* ── CANVAS ZONE (left column) ───────────────────────────────────── */
+.canvas-zone {
+    background: var(--surface-lo) !important;
+    border: 1px solid var(--amber-border) !important;
+    border-radius: var(--r-lg) !important;
+    padding: 1.75rem !important;
+}
+
+/* ── SETTINGS SIDEBAR (right column) ─────────────────────────────── */
 .settings-sidebar {
-    padding: 0 !important;
     background: transparent !important;
     border: none !important;
+    padding: 0 !important;
 }
 
-/* ── PILL RADIO BUTTONS ──────────────────────────────────── */
+/* ── MODE SELECTOR: PILL RADIO ───────────────────────────────────── */
 .pill-radio .wrap {
     display: flex !important;
-    gap: 4px !important;
-    background: var(--surface-container-lowest) !important;
-    border: 1px solid var(--outline-variant) !important;
-    border-radius: var(--radius-full) !important;
-    padding: 4px !important;
+    gap: 2px !important;
+    background: var(--surface-lo) !important;
+    border: 1px solid var(--amber-border) !important;
+    border-radius: var(--r-xs) !important;
+    padding: 3px !important;
 }
 
 .pill-radio label {
     flex: 1 !important;
     text-align: center !important;
-    padding: 10px 16px !important;
-    border-radius: var(--radius-full) !important;
-    font-size: 0.85rem !important;
-    font-weight: 500 !important;
-    color: var(--text-tertiary) !important;
+    padding: 9px 14px !important;
+    border-radius: 2px !important;
+    font-family: var(--font-body) !important;
+    font-size: 0.78rem !important;
+    font-weight: 400 !important;
+    letter-spacing: 0.04em !important;
+    color: var(--text-3) !important;
     cursor: pointer !important;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    transition: all var(--t-base) var(--ease) !important;
     border: none !important;
     background: transparent !important;
 }
 
 .pill-radio label.selected,
 .pill-radio label:has(input:checked) {
-    background: rgba(57, 56, 62, 0.2) !important; /* surface_bright at 20% */
-    color: var(--text-primary) !important;
-    box-shadow: inset 0 0 0 1px var(--outline-variant) !important;
+    background: var(--amber-muted) !important;
+    color: var(--amber) !important;
 }
 
 .pill-radio input[type="radio"] { display: none !important; }
 
-.pill-radio .wrap > label > span { cursor: pointer !important; }
-
-/* ── TOGGLE SWITCHES ─────────────────────────────────────── */
-.toggle-switch input[type="checkbox"] {
-    appearance: none !important;
-    -webkit-appearance: none !important;
-    width: 44px !important;
-    height: 24px !important;
-    background: var(--surface-container-lowest) !important;
-    border: 1px solid var(--outline-variant) !important;
-    border-radius: var(--radius-full) !important;
-    position: relative !important;
-    cursor: pointer !important;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-}
-
-.toggle-switch input[type="checkbox"]::after {
-    content: '' !important;
-    position: absolute !important;
-    top: 2px !important;
-    left: 2px !important;
-    width: 18px !important;
-    height: 18px !important;
-    border-radius: var(--radius-full) !important;
-    background: var(--text-tertiary) !important;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-}
-
-.toggle-switch input[type="checkbox"]:checked {
-    background: var(--primary-gradient) !important;
-    border-color: transparent !important;
-}
-
-.toggle-switch input[type="checkbox"]:checked::after {
-    transform: translateX(20px) !important;
-    background: var(--bg-primary) !important;
-}
-
-/* ── ACCORDION SECTIONS ──────────────────────────────────── */
+/* ── ACCORDION SECTIONS ──────────────────────────────────────────── */
 .accordion-section {
-    border: 1px solid var(--outline-variant) !important;
-    border-radius: var(--radius-md) !important;
-    background: var(--surface) !important;
-    margin-bottom: 1.4rem !important;
-    overflow: hidden !important;
-    transition: background 400ms cubic-bezier(0.4, 0, 0.2, 1) !important;
+    border: none !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    margin-bottom: 0 !important;
+    overflow: visible !important;
+    border-bottom: 1px solid var(--amber-border) !important;
+}
+
+.accordion-section:last-of-type {
+    border-bottom: none !important;
 }
 
 .accordion-section > .label-wrap {
-    padding: 16px 20px !important;
-    font-family: var(--font-sans) !important;
-    font-weight: 600 !important;
-    font-size: 1.1rem !important;
-    color: var(--text-primary) !important;
+    padding: 14px 0 !important;
+    font-family: var(--font-body) !important;
+    font-weight: 400 !important;
+    font-size: 0.7rem !important;
+    letter-spacing: 0.12em !important;
+    text-transform: uppercase !important;
+    color: var(--text-3) !important;
     background: transparent !important;
     border: none !important;
 }
 
+.accordion-section > .label-wrap:hover {
+    color: var(--text-2) !important;
+}
+
 .accordion-section > .content {
-    padding: 0 20px 20px !important;
+    padding: 0 0 18px 0 !important;
 }
 
-/* ── INPUTS & TEXTAREAS ──────────────────────────────────── */
+/* ── TEXTAREAS ───────────────────────────────────────────────────── */
 textarea {
-    background: var(--surface-container-lowest) !important;
-    border: 1px solid var(--outline-variant) !important;
-    border-radius: var(--radius-md) !important;
-    padding: 16px 20px !important;
-    color: var(--text-primary) !important;
-    font-family: var(--font-sans) !important;
-    font-size: 1.05rem !important;
-    line-height: 1.7 !important;
-    transition: all 0.3s ease !important;
-}
-
-input[type="text"], input[type="number"] {
-    background: var(--surface-container-lowest) !important;
-    border: 1px solid var(--outline-variant) !important;
-    border-radius: var(--radius-sm) !important;
-    padding: 6px 12px !important;
-    color: var(--text-primary) !important;
-    font-family: var(--font-sans) !important;
+    background: var(--surface) !important;
+    border: 1px solid var(--amber-border) !important;
+    border-radius: var(--r-sm) !important;
+    padding: 16px 18px !important;
+    color: var(--text-1) !important;
+    font-family: var(--font-body) !important;
     font-size: 0.95rem !important;
-    transition: all 0.3s ease !important;
+    line-height: 1.75 !important;
+    transition: border-color var(--t-base) var(--ease),
+                box-shadow var(--t-base) var(--ease),
+                background var(--t-base) var(--ease) !important;
+    resize: vertical !important;
 }
 
-textarea:focus, input[type="text"]:focus, input[type="number"]:focus {
-    border-color: var(--primary-container) !important;
-    box-shadow: 0 0 12px rgba(124,58,237,0.15) !important;
-    background: var(--surface-container-low) !important;
+textarea:focus {
+    border-color: var(--amber-border-hi) !important;
+    box-shadow: 0 0 0 3px var(--amber-glow) !important;
+    background: var(--surface-hi) !important;
+    outline: none !important;
 }
 
-/* ── DROPDOWNS ───────────────────────────────────────────── */
+textarea::placeholder {
+    color: var(--text-4) !important;
+    font-style: italic !important;
+}
+
+/* ── TEXT & NUMBER INPUTS ────────────────────────────────────────── */
+input[type="text"],
+input[type="number"] {
+    background: var(--surface) !important;
+    border: 1px solid var(--amber-border) !important;
+    border-radius: var(--r-sm) !important;
+    padding: 8px 12px !important;
+    color: var(--text-1) !important;
+    font-family: var(--font-mono) !important;
+    font-size: 0.84rem !important;
+    transition: border-color var(--t-base) var(--ease) !important;
+}
+
+input[type="text"]:focus,
+input[type="number"]:focus {
+    border-color: var(--amber-border-hi) !important;
+    box-shadow: 0 0 0 3px var(--amber-glow) !important;
+    outline: none !important;
+}
+
+/* ── DROPDOWNS ───────────────────────────────────────────────────── */
 .gradio-dropdown {
-    background: var(--surface-container-lowest) !important;
-    border: 1px solid var(--outline-variant) !important;
-    border-radius: var(--radius-sm) !important;
-    transition: all 0.3s ease !important;
+    background: var(--surface) !important;
+    border: 1px solid var(--amber-border) !important;
+    border-radius: var(--r-sm) !important;
+    transition: border-color var(--t-base) var(--ease) !important;
 }
 
 .gradio-dropdown:focus-within {
-    border-color: var(--primary-container) !important;
-    box-shadow: 0 0 12px rgba(124,58,237,0.15) !important;
+    border-color: var(--amber-border-hi) !important;
+    box-shadow: 0 0 0 3px var(--amber-glow) !important;
 }
 
-/* ── GENERATE BUTTON ─────────────────────────────────────── */
+/* ── GENERATE BUTTON ─────────────────────────────────────────────── */
+.primary-btn button,
 .primary-btn {
-    background: var(--primary-gradient) !important;
+    background: var(--amber) !important;
     border: none !important;
-    border-radius: var(--radius-full) !important;
-    font-weight: 600 !important;
-    font-size: 1.1rem !important;
-    letter-spacing: 0.02em !important;
-    padding: 16px 32px !important;
-    color: var(--bg-primary) !important;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-}
-
-.primary-btn:hover {
-    transform: translateY(-2px) !important;
-    box-shadow: 0 0 24px rgba(210,187,255,0.4) !important;
-}
-
-.primary-btn:active {
-    transform: translateY(0) !important;
-    box-shadow: 0 0 12px rgba(210,187,255,0.2) !important;
-}
-
-/* ── AUDIO PLAYER ────────────────────────────────────────── */
-.music-player-glass {
-    background: var(--surface-variant) !important;
-    backdrop-filter: blur(32px) !important;
-    -webkit-backdrop-filter: blur(32px) !important;
-    border: 1px solid var(--outline-variant) !important;
-    border-radius: var(--radius-md) !important;
-    padding: 16px !important;
-    margin-top: 20px !important;
-}
-
-.music-player-glass audio {
-    opacity: 0.9 !important;
+    border-radius: var(--r-sm) !important;
+    font-family: var(--font-body) !important;
+    font-weight: 500 !important;
+    font-size: 0.82rem !important;
+    letter-spacing: 0.1em !important;
+    text-transform: uppercase !important;
+    padding: 15px 28px !important;
+    color: var(--bg) !important;
+    cursor: pointer !important;
+    transition: background var(--t-base) var(--ease),
+                box-shadow var(--t-base) var(--ease),
+                transform var(--t-fast) var(--ease) !important;
     width: 100% !important;
 }
 
-/* ── SLIDERS ─────────────────────────────────────────────── */
-input[type="range"] {
-    accent-color: var(--primary-container) !important;
+.primary-btn button:hover,
+.primary-btn:hover {
+    background: var(--amber-bright) !important;
+    box-shadow: 0 2px 20px rgba(196, 160, 92, 0.28) !important;
 }
 
-/* ── STATUS BAR ──────────────────────────────────────────── */
+.primary-btn button:active,
+.primary-btn:active {
+    transform: translateY(1px) !important;
+    box-shadow: none !important;
+}
+
+/* ── AUDIO PLAYER ────────────────────────────────────────────────── */
+.music-player-glass {
+    background: var(--surface-hi) !important;
+    border: 1px solid var(--amber-border) !important;
+    border-radius: var(--r-md) !important;
+    padding: 14px !important;
+    margin-top: 14px !important;
+}
+
+/* ── SLIDERS ─────────────────────────────────────────────────────── */
+input[type="range"] {
+    accent-color: var(--amber) !important;
+}
+
+/* ── LABELS ──────────────────────────────────────────────────────── */
+.block-label,
+.block-title {
+    font-family: var(--font-body) !important;
+    font-weight: 400 !important;
+    font-size: 0.68rem !important;
+    color: var(--text-3) !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.1em !important;
+}
+
+/* ── STATUS DISPLAY ──────────────────────────────────────────────── */
+.status-shell {
+    padding: 10px 0 0;
+    border-top: 1px solid var(--amber-border);
+    margin-top: 6px;
+}
+
 .status-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0 2px;
 }
 
 .status-msg {
-    font-family: var(--font-sans);
-    font-size: 0.85rem;
+    font-family: var(--font-body);
+    font-size: 0.78rem;
     font-weight: 400;
-    color: var(--text-secondary);
+    color: var(--text-2);
+    letter-spacing: 0.02em;
 }
 
 .status-right {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
 }
 
 .status-pct {
     font-family: var(--font-mono);
-    font-size: 0.9rem;
-    color: var(--text-primary);
+    font-size: 0.78rem;
+    color: var(--amber);
     font-weight: 500;
 }
 
 .status-elapsed {
     font-family: var(--font-mono);
-    font-size: 0.8rem;
-    color: var(--text-tertiary);
-    font-weight: 400;
+    font-size: 0.72rem;
+    color: var(--text-3);
 }
 
+/* Hair-thin progress line — deliberate restraint */
 .progress-track {
     width: 100%;
-    height: 4px;
-    background: rgba(255,255,255,0.05);
-    border-radius: 2px;
-    overflow: hidden;
-    margin: 8px 0;
+    height: 1px;
+    background: var(--amber-border);
+    margin: 10px 0 5px;
+    position: relative;
+    overflow: visible;
 }
 
 .progress-fill {
     height: 100%;
-    background: var(--primary-gradient);
-    box-shadow: 0 0 12px rgba(210,187,255,0.4);
-    transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-    border-radius: 2px;
+    background: var(--amber);
+    box-shadow: 0 0 6px rgba(196, 160, 92, 0.6);
+    transition: width 0.45s var(--ease);
+    position: relative;
+}
+
+/* Leading dot on the progress line */
+.progress-fill::after {
+    content: '';
+    position: absolute;
+    right: -1px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--amber);
+    box-shadow: 0 0 8px rgba(196, 160, 92, 0.8);
 }
 
 .status-detail {
-    font-size: 0.8rem;
-    color: var(--text-tertiary);
-    margin-top: 4px;
-    padding: 0 2px;
+    font-size: 0.72rem;
+    color: var(--text-3);
+    font-family: var(--font-mono);
+    margin-top: 5px;
+    letter-spacing: 0.02em;
 }
 
-/* ── STATUS: COMPLETE ─────────────────────────────────────── */
 .status-complete {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 0 2px;
 }
 
 .status-check {
-    color: var(--primary);
-    font-size: 0.9rem;
-    font-weight: 600;
+    color: var(--success);
+    font-size: 0.85rem;
+    font-weight: 500;
 }
 
 .status-complete .status-msg {
-    color: var(--text-secondary);
+    color: var(--text-2);
 }
 
-/* ── STATUS: ERROR ────────────────────────────────────────── */
 .status-error {
-    color: #ffb4ab !important;
+    color: var(--error) !important;
 }
 
-/* ── LABELS ──────────────────────────────────────────────── */
-.block-label, .block-title {
-    font-family: var(--font-sans) !important;
-    font-weight: 500 !important;
-    font-size: 0.75rem !important; /* label-md */
-    color: var(--text-tertiary) !important;
-    text-transform: uppercase !important;
-    letter-spacing: 0.05em !important;
-}
-
-/* ── OVERFLOW FIX REMOVED ────────────────────────────────── */
-/* Removing overflow: visible to allow native Gradio dropdown scrolling */
-
-/* ── SECTION SPACING ─────────────────────────────────────── */
-.dropdown-container {
-    margin-bottom: 0.75rem !important;
-}
-
-/* ── MARKDOWN INSIDE ACCORDIONS ──────────────────────────── */
+/* ── MARKDOWN INSIDE ACCORDIONS ──────────────────────────────────── */
 .accordion-section h4 {
-    font-family: var(--font-sans) !important;
-    font-size: 0.85rem !important;
-    font-weight: 600 !important;
-    color: var(--text-secondary) !important;
-    letter-spacing: 0.05em !important;
+    font-family: var(--font-body) !important;
+    font-size: 0.68rem !important;
+    font-weight: 400 !important;
+    color: var(--text-3) !important;
+    letter-spacing: 0.12em !important;
     text-transform: uppercase !important;
-    margin-bottom: 0.75rem !important;
+    margin: 1.25rem 0 0.75rem !important;
+    padding-top: 0.75rem !important;
+    border-top: 1px solid var(--amber-border) !important;
+}
+
+/* ── CHECKBOXES ──────────────────────────────────────────────────── */
+.toggle-switch input[type="checkbox"] {
+    accent-color: var(--amber) !important;
+}
+
+/* ── SECTION SPACING ─────────────────────────────────────────────── */
+.dropdown-container {
+    margin-bottom: 0.6rem !important;
+}
+
+/* ── INFO TEXT ───────────────────────────────────────────────────── */
+.gr-info, .info {
+    color: var(--text-3) !important;
+    font-family: var(--font-body) !important;
+    font-size: 0.72rem !important;
+}
+
+/* ── SCROLLBAR ───────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb {
+    background: var(--amber-border);
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--amber-dim);
 }
 """
 
@@ -739,41 +843,41 @@ DROPDOWN_FIX_JS = """
 """
 
 theme = gr.themes.Base(
-    primary_hue="violet",
-    secondary_hue="slate",
-    neutral_hue="zinc",
+    primary_hue="stone",
+    secondary_hue="stone",
+    neutral_hue="stone",
     font=[
-        gr.themes.GoogleFont("Inter"),
+        gr.themes.GoogleFont("DM Sans"),
         "ui-sans-serif", "system-ui", "sans-serif",
     ],
     font_mono=[gr.themes.GoogleFont("JetBrains Mono"), "ui-monospace", "monospace"],
 ).set(
-    body_background_fill="#131318",
-    body_text_color="#e4e1e9",
-    body_text_color_subdued="#ccc3d8",
-    block_background_fill="#1b1b20",
-    block_border_color="rgba(74,68,85,0.15)",
+    body_background_fill="#0d0c09",
+    body_text_color="#ece6d8",
+    body_text_color_subdued="#ada69a",
+    block_background_fill="#1a1815",
+    block_border_color="rgba(196,160,92,0.16)",
     block_border_width="1px",
-    block_label_text_color="#958da1",
+    block_label_text_color="#716960",
     block_label_background_fill="transparent",
-    block_title_text_weight="600",
-    block_title_text_size="12px",
-    block_title_text_color="#958da1",
-    input_background_fill="#0e0e13",
-    input_border_color="rgba(74,68,85,0.15)",
-    input_border_color_focus="#7c3aed",
-    input_placeholder_color="#4a4455",
-    button_primary_background_fill="linear-gradient(135deg, #d2bbff 0%, #7c3aed 100%)",
-    button_primary_background_fill_hover="linear-gradient(135deg, #eaddff 0%, #d2bbff 100%)",
-    button_primary_text_color="#131318",
+    block_title_text_weight="400",
+    block_title_text_size="11px",
+    block_title_text_color="#716960",
+    input_background_fill="#141210",
+    input_border_color="rgba(196,160,92,0.16)",
+    input_border_color_focus="#c4a05c",
+    input_placeholder_color="#403c36",
+    button_primary_background_fill="#c4a05c",
+    button_primary_background_fill_hover="#deba7a",
+    button_primary_text_color="#0d0c09",
     button_primary_border_color="transparent",
-    button_secondary_background_fill="#1b1b20",
-    button_secondary_border_color="rgba(74,68,85,0.15)",
-    button_secondary_text_color="#ccc3d8",
+    button_secondary_background_fill="#1a1815",
+    button_secondary_border_color="rgba(196,160,92,0.16)",
+    button_secondary_text_color="#ada69a",
 ).set(
-    body_background_fill_dark="#131318",
-    block_background_fill_dark="#1b1b20",
-    input_background_fill_dark="#0e0e13",
+    body_background_fill_dark="#0d0c09",
+    block_background_fill_dark="#1a1815",
+    input_background_fill_dark="#141210",
 )
 
 # ── Build the Gradio UI ────────────────────────────────────────────────────
@@ -784,8 +888,16 @@ with gr.Blocks(
 
     gr.HTML("""
         <div class="app-header">
-            <h1>MoodScape</h1>
-            <p>AI-powered meditation audio synthesis</p>
+            <div class="app-header-inner">
+                <div class="breath-orb" title="Inhale… exhale…">
+                    <div class="breath-ring"></div>
+                    <div class="breath-ring breath-ring--2"></div>
+                </div>
+                <div class="app-header-text">
+                    <h1 class="app-wordmark">MoodScape</h1>
+                    <p class="app-tagline">Guided Meditation Synthesis</p>
+                </div>
+            </div>
         </div>
     """)
 
@@ -802,9 +914,9 @@ with gr.Blocks(
                 script_input = gr.Textbox(
                     label="Meditation Script",
                     placeholder=(
-                        "Write your meditation script here...\n"
-                        "Use [pause:5s] for timed pauses, [breath] for breath pauses.\n"
-                        "Double newlines create natural pauses."
+                        "Write your meditation script here…\n"
+                        "Use [pause:5s] for timed pauses, [breath] for breath cues.\n"
+                        "Double newlines create natural phrase gaps."
                     ),
                     value=DEFAULT_SCRIPT,
                     lines=14,
@@ -813,8 +925,8 @@ with gr.Blocks(
 
             with gr.Row():
                 music_prompt = gr.Textbox(
-                    label="Music Style",
-                    placeholder="E.g. Evolving pads, gentle rain, minimal soft piano...",
+                    label="Atmosphere",
+                    placeholder="E.g. warm synthesizer pads, gentle rain, minimal soft piano…",
                     value=DEFAULT_MUSIC_PROMPT,
                     lines=2,
                     scale=2,
@@ -830,13 +942,13 @@ with gr.Blocks(
                 )
 
             generate_btn = gr.Button(
-                "✦  Generate Meditation",
+                "Generate Meditation",
                 variant="primary",
                 size="lg",
                 elem_classes="primary-btn",
             )
             audio_output = gr.Audio(
-                label="Generated Audio",
+                label="Your Meditation",
                 type="filepath",
                 elem_classes="music-player-glass",
             )
@@ -854,7 +966,7 @@ with gr.Blocks(
                     choices=["ACE-Step 1.5", "Lyria RealTime"],
                     value="ACE-Step 1.5",
                     label="Music Engine",
-                    info="ACE-Step 1.5 recommended for Apple Silicon (approx. 5 min).",
+                    info="ACE-Step 1.5 recommended for Apple Silicon (~5 min).",
                     elem_classes="dropdown-container",
                 )
                 acestep_quality = gr.Radio(
@@ -888,7 +1000,7 @@ with gr.Blocks(
                     f5_wpm_slider = gr.Slider(
                         0, 150, 0, step=5,
                         label="Pacing (WPM)",
-                        info="0 = natural rhythm (recommended), 90-110 = meditation, 120-150 = narration",
+                        info="0 = natural rhythm (recommended). 90–110 = meditation. 120–150 = narration.",
                     )
                 with gr.Group(visible=False, elem_id="indextts-group") as indextts_settings:
                     indextts_voice_dropdown = gr.Dropdown(
@@ -901,9 +1013,9 @@ with gr.Blocks(
                     indextts_emotion_dropdown = gr.Dropdown(
                         choices=INDEXTTS_EMOTION_CHOICES,
                         value=INDEXTTS_EMOTION_DEFAULT,
-                        label="Emotion",
+                        label="Emotion Preset",
                         elem_classes="dropdown-container",
-                        info="Select emotion preset or upload custom emotion audio below",
+                        info="Choose an emotion preset or upload a custom reference below.",
                     )
                     indextts_emotion_audio = gr.Audio(
                         label="Custom Emotion Reference (optional)",
@@ -912,18 +1024,18 @@ with gr.Blocks(
                     )
                     indextts_speed_slider = gr.Slider(
                         0.70, 1.30, 1.0, step=0.05,
-                        label="Speaking Speed (disabled for IndexTTS)",
-                        info="IndexTTS-2 pacing is set by the calm emotion preset + pause durations; this slider is a no-op.",
+                        label="Speaking Speed",
+                        info="IndexTTS-2 pacing is controlled by emotion preset + pause durations; this slider is inactive.",
                         interactive=False,
                     )
 
             # Section 2: Mix & Effects
             with gr.Accordion("Mix & Effects", open=False, elem_classes="accordion-section"):
                 with gr.Row():
-                    speed_slider = gr.Slider(0.70, 1.20, 0.9, step=0.01, label="Speaking Speed (0.85-0.95 = meditation ideal)")
-                    duck_slider = gr.Slider(-30, -5, -8, step=1, label="Ducking (dB)")
+                    speed_slider = gr.Slider(0.70, 1.20, 0.9, step=0.01, label="Speech Speed", info="0.85–0.95 is ideal for guided meditation.")
+                    duck_slider = gr.Slider(-30, -5, -8, step=1, label="Music Ducking (dB)", info="How much music dims under voice.")
                 with gr.Row():
-                    reverb_slider = gr.Slider(0.0, 0.5, 0.15, step=0.05, label="Reverb")
+                    reverb_slider = gr.Slider(0.0, 0.5, 0.15, step=0.05, label="Reverb Amount")
                     reverb_ir_dropdown = gr.Dropdown(
                         choices=[
                             ("Warm Studio", "warm_studio"),
@@ -931,7 +1043,7 @@ with gr.Blocks(
                             ("Stone Chapel", "stone_chapel"),
                         ],
                         value="warm_studio",
-                        label="Space",
+                        label="Space / IR",
                         elem_classes="dropdown-container",
                     )
                 with gr.Row():
@@ -966,7 +1078,7 @@ with gr.Blocks(
                     seed_input = gr.Number(label="Seed", value=0, precision=0)
                 with gr.Row():
                     upsample_checkbox = gr.Checkbox(
-                        label="Hi-Fi (48kHz)", value=True,
+                        label="Hi-Fi (48 kHz)", value=True,
                         elem_classes="toggle-switch",
                     )
                     stems_checkbox = gr.Checkbox(
@@ -987,7 +1099,7 @@ with gr.Blocks(
                         elem_classes="toggle-switch",
                     )
                 reference_audio = gr.Audio(
-                    label="Style/Melody Reference",
+                    label="Style / Melody Reference",
                     type="filepath",
                     sources=["upload"],
                 )
@@ -1044,13 +1156,13 @@ with gr.Blocks(
         # Set engine-optimal speed default
         if tts_engine == "F5-TTS":
             speed_val = 0.90
-            speed_label = "Speaking Speed (0.85-0.95 = meditation ideal)"
+            speed_label = "Speech Speed"
         elif tts_engine == "IndexTTS-2":
             speed_val = 1.0
-            speed_label = "Speaking Speed (controlled via IndexTTS-2 panel)"
+            speed_label = "Speech Speed"
         else:
             speed_val = 0.90
-            speed_label = "Speaking Speed (0.85-0.95 = meditation ideal)"
+            speed_label = "Speech Speed"
         return (
             gr.update(visible=show_kokoro),
             gr.update(visible=show_f5),
