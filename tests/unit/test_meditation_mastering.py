@@ -28,17 +28,17 @@ def test_mastering():
     assert gate.attack_ms == 5.0
     assert gate.release_ms == 250.0
     
-    # Verify Anti-boxiness PeakFilter (300Hz)
-    peak_300 = next(e for e in chain if isinstance(e, PeakFilter) and e.cutoff_frequency_hz == 300)
-    print(f"Anti-boxiness (300Hz) gain: {peak_300.gain_db}, q: {peak_300.q}")
-    assert abs(peak_300.gain_db + 2.0) < 0.001
-    assert peak_300.q == 1.5
-    
-    # Verify Anti-harshness PeakFilter (3000Hz — subtractive cut)
+    # Verify Anti-boxiness PeakFilter (400Hz cut)
+    peak_400 = next(e for e in chain if isinstance(e, PeakFilter) and e.cutoff_frequency_hz == 400)
+    print(f"Anti-boxiness (400Hz) gain: {peak_400.gain_db}, q: {peak_400.q}")
+    assert abs(peak_400.gain_db + 2.5) < 0.001
+    assert abs(peak_400.q - 1.0) < 0.001
+
+    # Verify Presence PeakFilter (3000Hz — gentle boost for intelligibility)
     peak_3k = next(e for e in chain if isinstance(e, PeakFilter) and e.cutoff_frequency_hz == 3000)
-    print(f"Anti-harshness (3000Hz) gain: {peak_3k.gain_db}, q: {peak_3k.q}")
-    assert abs(peak_3k.gain_db + 2.0) < 0.001
-    assert abs(peak_3k.q - 0.8) < 0.001
+    print(f"Presence (3000Hz) gain: {peak_3k.gain_db}, q: {peak_3k.q}")
+    assert abs(peak_3k.gain_db - 2.5) < 0.001
+    assert abs(peak_3k.q - 1.0) < 0.001
 
     # Verify Brightness Control Shelf (7500Hz) and Air Shelf (10kHz)
     high_shelves = [e for e in chain if isinstance(e, HighShelfFilter)]
@@ -48,21 +48,21 @@ def test_mastering():
     print(f"De-harsh shelf (7500Hz) gain: {shelf_bright.gain_db}")
     assert abs(shelf_bright.gain_db + 3.0) < 0.001
     print(f"Air shelf (10kHz) gain: {shelf_air.gain_db}")
-    assert abs(shelf_air.gain_db - 1.0) < 0.001
-    
-    # Verify Compressor settings (-20 dB: gentle leveling for meditation)
+    assert abs(shelf_air.gain_db - 1.5) < 0.001
+
+    # Verify Compressor settings (-25 dB / 2:1: gentle leveling for meditation)
     compressor = next(e for e in chain if isinstance(e, Compressor))
     print(f"Compressor threshold: {compressor.threshold_db}, ratio: {compressor.ratio}")
-    assert abs(compressor.threshold_db + 20.0) < 0.001
-    assert compressor.ratio == 2.5
-    
+    assert abs(compressor.threshold_db + 25.0) < 0.001
+    assert abs(compressor.ratio - 2.0) < 0.001
+
     # Reverb is applied downstream in build_f5_voice_chain (convolution reverb),
     # not in the mastering chain itself.
 
     # Verify Limiter settings
     limiter = next(e for e in chain if isinstance(e, Limiter))
     print(f"Limiter threshold: {limiter.threshold_db}, release: {limiter.release_ms}")
-    assert abs(limiter.threshold_db + 1.5) < 0.001
+    assert abs(limiter.threshold_db + 2.0) < 0.001
     assert abs(limiter.release_ms - 80.0) < 0.001
     
     print("Mastering chain verified.")
@@ -96,23 +96,21 @@ def test_deesser():
     sr = 24000
     from core.f5_tts.postprocessor import split_band_deess
     
-    # 1. Create a quiet low-frequency signal + a loud high-frequency "sibilant" burst
+    # 1. Create a quiet low-frequency signal + a loud sibilant burst centered in
+    #    the de-esser's stage-1 band (6-7 kHz) so the reduction is measurable.
     t = np.linspace(0, 1, sr)
     low_tone = 0.1 * np.sin(2 * np.pi * 400 * t)
-    # Sibilance is typically 4-8kHz. Let's make a loud noise burst (more sibilance-like).
     sibilance = np.zeros(sr)
     noise = np.random.uniform(-0.8, 0.8, int(0.2*sr))
-    # Bandpass the noise to 4-8kHz
     from scipy.signal import butter, sosfilt
     nyquist = sr / 2.0
-    sos = butter(4, [4000/nyquist, 8000/nyquist], btype="band", output="sos")
+    sos = butter(4, [6000/nyquist, 7000/nyquist], btype="band", output="sos")
     sibilance[int(0.4*sr):int(0.6*sr)] = sosfilt(sos, noise)
-    
+
     audio = (low_tone + sibilance).astype(np.float32)
-    
-    # 2. Process with de-esser
-    # Use a low threshold to ensure it hits the signal hard for the test
-    processed = split_band_deess(audio, sr, threshold_db=-30, ratio=8.0)
+
+    # 2. Process with the two-stage de-esser (thresholds/ratios are now fixed)
+    processed = split_band_deess(audio, sr)
     
     # 3. Verify reduction in the sibilant range
     # We expect the 0.4-0.6s range to be significantly attenuated

@@ -18,7 +18,7 @@ from core.text_utils import expand_text
 
 logger = logging.getLogger(__name__)
 
-MAX_CHUNK_CHARS = 300
+MAX_CHUNK_CHARS = 250
 _PARAGRAPH_PAUSE_SEC = 3.0
 
 
@@ -143,19 +143,33 @@ def split_into_chunks(text: str) -> list[str]:
 
     Splits at sentence boundaries (.!?…) to preserve natural prosody.
     Falls back to the full text if it cannot be split (never returns empty).
+    Ensures every returned chunk ends with terminal punctuation to prevent
+    pacing artifacts in downstream generation.
     """
-    raw = re.split(r'(?<=[.!?…])\s+', text.strip())
+    # Ensure the entire block ends with a period if it doesn't already
+    text = text.strip()
+    if text and not re.search(r'[.!?…]$', text):
+        text += '.'
+
+    raw = re.split(r'(?<=[.!?…])\s+', text)
     chunks: list[str] = []
     buf = ''
     for sent in raw:
         candidate = (buf + ' ' + sent).strip() if buf else sent
         if len(candidate) > MAX_CHUNK_CHARS and buf:
-            chunks.append(buf.strip())
+            # Ensure the chunk we're about to emit has terminal punctuation
+            chunk_to_emit = buf.strip()
+            if chunk_to_emit and not re.search(r'[.!?…]$', chunk_to_emit):
+                chunk_to_emit += '.'
+            chunks.append(chunk_to_emit)
             buf = sent
         else:
             buf = candidate
     if buf:
-        chunks.append(buf.strip())
+        chunk_to_emit = buf.strip()
+        if chunk_to_emit and not re.search(r'[.!?…]$', chunk_to_emit):
+            chunk_to_emit += '.'
+        chunks.append(chunk_to_emit)
     return chunks if chunks else [text]
 
 
