@@ -164,26 +164,25 @@ make_vocal_pocket_chain()    →  apply_audio_fx()   # carves 300Hz/1kHz/3kHz la
 ### Phase 8 — Mix
 
 `mixer.mix()` sequence:
-1. `overlay_tracks(voice, music, sr)` — `music_pre_roll_sec=8.0`, `music_post_roll_sec=15.0`, `music_volume_db=−14.0`
-2. `apply_multiband_ducking(voice, music, ...)` — default when `multiband=True`:
-   - 3-band Linkwitz-Riley crossover: low (<250 Hz, 25% duck), mid (250–4 kHz, full duck), high (>4 kHz, 50% duck)
-   - `duck_amount_db` (configurable, default −12.0 in pipeline)
-   - `attack_ms=40.0`, `release_ms=800.0`, `hold_ms=1200.0`, `lookahead_ms=30.0`, `window_ms=50.0`
-   - 1 200 ms hold bridges slow meditation phrase gaps; prevents per-sentence pumping during deliberate narration
-   - Falls back to `apply_envelope_ducking()` when `multiband=False`
+1. `overlay_tracks(voice, music, sr)` — `music_pre_roll_sec=8.0`, `music_post_roll_sec=15.0`, `music_volume_db=−16.0`
+2. `apply_breathing_duck(voice, music, sr, duck_depth_db)` — deep, gradual, script/VAD-aware sidechain duck:
+   - `detect_phrases()` finds speech phrases from the voice (RMS-envelope VAD; merge gaps <250 ms, drop <150 ms)
+   - `_script_gain_db()`: predictive cubic-S-curve descent starting ~600 ms before each phrase, holds at `duck_depth_db` (default −16) during speech, S-curve release over ~1.5 s, and lifts +1.5 dB during pauses ≥1.5 s so the bed "breathes"; zero-phase smoothed (~6 Hz)
+   - `_reactive_gain_db()`: vectorized envelope-follower safety net (200 Hz–4 kHz detector), combined via `combine_script_with_reactive()` (script lift wins; else the deeper of the two)
+   - Applied **fullband** (whole bed drops, not just mids), so speech sits "very low" while pauses recover
 3. `apply_fades(audio, sr, fade_in_sec, fade_out_sec, curve="exponential")` — natural DAW-style curves
 
-`apply_rms_ducking()` also exists in `mixer.py` (vectorized offline lookahead, 75ms shift) but is NOT called by `mix()`.
+The legacy `apply_multiband_ducking()` / `apply_envelope_ducking()` / `apply_rms_ducking()` remain in `mixer.py` but are no longer used by `mix()`.
 
 ---
 
 ### Phase 9 — Master Chain
 
-`make_master_chain()` applied inside `export_audio()` via 20-second chunk streaming:
+`make_master_chain()` applied inside `export_audio()`:
 - `HighpassFilter(30 Hz)` — subsonic removal
-- `Limiter(−1.5 dBTP, 400ms release)` — true-peak safety
-- True-peak clip at ±0.841 linear (−1.5 dBTP) applied after chain
-- Bus compression omitted — multiband ducking already shapes voice-music dynamics.
+- `Compressor(−12 dB, 1.5:1, 50/200 ms)` — gentle glue (engages lightly)
+- `HighShelfFilter(12 kHz, +1 dB)` — master air
+- **No `Limiter`** — pedalboard 0.9.23's Limiter inflates level (~+4.75 dB) and adds broadband distortion. True-peak limiting to −1 dBTP is done by `mixer.true_peak_limit()` after LUFS normalization (see Phase 11).
 
 ---
 
@@ -196,9 +195,10 @@ make_vocal_pocket_chain()    →  apply_audio_fx()   # carves 300Hz/1kHz/3kHz la
 ### Phase 11 — Export
 
 `export_audio(audio, sample_rate, output_format, target_sample_rate)`:
-1. Pre-compute LUFS gain scalar (target −16.0 LUFS)
-2. Stream in 20s chunks: apply master chain → resample to `target_sample_rate` → normalize → clip at ±0.841 linear (−1.5 dBTP) → write via Pedalboard `AudioFile`
-3. WAV (lossless) or MP3; `target_sample_rate` = `export_sr` from `pipeline.py`
+1. Apply master chain (EQ/glue, no limiter) to the whole array
+2. LUFS-normalize to target (−16.0 LUFS) **first**, then `true_peak_limit()` to −1 dBTP (order is critical — normalizing after limiting would re-exceed the ceiling)
+3. Stream in 20s chunks: resample to `target_sample_rate` → final safety clip at ±0.891 (−1 dBTP) → write via Pedalboard `AudioFile`
+4. WAV (lossless) or MP3; `target_sample_rate` = `export_sr` from `pipeline.py`
 
 ---
 
@@ -229,7 +229,7 @@ Minimal chain — ACE-Step's VAE output is clean and doesn't need heavy processi
 | 4 | PeakFilter | freq=3 000 Hz, gain=−1.5 dB, Q=1.0 (vocal pocket adds −1.5 dB more = −3 dB combined) |
 | 5 | LowpassFilter | cutoff=16 000 Hz |
 | 6 | Compressor | threshold=−20 dB, ratio=2.0:1, attack=80ms, release=800ms |
-| 7 | Limiter | threshold=−0.5 dBFS |
+| — | (Convolution warm_studio reverb @ 8% wet appended when the IR file exists; **no Limiter** — true-peak limiting is at export) |
 
 ### `make_lyria_music_chain()` (`core/audio_processor.py`)
 
@@ -240,7 +240,7 @@ Minimal chain — ACE-Step's VAE output is clean and doesn't need heavy processi
 | 3 | PeakFilter | freq=4 500 Hz, gain=−2.0 dB, Q=0.7 (upper-mid presence control) |
 | 4 | HighShelfFilter | cutoff=9 000 Hz, gain=−2.5 dB |
 | 5 | Compressor | threshold=−18 dB, ratio=2:1, attack=80ms, release=500ms |
-| 6 | Limiter | threshold=−0.5 dBFS |
+| — | (**no Limiter** — true-peak limiting is at export) |
 
 ### `make_upload_music_chain()` (`core/audio_processor.py`)
 
@@ -253,7 +253,7 @@ the rest). No noise reduction.
 | 1 | HighpassFilter | cutoff=30 Hz (subsonic) |
 | 2 | PeakFilter | freq=2 000 Hz, gain=−2.0 dB, Q=0.7 (static speech pocket) |
 | 3 | LowpassFilter | cutoff=14 000 Hz (safety) |
-| 4 | Limiter | threshold=−1.0 dBFS |
+| — | (**no Limiter** — true-peak limiting is at export) |
 
 ### `make_vocal_pocket_chain()` (`core/audio_processor.py`)
 
@@ -269,12 +269,17 @@ Applied to music after engine-specific chain to carve spectral room for voice.
 
 ### `make_master_chain()` (`core/audio_processor.py`)
 
-Bus compression is intentionally absent — multiband ducking already shapes the dynamic contour; adding a bus compressor fights the intended voice-music balance.
+EQ + gentle glue only. The peak limiter is **not** in this chain — `export_audio()`
+LUFS-normalizes then applies `mixer.true_peak_limit()` (−1 dBTP). The pedalboard
+`Limiter` was removed (it inflated level ~+4.75 dB and added broadband distortion).
 
 | # | Plugin | Key params |
 |---|--------|-----------|
 | 1 | HighpassFilter | cutoff=30 Hz |
-| 2 | Limiter | threshold=−1.5 dBTP, release=400ms |
+| 2 | Compressor | threshold=−12 dB, ratio=1.5:1, attack=50ms, release=200ms (gentle glue) |
+| 3 | HighShelfFilter | cutoff=12 000 Hz, gain=+1.0 dB (air) |
+
+True-peak limiting (`mixer.true_peak_limit`, 4×-oversampled vectorized brickwall, −1 dBTP) runs in `export_audio()` after normalization.
 
 ### Convolution Reverb IR Catalog (`assets/impulse_responses/`)
 

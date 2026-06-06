@@ -619,6 +619,7 @@ def run_qa_checks(
     sample_rate: int = SAMPLE_RATE,
     log_results: bool = True,
     is_vocals_only: bool = False,
+    is_uploaded_music: bool = False,
 ) -> dict:
     """Run all QA checks and return results.
 
@@ -628,6 +629,9 @@ def run_qa_checks(
     produce false positives on speech-only audio.  LUFS tolerance is also
     widened to ±6 dB because the final normalization runs inside
     ``export_audio()`` after this check.
+    ``is_uploaded_music`` skips the same ambient-music checks when the bed
+    track is a user-uploaded file — real music has natural rhythm, timbral
+    variation, and dynamics that exceed thresholds tuned for AI-generated pads.
     """
     # Pre-export LUFS: normalization happens during export, so use a wide window.
     lufs_tolerance = 6.0
@@ -641,9 +645,9 @@ def run_qa_checks(
         "spectral_rolloff": check_spectral_rolloff(audio, sample_rate),
     }
 
-    if is_vocals_only:
-        # Speech naturally has high onset rates, timbral variance, and RMS
-        # swings from silence gaps — these are expected, not defects.
+    if is_vocals_only or is_uploaded_music:
+        # Speech and real uploaded music both produce false positives on these
+        # ambient-music checks — skip them for both cases.
         results.update({
             "onset_strength": {"peak_onset_ratio": None, "threshold": None, "passed": True},
             "spectral_flatness": {"spectral_flatness": None, "max_flatness": None, "passed": True},
@@ -666,7 +670,7 @@ def run_qa_checks(
         logger.info("QA — LUFS: %s", results["lufs"])
         logger.info("QA — Spectral balance: %s", results["spectral_balance"])
         logger.info("QA — Spectral rolloff: %s", results["spectral_rolloff"])
-        if not is_vocals_only:
+        if not is_vocals_only and not is_uploaded_music:
             logger.info("QA — Spectral flatness: %s", results["spectral_flatness"])
             logger.info("QA — Onset strength: %s", results["onset_strength"])
             logger.info("QA — Spectral smoothness: %s", results["spectral_smoothness"])
@@ -686,7 +690,7 @@ def run_qa_checks(
         if not results["spectral_rolloff"]["passed"]:
             logger.warning("QA — High spectral rolloff (%.0f Hz) — possible metallic artefacts",
                            results["spectral_rolloff"]["median_rolloff_hz"])
-        if not is_vocals_only:
+        if not is_vocals_only and not is_uploaded_music:
             if not results["onset_strength"]["passed"]:
                 logger.warning("QA — Transient spike detected (peak/median ratio=%.1f) — possible clicks/percussion",
                                results["onset_strength"]["peak_onset_ratio"])

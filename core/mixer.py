@@ -7,8 +7,8 @@ import pyloudnorm as pyln
 import torch
 import torchaudio
 import math
-from scipy.ndimage import maximum_filter1d
-from scipy.signal import sosfiltfilt, butter
+from scipy.ndimage import maximum_filter1d, minimum_filter1d
+from scipy.signal import sosfiltfilt, sosfilt, butter, lfilter, resample_poly
 from pedalboard import Pedalboard
 
 SAMPLE_RATE = 24000
@@ -530,6 +530,288 @@ def normalize_loudness(
 
 
 # ---------------------------------------------------------------------------
+# Breathing sidechain duck (deep, gradual, script/VAD-aware)
+# ---------------------------------------------------------------------------
+#
+# Replaces the old multiband reactive ducker. Goal (per user spec): as speech
+# starts the bed falls *gradually*; during speech it sits *very low* (but not
+# inaudible); during pauses it rises *gradually* back up and "breathes". The
+# curve is built deterministically from detected phrase boundaries (predictive
+# S-curve descent, deep hold, S-curve release, +lift on long pauses) and is
+# combined with a reactive safety net so off-script breaths still duck.
+#
+# Adapted from the reference meditation_mixer (moodscape-mix-lib), made fully
+# vectorized (no per-sample Python loops) and applied fullband so the whole bed
+# drops — the reference ducked only the mid band, which read as "flat".
+
+
+def _smoothstep(x: np.ndarray) -> np.ndarray:
+    """Cubic Hermite S-curve, x in [0,1] -> [0,1] with zero slope at the ends."""
+    x = np.clip(x, 0.0, 1.0)
+    return (x * x * (3.0 - 2.0 * x)).astype(np.float32)
+
+
+def _onepole_rms_env(x: np.ndarray, sample_rate: int, ms: float = 30.0) -> np.ndarray:
+    """One-pole RMS envelope (vectorized via lfilter)."""
+    alpha = float(np.exp(-1.0 / (sample_rate * ms / 1000.0)))
+    sq = np.asarray(x, dtype=np.float64) ** 2
+    ms_env = lfilter([1.0 - alpha], [1.0, -alpha], sq)
+    return np.sqrt(np.maximum(ms_env, 1e-12)).astype(np.float32)
+
+
+def _zero_phase_smooth(curve: np.ndarray, sample_rate: int, hz: float) -> np.ndarray:
+    """Zero-phase Butterworth low-pass to round keyframe corners."""
+    if hz <= 0 or curve.shape[0] <= 12:
+        return curve.astype(np.float32)
+    sos = butter(2, float(hz), btype="low", fs=sample_rate, output="sos")
+    return sosfiltfilt(sos, curve).astype(np.float32)
+
+
+def detect_phrases(
+    voice_audio: np.ndarray,
+    sample_rate: int,
+    threshold_db: float = -40.0,
+    env_ms: float = 30.0,
+    min_phrase_ms: float = 150.0,
+    merge_gap_ms: float = 250.0,
+) -> list[tuple[float, float]]:
+    """Voice-activity detection by RMS-envelope thresholding.
+
+    Returns (start_s, end_s) phrases. Inter-word gaps shorter than
+    ``merge_gap_ms`` are merged (so the bed doesn't pump between words);
+    phrases shorter than ``min_phrase_ms`` are dropped as breaths/clicks.
+    """
+    if voice_audio.size == 0:
+        return []
+    env = _onepole_rms_env(voice_audio, sample_rate, ms=env_ms)
+    env_db = 20.0 * np.log10(env + 1e-9)
+    is_voice = env_db > threshold_db
+
+    diffs = np.diff(is_voice.astype(np.int8))
+    starts = (np.where(diffs > 0)[0] + 1).tolist()
+    ends = (np.where(diffs < 0)[0] + 1).tolist()
+    if is_voice[0]:
+        starts.insert(0, 0)
+    if is_voice[-1]:
+        ends.append(int(is_voice.size))
+    if not starts or not ends:
+        return []
+
+    phrases = list(zip(starts, ends))
+    merge_n = int(sample_rate * merge_gap_ms / 1000.0)
+    merged: list[tuple[int, int]] = [phrases[0]]
+    for s, e in phrases[1:]:
+        ps, pe = merged[-1]
+        if s - pe < merge_n:
+            merged[-1] = (ps, e)
+        else:
+            merged.append((s, e))
+
+    min_n = int(sample_rate * min_phrase_ms / 1000.0)
+    merged = [(s, e) for s, e in merged if (e - s) >= min_n]
+    return [(s / sample_rate, e / sample_rate) for s, e in merged]
+
+
+def _script_gain_db(
+    n: int,
+    sample_rate: int,
+    phrases: list[tuple[float, float]],
+    pre_descent_ms: float,
+    attack_ramp_ms: float,
+    release_ms: float,
+    duck_db: float,
+    lift_db: float,
+    lift_pause_s: float,
+    smooth_hz: float,
+) -> np.ndarray:
+    """Deterministic music-gain envelope (dB) from phrase timestamps."""
+    g_db = np.zeros(n, dtype=np.float32)
+    if n == 0:
+        return g_db
+    duration_s = n / sample_rate
+
+    # 1. Pause-lift plateaus (centre of long gaps; bounding S-curves added below).
+    if lift_db > 0 and phrases and lift_pause_s > 0:
+        boundaries: list[tuple[float, float]] = []
+        prev_end = 0.0
+        for (s, e) in phrases:
+            if s - prev_end >= lift_pause_s:
+                boundaries.append((prev_end, s))
+            prev_end = e
+        if duration_s - prev_end >= lift_pause_s:
+            boundaries.append((prev_end, duration_s))
+        for (g_start, g_end) in boundaries:
+            plateau_start = g_start + release_ms / 1000.0
+            plateau_end = g_end - pre_descent_ms / 1000.0
+            i0 = max(0, int(plateau_start * sample_rate))
+            i1 = min(n, int(plateau_end * sample_rate))
+            if i1 > i0:
+                g_db[i0:i1] = lift_db
+
+    # 2. Per-phrase predictive descent → hold → release.
+    for idx, (t_on, t_off) in enumerate(phrases):
+        ramp_n = max(1, int(attack_ramp_ms / 1000.0 * sample_rate))
+        desc_start = int(round((t_on - pre_descent_ms / 1000.0) * sample_rate))
+        desc_end = desc_start + ramp_n
+        if desc_end > 0 and desc_start < n:
+            seg_start = max(0, desc_start)
+            seg_end = min(n, desc_end)
+            if seg_end > seg_start:
+                t = (np.arange(seg_end - seg_start, dtype=np.float32)
+                     + (seg_start - desc_start)) / max(1, ramp_n)
+                g0 = float(g_db[seg_start])
+                g_db[seg_start:seg_end] = g0 + (duck_db - g0) * _smoothstep(t)
+
+        i_on = max(0, int(round(t_on * sample_rate)))
+        i_off = min(n, int(round(t_off * sample_rate)))
+        if i_off > i_on:
+            g_db[i_on:i_off] = duck_db
+
+        next_on = phrases[idx + 1][0] if idx + 1 < len(phrases) else duration_s
+        gap_s = next_on - t_off
+        target = lift_db if (gap_s >= lift_pause_s and lift_db > 0) else 0.0
+        rel_n = max(1, int(release_ms / 1000.0 * sample_rate))
+        rel_end = min(n, i_off + rel_n)
+        if rel_end > i_off:
+            t = np.arange(rel_end - i_off, dtype=np.float32) / max(1, rel_n)
+            g_db[i_off:rel_end] = duck_db + (target - duck_db) * _smoothstep(t)
+
+    return _zero_phase_smooth(g_db, sample_rate, smooth_hz)
+
+
+def _reactive_gain_db(
+    voice_audio: np.ndarray,
+    sample_rate: int,
+    range_db: float,
+    threshold_db: float = -32.0,
+    smooth_hz: float = 6.0,
+) -> np.ndarray:
+    """Reactive envelope-follower gain curve (dB, <= 0). Safety net for
+    off-script breaths; vectorized + zero-phase smoothed (gradual)."""
+    sos = butter(2, [200.0, 4000.0], btype="band", fs=sample_rate, output="sos")
+    det = sosfilt(sos, voice_audio).astype(np.float32)
+    env = _onepole_rms_env(det, sample_rate, ms=30.0)
+    env_db = 20.0 * np.log10(env + 1e-9)
+    over = np.clip(env_db - threshold_db, 0.0, None)
+    target_db = np.clip(over * (range_db / 9.0), range_db, 0.0).astype(np.float32)
+    smoothed = _zero_phase_smooth(target_db, sample_rate, smooth_hz)
+    return np.clip(smoothed, range_db, 0.0).astype(np.float32)
+
+
+def combine_script_with_reactive(g_script: np.ndarray, g_reactive: np.ndarray) -> np.ndarray:
+    """Where the script lifts (>0) the script wins (preserve breathing);
+    elsewhere take the more-restrictive (deeper) of the two."""
+    n = min(g_script.shape[0], g_reactive.shape[0])
+    gs = g_script[:n].astype(np.float32, copy=False)
+    gr = g_reactive[:n].astype(np.float32, copy=False)
+    return np.where(gs > 0, gs, np.minimum(gs, gr)).astype(np.float32)
+
+
+def compute_breathing_gain_db(
+    voice_audio: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+    duck_depth_db: float = -15.0,
+    pre_descent_ms: float = 600.0,
+    attack_ramp_ms: float = 700.0,
+    release_ms: float = 1500.0,
+    lift_db: float = 1.5,
+    lift_pause_s: float = 1.5,
+    smooth_hz: float = 6.0,
+    vad_threshold_db: float = -40.0,
+    phrases: list[tuple[float, float]] | None = None,
+) -> np.ndarray:
+    """Build the combined breathing-duck gain envelope (dB) for ``voice_audio``.
+
+    ``duck_depth_db`` is the (negative) reduction held during speech. When
+    ``phrases`` is None they are detected from the voice via RMS-envelope VAD.
+    """
+    n = int(voice_audio.shape[-1])
+    if phrases is None:
+        phrases = detect_phrases(voice_audio, sample_rate, threshold_db=vad_threshold_db)
+    g_script = _script_gain_db(
+        n, sample_rate, phrases,
+        pre_descent_ms=pre_descent_ms, attack_ramp_ms=attack_ramp_ms,
+        release_ms=release_ms, duck_db=duck_depth_db,
+        lift_db=lift_db, lift_pause_s=lift_pause_s, smooth_hz=smooth_hz,
+    )
+    g_react = _reactive_gain_db(voice_audio, sample_rate, range_db=duck_depth_db)
+    return combine_script_with_reactive(g_script, g_react)
+
+
+def apply_breathing_duck(
+    voice_audio: np.ndarray,
+    music_audio: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+    duck_depth_db: float = -15.0,
+    **kwargs,
+) -> np.ndarray:
+    """Apply the breathing duck fullband to ``music_audio`` (mono or stereo).
+
+    The whole bed drops together (not just the mids) so it reads as "very low"
+    under speech, then rises gradually in pauses.
+    """
+    g_db = compute_breathing_gain_db(
+        voice_audio, sample_rate, duck_depth_db=duck_depth_db, **kwargs,
+    )
+    n = min(g_db.shape[0], music_audio.shape[-1])
+    gain_lin = (10.0 ** (g_db[:n] / 20.0)).astype(np.float32)
+    out = music_audio[..., :n].astype(np.float32).copy()
+    if out.ndim == 2:
+        out *= gain_lin[np.newaxis, :]
+    else:
+        out *= gain_lin
+    return out
+
+
+# ---------------------------------------------------------------------------
+# True-peak limiting (ITU-R BS.1770, oversampled, vectorized)
+# ---------------------------------------------------------------------------
+
+
+def true_peak_limit(
+    audio: np.ndarray,
+    sample_rate: int,
+    threshold_db: float = -1.0,
+    oversample: int = 4,
+    safety_margin_db: float = 0.3,
+    lookahead_ms: float = 2.0,
+    smooth_hz: float = 200.0,
+) -> np.ndarray:
+    """Oversampled true-peak brickwall limiter (replaces pedalboard Limiter).
+
+    Upsamples ``oversample``×, computes a per-sample target gain that keeps the
+    inter-sample peak under the ceiling, applies a zero-phase-smoothed release
+    that is clamped to the target (so the ceiling is never exceeded), then
+    downsamples. Fully vectorized — no per-sample Python loop. Transparent
+    below threshold (unlike pedalboard 0.9.23's Limiter, which adds ~+4.75 dB).
+    """
+    thr = float(10.0 ** ((threshold_db - safety_margin_db) / 20.0))
+    is_1d = audio.ndim == 1
+    x = audio.reshape(1, -1) if is_1d else audio
+
+    up = resample_poly(x, oversample, 1, axis=-1).astype(np.float32)
+    up_sr = sample_rate * oversample
+
+    detector = np.max(np.abs(up), axis=0)
+    target = np.minimum(1.0, thr / np.maximum(detector, 1e-12)).astype(np.float32)
+
+    # Look-ahead: gain at sample i already reflects the min target over [i, i+la).
+    la = max(1, int(up_sr * lookahead_ms / 1000.0))
+    target = minimum_filter1d(target, size=la, origin=-(la // 2), mode="nearest")
+
+    # Smooth release (zero-phase) then clamp to target so the ceiling holds.
+    smoothed = _zero_phase_smooth(target, up_sr, smooth_hz)
+    gain = np.minimum(smoothed, target)
+
+    up *= gain[np.newaxis, :]
+    np.clip(up, -thr, thr, out=up)
+
+    down = resample_poly(up, 1, oversample, axis=-1).astype(np.float32)
+    np.clip(down, -thr, thr, out=down)
+    return down.squeeze(0) if is_1d else down
+
+
+# ---------------------------------------------------------------------------
 # Full mix
 # ---------------------------------------------------------------------------
 
@@ -538,8 +820,8 @@ def mix(
     voice_activity: np.ndarray,
     music_audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
-    duck_amount_db: float = -8.0,
-    music_volume_db: float = -14.0,
+    duck_amount_db: float = -15.0,
+    music_volume_db: float = -16.0,
     music_pre_roll_sec: float = 8.0,
     music_post_roll_sec: float = 15.0,
     fade_in_sec: float = 3.0,
@@ -599,34 +881,17 @@ def mix(
         ], axis=-1)
     aligned_music = aligned_music[..., :target_len]
 
-    # 4. Apply sidechain ducking
-    # Research-spec meditation parameters:
-    #   attack_ms=150:    much slower than EDM (100-200ms per research);
-    #                     music fades gracefully rather than snapping down
-    #   release_ms=650:   music returns gently (research: 500-800ms)
-    #   hold_ms=1200:     bridges slow meditation phrase gaps (typical pause 1-3s);
-    #                     prevents per-sentence pumping that feels jarring in
-    #                     slow, deliberate narration
-    #   lookahead_ms=500: conservative pre-duck (research recommends 1-2s;
-    #                     starting conservative per user preference)
-    _duck_kwargs = dict(
-        sample_rate=sample_rate,
-        duck_amount_db=duck_amount_db,
-        threshold_db=-35.0,
-        attack_ms=150.0,
-        release_ms=650.0,
-        lookahead_ms=500.0,
-        hold_ms=1200.0,
+    # 4. Breathing sidechain duck (deep, gradual, rises in pauses).
+    #    The bed falls with a predictive S-curve starting ~600 ms before each
+    #    phrase, sits very low (duck_amount_db) during speech, and rises
+    #    gradually over ~1.5 s — lifting slightly during long pauses so the
+    #    music "breathes". Applied fullband so the whole bed drops, not just
+    #    the mids. ``multiband`` is retained for API compatibility but no
+    #    longer used (the old reactive multiband ducker felt flat).
+    ducked_music = apply_breathing_duck(
+        aligned_voice, aligned_music, sample_rate,
+        duck_depth_db=duck_amount_db,
     )
-
-    if multiband:
-        ducked_music = apply_multiband_ducking(
-            aligned_voice, aligned_music, **_duck_kwargs,
-        )
-    else:
-        ducked_music = apply_envelope_ducking(
-            aligned_voice, aligned_music, **_duck_kwargs,
-        )
 
     # 5. Stereo upmix (opt-in): Haas effect on music, center-pan voice
     if stereo_output:
@@ -746,8 +1011,8 @@ def export_audio(
     tmp_path = tmp.name
     tmp.close()
 
-    # 1. Apply Pedalboard mastering chain if present to the whole array first.
-    # We do this in-memory (safe for 32GB RAM target hardware).
+    # 1. Apply Pedalboard mastering EQ/glue (no limiter) to the whole array.
+    # We do this in-memory (safe for 36 GB RAM target hardware).
     mastered_audio = audio
     if master_chain:
         audio_2d = audio.reshape(1, -1) if audio.ndim == 1 else audio
@@ -755,10 +1020,17 @@ def export_audio(
         if audio.ndim == 1:
             mastered_audio = mastered_audio.squeeze(0)
 
-    # 2. Pre-calculate the linear gain based on the PRE-normalized mastered audio
-    # to bring the whole file to target LUFS accurately.
+    # 2. LUFS-normalize FIRST, then true-peak limit (order is critical — limiting
+    #    first then normalizing would re-exceed the ceiling). The true-peak
+    #    limiter replaces pedalboard's Limiter, which inflated level (~+4.75 dB)
+    #    and added broadband "static" distortion.
     mix_lufs_gain = calculate_loudness_gain(mastered_audio, sample_rate, target_lufs)
-    
+    mastered_audio = (mastered_audio * mix_lufs_gain).astype(np.float32)
+    mastered_audio = true_peak_limit(mastered_audio, sample_rate, threshold_db=-1.0)
+
+    # -1.0 dBTP ceiling; final safety clip catches any resample-lowpass ringing.
+    ceiling = float(10.0 ** (-1.0 / 20.0))  # ≈ 0.891
+
     # 20 second chunks for streaming export
     chunk_samples = int(20.0 * sample_rate)
     total_samples = mastered_audio.shape[-1]
@@ -770,18 +1042,13 @@ def export_audio(
     for start in range(0, total_samples, chunk_samples):
         end = min(start + chunk_samples, total_samples)
         chunk = mastered_audio[..., start:end]
-        
+
         # Resample chunk if needed
         if sample_rate != export_rate:
             chunk = resample_for_export(chunk, sample_rate, export_rate)
-            
-        # Apply normalization gain
-        chunk = chunk * mix_lufs_gain
-        
-        # Ensure true peak safety -1.5 dBTP via clipping (limiter already ran during mastering).
-        # -1.5 dBTP provides safety margin for lossy codec encoding (AAC/MP3).
-        chunk = np.clip(chunk, -0.841, 0.841)  # -1.5 dBFS = 10^(-1.5/20) ≈ 0.841
-            
+
+        chunk = np.clip(chunk, -ceiling, ceiling)
+
         # write directly as float32. Pedalboard expects (channels, samples).
         if chunk.ndim == 1:
             f.write(chunk.reshape(1, -1).astype(np.float32))

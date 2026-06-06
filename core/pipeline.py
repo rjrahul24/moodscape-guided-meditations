@@ -56,7 +56,7 @@ class MeditationPipeline:
         music_prompt: str,
         voice: str = "golden_hour",
         speed: float = 0.90,
-        duck_amount_db: float = -12.0,
+        duck_amount_db: float = -16.0,
         reverb_amount: float = 0.15,
         fade_in_sec: float = 3.0,
         fade_out_sec: float = 5.0,
@@ -609,7 +609,7 @@ class MeditationPipeline:
             # chunked streaming in `export_audio()`.
 
             # ── Step 10b: QA checks ─────────────────────────────────────────
-            qa_results = run_qa_checks(mixed, mix_sr, is_vocals_only=is_vocals)
+            qa_results = run_qa_checks(mixed, mix_sr, is_vocals_only=is_vocals, is_uploaded_music=use_upload)
             if qa_results["silence"]:
                 status_message += f"QA: {len(qa_results['silence'])} long silence(s) detected. "
             if not qa_results["clipping"]["passed"]:

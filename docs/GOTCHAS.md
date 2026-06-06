@@ -39,10 +39,12 @@ Hard-won lessons. The most load-bearing entries are repeated in `CLAUDE.md`; the
 
 ## Mixing & Mastering
 
-- **Active ducking function**: `mixer.mix()` calls `apply_multiband_ducking()` by default (`multiband=True`). Falls back to `apply_envelope_ducking()` when `multiband=False`. `apply_rms_ducking()` exists but is not used in production.
-- **Don't reduce `hold_ms` below 800**: Default `hold_ms=1200` in `mix()` `_duck_kwargs` bridges slow meditation phrase gaps. Default `duck_amount_db=-12.0` lives in `pipeline.py`.
-- **Mix sample rate**: All music-engine paths use `mix_sr = 48000` (`pipeline.py:213`). The 44.1 kHz fallback applies only when no music engine is active.
-- **Export targets**: `−16 LUFS`, `−1.5 dBTP` ceiling. Matches Apple Music and avoids platform re-limiting.
+- **Active ducking function**: `mixer.mix()` calls `apply_breathing_duck()` — a deep, gradual, script/VAD-aware sidechain duck. Phrases are detected from the voice (`detect_phrases`), a predictive S-curve descends ~600 ms before each phrase, holds at `duck_amount_db` during speech, releases over ~1.5 s, and lifts slightly during pauses ≥1.5 s so the bed "breathes". Applied **fullband** so the whole bed drops. The old `apply_multiband_ducking` / `apply_envelope_ducking` / `apply_rms_ducking` remain in the module but are no longer used by `mix()`.
+- **No pedalboard `Limiter` anywhere**: pedalboard 0.9.23's `Limiter` inflates sub-threshold signals by ~+4.75 dB and adds broadband distortion ("static"). It was removed from `make_{upload,acestep,lyria}_music_chain()` and `make_master_chain()`. Don't reintroduce it.
+- **Limiting is true-peak at export**: `export_audio()` does master EQ/glue → LUFS-normalize to −16 → `mixer.true_peak_limit()` to −1 dBTP (order matters: normalize first, then limit). `true_peak_limit` is a vectorized 4×-oversampled brickwall (no per-sample loop) and is transparent below threshold.
+- **Default levels**: `duck_amount_db=-16` (`pipeline.py` / UI slider) = how low the bed sits under speech; `music_volume_db=-16` baseline in `mix()`. Lower (more negative) duck = quieter under speech.
+- **Mix sample rate**: All music-source paths use `mix_sr = 48000` (`pipeline.py`). The 44.1 kHz fallback applies only when no music source is active.
+- **Export target**: `−16 LUFS`, `−1 dBTP` ceiling. Matches Apple Music and avoids platform re-limiting.
 
 ## Uploaded Instrumental (`music_model="upload"`)
 

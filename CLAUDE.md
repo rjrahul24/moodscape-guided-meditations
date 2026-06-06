@@ -66,10 +66,10 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 6. **TTS upsample** 24 → 48 kHz via `audio_processor.upsample_audio(high_accuracy=True)`; then per-chunk humanize (Kokoro)
 7. **Voice FX** → `build_voice_chain()` + `apply_fx()`; then `mixer.normalize_loudness()` to −18 LUFS
 8. **Music FX** → `make_{engine}_music_chain()` + `make_vocal_pocket_chain()`
-9. **Mix** → `mixer.mix()` (multiband ducking by default; exponential fades)
-10. **Master** → `make_master_chain()` (HPF → bus comp → limiter @ −1.5 dBTP)
+9. **Mix** → `mixer.mix()` (breathing sidechain duck — deep gradual S-curve, rises in pauses; exponential fades)
+10. **Master** → `make_master_chain()` (HPF → gentle bus comp → +1 dB air shelf; **no** limiter)
 11. **QA** → `qa_monitor.run_qa_checks()`
-12. **Export** → `mixer.export_audio()` (WAV/MP3, −16 LUFS)
+12. **Export** → `mixer.export_audio()` (LUFS-normalize to −16 → `true_peak_limit()` to −1 dBTP → WAV/MP3)
 
 Full breakdown with parameters: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -95,7 +95,8 @@ The six that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
 - **transformers pin** → `>=4.51.0,<4.58.0` for ACE-Step compatibility — do not upgrade.
 - **Kokoro forced to CPU** → MPS causes deallocation bus errors. British voices (`bf_*`, `bm_*`) need `KPipeline(lang_code="b")`.
 - **IndexTTS-2 NaN clamp** → BigVGANv2 may emit NaN on MPS. Use `torch.clamp(mel, -10, 10)`; force `use_fp16=False, use_deepspeed=False, use_cuda_kernel=False`.
-- **Ducking defaults** → `duck_amount_db=-12.0` (`pipeline.py`) · `hold_ms=1200` (`mixer.mix()`). Do not reduce `hold_ms` below 800; phrase gaps will pump.
+- **No pedalboard `Limiter`** → pedalboard 0.9.23's `Limiter` inflates sub-threshold signals ~+4.75 dB and adds broadband "static". It was removed from all music + master chains. Peak control is `mixer.true_peak_limit()` at export (LUFS-normalize → true-peak limit to −1 dBTP).
+- **Breathing duck** → `mixer.mix()` uses `apply_breathing_duck` (deep gradual S-curve, rises in pauses). `duck_amount_db=-16` (`pipeline.py`) = how low the bed sits under speech. The old multiband/`hold_ms` reactive ducker is retired.
 
 ## Where to Look
 

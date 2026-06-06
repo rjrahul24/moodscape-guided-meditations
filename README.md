@@ -50,7 +50,7 @@ Script text
     │             → Separate FX chains for voice, music, and master bus
     ▼
 [Mixer]           core/mixer.py
-    │             → Lookahead sidechain ducking + crossfades + LUFS normalization
+    │             → Breathing sidechain duck + fades + LUFS norm + true-peak limit
     ▼
 [QA Monitor]      core/qa_monitor.py
     │             → 8 automated checks (clipping, LUFS, spectral balance, etc.)
@@ -417,11 +417,11 @@ broadcast-grade mix. The music prompt and BPM/key controls are ignored. Implemen
 
 A brief summary of the quality pipeline under the hood:
 
-- **Lookahead sidechain ducking** — Music begins fading 75ms before voice onset; recovers over a 500ms release envelope. Broadcast-grade — never reactive.
+- **Breathing sidechain ducking** — Phrases are detected from the narration; the bed descends with a predictive S-curve ~600 ms before each phrase, sits very low during speech, then rises gradually (~1.5 s) and lifts slightly during long pauses so the music "breathes". Applied fullband so the whole bed drops together.
 - **Vocal pocket EQ** — Music spectrum is carved at 300 Hz, 1 kHz, and 3 kHz to preserve voice intelligibility without reducing overall music volume.
 - **Convolution reverb** — Three impulse responses: Warm Studio (intimate, short decay), Wooden Hall (natural warmth, medium space), Stone Chapel (ethereal, long decay).
 - **HT Demucs separation** — 4-source model (drums, bass, vocals, other). Keeps bass + other; discards drums + vocals. Corrects percussion and vocal artifacts that leaked past prompting.
-- **LUFS normalization** — ITU-R BS.1770-4 standard. Target: -19 LUFS (meditation broadcast reference).
+- **LUFS normalization + true-peak limiting** — Normalized to −16 LUFS (ITU-R BS.1770-4), then a 4×-oversampled true-peak limiter holds −1 dBTP. (No pedalboard `Limiter` — it inflated level and added broadband distortion.)
 - **QA Monitor** — 8 checks run before export: clipping ratio, LUFS accuracy, spectral warmth vs. presence balance, silence ratio, spectral rolloff, onset strength (transient detection), spectral flatness (noise detection), and long-silence gaps.
 
 See [`docs/optimization_and_processing/audio_processing.md`](docs/optimization_and_processing/audio_processing.md) and [`docs/optimization_and_processing/post-processing-pipeline.md`](docs/optimization_and_processing/post-processing-pipeline.md).

@@ -28,12 +28,13 @@ class TestAudioProcessor(unittest.TestCase):
         import os
         from core.audio_processor import IR_CATALOG
         chain = make_acestep_music_chain()
-        # 9 base effects: NoiseGate, HPF, LowShelf(200Hz), PeakFilter(2500Hz),
+        # 8 base effects: NoiseGate, HPF, LowShelf(200Hz), PeakFilter(2500Hz),
         #                 PeakFilter(4500Hz), HighShelf(8kHz), LowpassFilter(16kHz),
-        #                 Compressor, Limiter
+        #                 Compressor
+        # (Limiter removed — true-peak limiting is done cleanly at export.)
         # + 1 Convolution reverb when warm_studio IR file is present on disk
         ir_path = IR_CATALOG.get("warm_studio", {}).get("path", "")
-        expected = 10 if os.path.isfile(ir_path) else 9
+        expected = 9 if os.path.isfile(ir_path) else 8
         self.assertEqual(len(chain), expected, f"Expected {expected} effects, got {len(chain)}")
 
     def test_acestep_chain_midrange_and_air_filters(self):

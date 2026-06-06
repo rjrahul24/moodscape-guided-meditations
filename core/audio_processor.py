@@ -82,7 +82,8 @@ def make_acestep_music_chain() -> Pedalboard:
     ir_path = IR_CATALOG.get("warm_studio", {}).get("path", "")
     if os.path.isfile(ir_path):
         plugins.append(Convolution(ir_path, mix=0.08))
-    plugins.append(Limiter(threshold_db=-1.0))
+    # No Limiter — peak control is done by the true-peak limiter at export.
+    # pedalboard's Limiter inflates level (~+4.75 dB) and adds broadband distortion.
     return Pedalboard(plugins)
 
 
@@ -122,7 +123,8 @@ def make_lyria_music_chain() -> Pedalboard:
             attack_ms=80.0,    # Slow attack: preserve transients
             release_ms=500.0,  # Slow release: no pumping on sustained pads
         ),
-        Limiter(threshold_db=-0.5),
+        # No Limiter — handled by the true-peak limiter at export (the
+        # pedalboard Limiter inflates level and adds broadband distortion).
     ])
 
 
@@ -140,11 +142,13 @@ def make_upload_music_chain() -> Pedalboard:
       3. Safety LPF at 14 kHz — tames any harsh top end against the narration.
       4. Limiter at -1.0 dBFS — catches stray peaks before the master chain.
     """
+    # NOTE: no Limiter here. pedalboard 0.9.23's Limiter inflates sub-threshold
+    # signals by ~+4.75 dB and adds broadband distortion ("static"). Final
+    # peak control is handled cleanly by the true-peak limiter in export.
     return Pedalboard([
         HighpassFilter(cutoff_frequency_hz=30.0),
         PeakFilter(cutoff_frequency_hz=2000, gain_db=-2.0, q=0.7),
         LowpassFilter(cutoff_frequency_hz=14000.0),
-        Limiter(threshold_db=-1.0),
     ])
 
 
@@ -176,21 +180,25 @@ def make_vocal_pocket_chain() -> Pedalboard:
 
 
 def make_master_chain() -> Pedalboard:
-    """Final mastering chain: subsonic HPF → bus compressor → peak limiter.
+    """Final mastering EQ + glue (NO limiter — see below).
 
-    Chain (per audio-opt research):
+    Chain:
       1. HPF 30 Hz — removes subsonic rumble below the audible range.
-      2. Compressor 1.5:1 @ -22 dB, 40ms/300ms — gentle 'glue' compression
-         that bonds voice and music into a cohesive mix (~1-2 dB GR max).
-         At 1.5:1 with a -22 dB threshold, this is inaudible as a compressor
-         but adds perceived cohesion between TTS and music stems.
-      3. Limiter -1.0 dBTP, 400ms release — true peak safety margin for
-         lossy codec encoding. Research: -1.0 dBTP for meditation content.
+      2. Compressor 1.5:1 @ -12 dB, 50ms/200ms — gentle 'glue' that bonds
+         voice and music into a cohesive mix (~1-2 dB GR max). The higher
+         (-12 dB) threshold engages less often than the old -22 dB, avoiding
+         audible pumping/modulation.
+      3. High-shelf +1 dB @ 12 kHz — a touch of air on the master.
+
+    Peak control is deliberately NOT done here. pedalboard 0.9.23's Limiter
+    inflates sub-threshold signals by ~+4.75 dB and generates broadband
+    distortion. True-peak limiting to -1 dBTP is applied cleanly, after LUFS
+    normalization, by ``mixer.true_peak_limit`` inside ``export_audio``.
     """
     return Pedalboard([
         HighpassFilter(cutoff_frequency_hz=30.0),
-        Compressor(threshold_db=-22.0, ratio=1.5, attack_ms=40.0, release_ms=300.0),
-        Limiter(threshold_db=-1.0, release_ms=400.0),
+        Compressor(threshold_db=-12.0, ratio=1.5, attack_ms=50.0, release_ms=200.0),
+        HighShelfFilter(cutoff_frequency_hz=12000.0, gain_db=1.0),
     ])
 
 

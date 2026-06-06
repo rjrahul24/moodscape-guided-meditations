@@ -1056,7 +1056,7 @@ with gr.Blocks(
             with gr.Accordion("Mix & Effects", open=False, elem_classes="accordion-section"):
                 with gr.Row():
                     speed_slider = gr.Slider(0.70, 1.20, 0.9, step=0.01, label="Speech Speed", info="0.85–0.95 is ideal for guided meditation.")
-                    duck_slider = gr.Slider(-30, -5, -8, step=1, label="Music Ducking (dB)", info="How much music dims under voice.")
+                    duck_slider = gr.Slider(-30, -6, -16, step=1, label="Music Ducking (dB)", info="How low the bed drops while you speak; it rises back gradually in pauses.")
                 with gr.Row():
                     reverb_slider = gr.Slider(0.0, 0.5, 0.15, step=0.05, label="Reverb Amount")
                     reverb_ir_dropdown = gr.Dropdown(
