@@ -88,6 +88,7 @@ class MeditationPipeline:
         quality_mode: bool = False,
         stereo_output: bool = False,
         melody_audio_path: str | None = None,
+        uploaded_music_path: str | None = None,
     ) -> tuple[str, str | None, dict | None]:
         """Run the full pipeline and return the path to the output audio file.
 
@@ -146,11 +147,13 @@ class MeditationPipeline:
         is_vocals = generation_mode == "Vocals Only"
         use_acestep = music_model == "acestep"
         use_lyria = music_model == "lyria"
+        use_upload = music_model == "upload"
 
         # All music engines output at 48 kHz natively; mix at that rate for quality.
+        # Uploaded instrumentals are decoded/resampled to 48 kHz as well.
         # F5-TTS also mixes at 48 kHz.
         # TTS voice (24 kHz) is upsampled to match whichever rate is selected.
-        mix_sr = 48000 if (use_lyria or use_acestep or tts_engine in ("f5", "indextts")) else TARGET_SR
+        mix_sr = 48000 if (use_lyria or use_acestep or use_upload or tts_engine in ("f5", "indextts")) else TARGET_SR
 
         logger.info("Starting generation — mode=%s, music_model=%s, voice=%s, speed=%s, seed=%s, lufs=%s",
                     generation_mode, music_model, voice, speed, seed, target_lufs)
@@ -330,7 +333,11 @@ class MeditationPipeline:
                     if tts_engine in ("f5", "indextts"):
                         del tts
 
-                music_model_label = "Lyria RealTime" if use_lyria else "ACE-Step 1.5"
+                music_model_label = {
+                    "lyria": "Lyria RealTime",
+                    "acestep": "ACE-Step 1.5",
+                    "upload": "Uploaded Instrumental",
+                }.get(music_model, "ACE-Step 1.5")
                 _progress(progress_cb, 0.40, f"Switching to {music_model_label}...")
 
                 # Instantiate the selected music engine
@@ -340,13 +347,17 @@ class MeditationPipeline:
                 elif use_acestep:
                     from core.acestep import AceStepEngine
                     music_engine = AceStepEngine()
+                elif use_upload:
+                    from core.upload_music import UploadMusicEngine
+                    music_engine = UploadMusicEngine(uploaded_music_path)
                 else:
                     raise ValueError(f"Unknown music model: {music_model}")
                 music_engine.load_model()
                 gc.collect()
 
                 # ── Step 5: Generate background music ───────────────────────────
-                story_mode = music_prompt_stages is not None
+                # Uploaded instrumentals are never story-mode (nothing to stage).
+                story_mode = music_prompt_stages is not None and not use_upload
                 if story_mode:
                     # Story mode: total duration is derived from the stages.
                     # Add a small buffer so the final fade-out has audio to work with.
@@ -418,7 +429,12 @@ class MeditationPipeline:
                         raise ValueError(f"No story mode path for music_model: {music_model}")
                 else:
                     # Single-prompt generation
-                    if use_lyria:
+                    if use_upload:
+                        # No generation — load, resample, and fit the uploaded file.
+                        music_audio = music_engine.generate(
+                            music_prompt, music_duration, progress_cb=music_progress,
+                        )
+                    elif use_lyria:
                         # LyriaEngine handles prompt enhancement internally
                         music_audio = music_engine.generate(
                             music_prompt, music_duration, progress_cb=music_progress,
@@ -436,8 +452,14 @@ class MeditationPipeline:
                         raise ValueError(f"No generation path for music_model: {music_model}")
 
                 # ── Step 5b: Unload music model ─────────────────────────────────
+                if use_upload and getattr(music_engine, "fit_report", None) is not None:
+                    _r = music_engine.fit_report
+                    status_message = (
+                        f"Uploaded instrumental: {_r.mode} "
+                        f"({_r.source_seconds:.0f}s → {_r.target_seconds:.0f}s)"
+                    )
                 music_engine.unload_model()
-                if use_acestep or use_lyria:
+                if use_acestep or use_lyria or use_upload:
                     del music_engine
                 gc.collect()
                 if mx:
@@ -447,7 +469,9 @@ class MeditationPipeline:
                     mx.clear_cache()
 
                 # ── Step 5c: AI Source Separation (remove drums/vocals) ─────────
-                if stem_separation:
+                # Skipped for uploads: the user's file is already an instrumental,
+                # so there are no model-generated drums/vocals to strip.
+                if stem_separation and not use_upload:
                     _progress(progress_cb, 0.68, "Removing drums/vocals via AI source separation...")
                     if use_lyria:
                         from core.lyria.engine import TARGET_SAMPLE_RATE as MUSIC_SR
@@ -514,7 +538,7 @@ class MeditationPipeline:
                 #                       moderate level balances presence vs. headroom.
                 if use_acestep:
                     premix_lufs = -14.0
-                else:  # lyria
+                else:  # lyria or uploaded instrumental
                     premix_lufs = -16.0
                 music_audio = normalize_loudness(music_audio, mix_sr, target_lufs=premix_lufs)
 
@@ -531,6 +555,9 @@ class MeditationPipeline:
                 elif use_acestep:
                     from core.audio_processor import make_acestep_music_chain
                     music_chain = make_acestep_music_chain()
+                elif use_upload:
+                    from core.audio_processor import make_upload_music_chain
+                    music_chain = make_upload_music_chain()
                 else:
                     raise ValueError(f"No music FX chain for: {music_model}")
                 music_audio = apply_audio_fx(music_audio, music_chain, mix_sr)
@@ -591,8 +618,8 @@ class MeditationPipeline:
             # ── Step 11: Export ─────────────────────────────────────────────
             _progress(progress_cb, 0.95, f"Exporting {output_format.upper()}...")
 
-            # Lyria and ACE-Step export at native 48 kHz.
-            export_sr = 48000 if (use_lyria or use_acestep or upsample_48k) else TARGET_SR
+            # Lyria, ACE-Step, and uploaded instrumentals export at native 48 kHz.
+            export_sr = 48000 if (use_lyria or use_acestep or use_upload or upsample_48k) else TARGET_SR
 
             output_path = export_audio(
                 mixed,

@@ -96,6 +96,19 @@ class SpeechEngine(ABC):
 - Sessions capped at 570s (9.5 min); longer durations split + 3s crossfade
 - SynthID watermark embedded — do not strip or time-stretch
 
+**UploadMusicEngine** (`core/upload_music/engine.py`) — `music_model="upload"`:
+- No model/weights; `load_model()`/`unload_model()` are no-ops (contract symmetry)
+- `generate(prompt, total_duration_sec, …)` ignores `prompt` and all gen kwargs — it
+  decodes the uploaded file via `pedalboard.io.AudioFile.resampled_to(48000)`, downmixes
+  to mono float32, then fits to exactly `round(total_duration_sec*48000)` samples.
+- **Length fitting** (`arrange.fit_to_length`): equal length → used as-is; longer → trim
+  tail (master fade-out hides the cut); shorter → seamless loop with 500 ms equal-power
+  crossfades (auto-shrinks to ≤25% of source, hard-tile fallback under ~4 ms).
+- Output is byte-identical in contract to ACE-Step/Lyria (mono float32 @ 48 kHz, exact
+  length), so the rest of the pipeline treats it uniformly. **Stem separation is skipped**
+  for uploads (the file is already an instrumental). A `FitReport` is surfaced in the
+  pipeline status message.
+
 ---
 
 ### Phase 4 — Stem Separation (optional)
@@ -137,6 +150,7 @@ Voice activity mask realigned after FX (reverb tail can alter array length).
 Pre-mix LUFS normalization per engine (`pipeline.py`, step 8):
 - Lyria: −16 LUFS
 - ACE-Step: −14 LUFS
+- Uploaded instrumental: −16 LUFS (uses `make_upload_music_chain()`; no noise reduction)
 - : −17 LUFS
 
 Then engine-specific chain applied, followed by vocal pocket:
@@ -227,6 +241,19 @@ Minimal chain — ACE-Step's VAE output is clean and doesn't need heavy processi
 | 4 | HighShelfFilter | cutoff=9 000 Hz, gain=−2.5 dB |
 | 5 | Compressor | threshold=−18 dB, ratio=2:1, attack=80ms, release=500ms |
 | 6 | Limiter | threshold=−0.5 dBFS |
+
+### `make_upload_music_chain()` (`core/audio_processor.py`)
+
+Deliberately light — an uploaded file is already a finished production, so only
+protection + a small speech pocket are applied (the ducker and vocal-pocket chain do
+the rest). No noise reduction.
+
+| # | Plugin | Key params |
+|---|--------|-----------|
+| 1 | HighpassFilter | cutoff=30 Hz (subsonic) |
+| 2 | PeakFilter | freq=2 000 Hz, gain=−2.0 dB, Q=0.7 (static speech pocket) |
+| 3 | LowpassFilter | cutoff=14 000 Hz (safety) |
+| 4 | Limiter | threshold=−1.0 dBFS |
 
 ### `make_vocal_pocket_chain()` (`core/audio_processor.py`)
 
@@ -359,6 +386,13 @@ Lyria RealTime (48 kHz stereo int16 PCM → mono float32)
   → make_lyria_music_chain() @ 48 kHz
   → make_vocal_pocket_chain() @ 48 kHz
   → mix() @ 48 kHz
+
+Uploaded instrumental (any file → decode → resample 48 kHz → mono float32)
+  → fit_to_length() loop/trim to exact duration
+  → normalize_loudness(premix_lufs=-16)
+  → make_upload_music_chain() @ 48 kHz
+  → make_vocal_pocket_chain() @ 48 kHz
+  → mix() @ 48 kHz   (stem separation skipped)
 
 mix() output (48 kHz mono float32)
   → export_audio() streaming: master_chain + resample to export_sr + LUFS normalize

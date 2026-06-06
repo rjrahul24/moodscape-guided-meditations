@@ -146,6 +146,13 @@ ACE-Step Pre-EQ (ACE-Step only — see audio_processing.md §3)
   • Spectral repair: noisereduce (stationary, prop_decrease=0.65)
   • Tape saturation: asymmetric soft clipping (drive=0.3, bias=0.15)
 
+Uploaded Instrumental (music_model="upload")
+  • Decode (pedalboard AudioFile) → resample 48 kHz → mono → fit_to_length() loop/trim
+  • Enters this shared path like a generated bed: NO pre-EQ / noise reduction / neural
+    enhancement / stem separation (the file is already a finished instrumental)
+  • Pre-mix normalize to -16 LUFS, then make_upload_music_chain() (light: HPF 30,
+    -2 dB pocket @ 2 kHz, LPF 14 kHz, limiter)
+
 Music FX Chain (engine-specific EQ — see audio_processing.md §3)
 
 Neural Enhancement ( only — optional)

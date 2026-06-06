@@ -18,6 +18,7 @@ MoodScape is a locally-run AI pipeline that synthesizes professional guided medi
 - **IndexTTS-2** — zero-shot voice cloning with decoupled emotion control (MPS, no transcript required)
 - **ACE-Step 1.5** — high-fidelity text-to-music with LM planning (MLX, 48 kHz native)
 - **Lyria RealTime** — Google DeepMind cloud music generation (48 kHz, no local GPU needed)
+- **Upload your own instrumental** — bring any audio file; it's looped/trimmed to fit and mixed through the same ducking + mastering path (no model, no GPU)
 
 For engine-specific deep dives, see the [docs/](#documentation-guide) directory.
 
@@ -37,11 +38,12 @@ Script text
                   core/index_tts/   (MPS, 24 kHz mono float32)
     │             → TTS unloaded; memory freed before music loads
     ▼
-[Music Engine]    core/acestep/engine.py    (ACE-Step 1.5, MLX, 48 kHz)
-                  core/lyria/engine.py      (Lyria RealTime, cloud, 48 kHz)
-    │             → Music engine unloaded; memory freed
+[Music Source]    core/acestep/engine.py        (ACE-Step 1.5, MLX, 48 kHz)
+                  core/lyria/engine.py          (Lyria RealTime, cloud, 48 kHz)
+                  core/upload_music/engine.py   (Uploaded instrumental — decode + loop/trim fit, 48 kHz)
+    │             → Music source unloaded; memory freed
     ▼
-[Stem Separation] core/stem_separator.py   (HT Demucs, optional)
+[Stem Separation] core/stem_separator.py   (HT Demucs, optional; skipped for uploads)
     │             → Removes drums/vocals that leaked past prompting
     ▼
 [Pedalboard FX]   core/audio_processor.py
@@ -67,6 +69,7 @@ WAV / MP3  (44.1 kHz or 48 kHz)
 | `core/index_tts/` | IndexTTS-2 — preprocessor, engine, postprocessor, voice + emotion registry |
 | `core/acestep/` | ACE-Step 1.5 wrapper (MLX backend, 48 kHz) |
 | `core/lyria/` | Lyria RealTime API — engine, weighted prompt parser |
+| `core/upload_music/` | Uploaded-instrumental engine + length-fitting (loop/trim/crossfade) |
 | `core/stem_separator.py` | HT Demucs source separation (4-source model) |
 | `core/audio_processor.py` | Pedalboard FX chains (voice / music / master) |
 | `core/mixer.py` | Ducking, overlay, fades, normalization, export |
@@ -156,9 +159,9 @@ python app.py
 2. **Write your meditation script** in the left panel — use [pause tags](#script-format) for timed silences
 3. **Choose TTS Engine** — `Kokoro` for preset voices, `F5-TTS` for zero-shot voice cloning, `IndexTTS-2` for zero-shot cloning + decoupled emotion control
 4. **Select a Voice** — Kokoro preset, F5-TTS voice from `assets/speakers/`, or IndexTTS-2 speaker from `assets/speakers/`
-5. **Choose Music Engine** — `ACE-Step 1.5` or `Lyria RealTime`
-6. **Write a Music Prompt** — describe the background music style (see [Music Engines](#music-engines) for prompt tips per engine)
-7. **Configure ACE-Step or Lyria settings** if selected (BPM, key, density, quality mode)
+5. **Choose Music Engine** — `ACE-Step 1.5`, `Lyria RealTime`, or `Upload File` (use your own instrumental)
+6. **Write a Music Prompt** — describe the background music style (see [Music Engines](#music-engines) for prompt tips per engine); ignored when uploading a file
+7. **Configure ACE-Step / Lyria settings**, or **upload an instrumental** if `Upload File` is selected (BPM, key, density, quality mode)
 8. **Expand Audio Settings** to tune ducking, reverb, fade durations, reverb IR, and stem export
 9. Click **Generate Meditation** and watch the progress bar
 10. **Preview** in the browser player, then **download** the file
@@ -345,6 +348,24 @@ Controls: BPM (40–140, default 70), Density (0–1, default 0.2), Brightness (
 > Audio generated via Lyria contains an embedded SynthID watermark as required by Google's terms of service. Do not time-stretch or pitch-shift Lyria output.
 
 See [`docs/model_implementation_guides/lyria.md`](docs/model_implementation_guides/lyria.md).
+
+---
+
+### Upload Your Own Instrumental
+
+| Property | Value |
+|----------|-------|
+| Provider | None — your file, no model, no GPU |
+| Accepted formats | `.wav`, `.mp3`, `.flac`, `.ogg`, `.m4a`, `.aiff`, `.aif` |
+| Internal rate | Decoded + resampled to 48 kHz, downmixed to mono |
+| Length fitting | Looped (500 ms equal-power crossfades) if shorter than needed, trimmed if longer |
+| Stem separation | Skipped — your file is already an instrumental |
+
+Select **Upload File** as the Music Engine and drop in any instrumental. It is fitted to
+the narration length and then flows through the *same* vocal-pocket carve, frequency-selective
+ducking, and master chain as the generated engines — so an uploaded bed gets the same
+broadcast-grade mix. The music prompt and BPM/key controls are ignored. Implemented in
+`core/upload_music/` (engine + `arrange.fit_to_length`).
 
 ---
 

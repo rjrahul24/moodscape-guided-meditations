@@ -27,7 +27,9 @@ Authoritative map of every class and module in `core/`. Use this when you need t
 | ACE-Step | `core/acestep/engine.py` | `AceStepEngine` | `load_model()`, `generate()`, `_generate_infinite()`, `_enhance_prompt()` |
 | Lyria | `core/lyria/engine.py` | `LyriaEngine` | `load_model()`, `generate()`, `_run_session()` |
 | Lyria prompts | `core/lyria/prompts.py` | — | `parse_weighted_prompts()` |
-| Audio FX | `core/audio_processor.py` | — | `make_{engine}_music_chain()`, `make_vocal_pocket_chain()`, `make_master_chain()`, `upsample_audio()` |
+| Uploaded instrumental | `core/upload_music/engine.py` | `UploadMusicEngine` | `load_model()`, `unload_model()`, `generate()` |
+| Upload length-fit | `core/upload_music/arrange.py` | `FitReport` | `fit_to_length()`, `_equal_power_curves()` |
+| Audio FX | `core/audio_processor.py` | — | `make_{engine}_music_chain()` (incl. `make_upload_music_chain()`), `make_vocal_pocket_chain()`, `make_master_chain()`, `upsample_audio()` |
 | Mixer | `core/mixer.py` | — | `apply_envelope_ducking()`, `apply_multiband_ducking()`, `overlay_tracks()`, `mix()`, `normalize_loudness()`, `export_audio()` |
 | QA monitor | `core/qa_monitor.py` | — | `run_qa_checks()`, `compute_composite_score()`, `check_voice_music_ratio()`, `check_ducking_smoothness()` |
 | Stem separator | `core/stem_separator.py` | `StemSeparator` | `remove_drums_and_vocals()` |

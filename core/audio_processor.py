@@ -126,6 +126,28 @@ def make_lyria_music_chain() -> Pedalboard:
     ])
 
 
+def make_upload_music_chain() -> Pedalboard:
+    """Light FX chain for user-uploaded instrumentals.
+
+    Unlike ACE-Step / Lyria output, an uploaded file is already a finished
+    production, so coloring is kept minimal — we only protect the mix and carve
+    a little room for the narration (the dynamic ducker and the vocal-pocket
+    chain do the rest):
+
+      1. Sub-bass HPF at 30 Hz — clears subsonic rumble that wastes headroom.
+      2. Static "speech pocket" at 2 kHz (-2 dB, Q=0.7) — gently dips the band
+         the voice occupies so the ducker has less work to do.
+      3. Safety LPF at 14 kHz — tames any harsh top end against the narration.
+      4. Limiter at -1.0 dBFS — catches stray peaks before the master chain.
+    """
+    return Pedalboard([
+        HighpassFilter(cutoff_frequency_hz=30.0),
+        PeakFilter(cutoff_frequency_hz=2000, gain_db=-2.0, q=0.7),
+        LowpassFilter(cutoff_frequency_hz=14000.0),
+        Limiter(threshold_db=-1.0),
+    ])
+
+
 def make_vocal_pocket_chain() -> Pedalboard:
     """Frequency-aware EQ to carve a spectral lane for voice intelligibility.
 

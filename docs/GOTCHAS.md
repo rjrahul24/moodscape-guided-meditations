@@ -43,3 +43,10 @@ Hard-won lessons. The most load-bearing entries are repeated in `CLAUDE.md`; the
 - **Don't reduce `hold_ms` below 800**: Default `hold_ms=1200` in `mix()` `_duck_kwargs` bridges slow meditation phrase gaps. Default `duck_amount_db=-12.0` lives in `pipeline.py`.
 - **Mix sample rate**: All music-engine paths use `mix_sr = 48000` (`pipeline.py:213`). The 44.1 kHz fallback applies only when no music engine is active.
 - **Export targets**: `−16 LUFS`, `−1.5 dBTP` ceiling. Matches Apple Music and avoids platform re-limiting.
+
+## Uploaded Instrumental (`music_model="upload"`)
+
+- **Engine output contract is load-bearing**: `UploadMusicEngine.generate()` must return **mono float32 @ 48 kHz, exactly `round(total_duration_sec*48000)` samples** — that is what lets the upload reuse the ACE-Step/Lyria mix/duck/master path unchanged. Don't return stereo or a differently-sized array.
+- **Stem separation is skipped for uploads**: guarded by `if stem_separation and not use_upload:` in `pipeline.py`. The user's file is already an instrumental; running Demucs on it is wasteful and not wanted. Don't remove the guard.
+- **Don't apply fades in the upload engine**: `fit_to_length()` returns a bare fitted array. Pre/post-roll and fades are added later by `mixer.mix()` — applying them in the engine would double-fade.
+- **Decoding uses `pedalboard.io.AudioFile`** (libsndfile/ffmpeg) so mp3/m4a/etc. work; UI validates the extension against `{.wav,.mp3,.flac,.ogg,.m4a,.aiff,.aif}` before the pipeline runs.

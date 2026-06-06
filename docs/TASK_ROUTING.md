@@ -18,6 +18,9 @@ When you need to change something, start here. Locate the row that matches your 
 | LUFS target | `core/pipeline.py` | `core/mixer.py :: export_audio()` |
 | ACE-Step generation params | `core/acestep/engine.py` (module-level constants) | — |
 | ACE-Step reference audio (melody conditioning) | `core/pipeline.py` (`melody_audio_path` param) | `core/acestep/engine.py :: _prepare_reference_audio()` |
+| Uploaded-instrumental music source | `core/upload_music/engine.py :: UploadMusicEngine` | `core/pipeline.py` (`uploaded_music_path`, `music_model="upload"`), `app.py` (upload widget) |
+| How an upload is looped/trimmed to length | `core/upload_music/arrange.py :: fit_to_length()` | — |
+| Uploaded-instrumental FX chain | `core/audio_processor.py :: make_upload_music_chain()` | — |
 | Prompt enhancement logic | `core/pipeline.py :: _enhance_acestep_prompt()` | `core/acestep/engine.py :: _enhance_prompt()` |
 | QA checks / thresholds | `core/qa_monitor.py` | `docs/ARCHITECTURE.md#qa-checks` |
 | Stem separation behavior | `core/stem_separator.py` | `scripts/separate_worker.py` |

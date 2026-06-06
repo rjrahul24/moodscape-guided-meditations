@@ -1,6 +1,6 @@
 # MoodScape Guided Meditations
 
-AI-guided meditation audio generator (Gradio UI). Three TTS engines (Kokoro, F5-TTS, IndexTTS-2) and two music engines (ACE-Step 1.5, Lyria RealTime). Target hardware: Apple Silicon M1 Max (36 GB unified RAM).
+AI-guided meditation audio generator (Gradio UI). Three TTS engines (Kokoro, F5-TTS, IndexTTS-2) and three music sources (ACE-Step 1.5, Lyria RealTime, or a user-uploaded instrumental). Target hardware: Apple Silicon M1 Max (36 GB unified RAM).
 
 ## Setup & Run
 
@@ -37,7 +37,8 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 │   ├── stem_separator.py             # Demucs source separation
 │   ├── text_utils.py · breath_sounds.py · stereo_upmix.py · deepfilter_enhancer.py · stitch_client.py
 │   ├── kokoro_tts/  f5_tts/  index_tts/   # TTS engines (engine + preproc + postproc + voices)
-│   └── acestep/  lyria/                   # Music engines
+│   ├── acestep/  lyria/                   # Generative music engines
+│   └── upload_music/                      # User-uploaded instrumental (engine + arrange/length-fit)
 ├── scripts/                          # generate.py · separate_worker.py · generate_breath_samples.py
 ├── tests/unit/  tests/integration/
 ├── assets/                           # tracked in git
@@ -60,8 +61,8 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 1. **Parse script** → `{tts}/preprocessor.py :: prepare_segments()`
 2. **TTS synth** → 24 kHz mono float32
 3. **Unload TTS**, load music engine (sequential — 36 GB RAM constraint)
-4. **Music gen** → 48 kHz mono float32 (ACE-Step or Lyria)
-5. **Stem separation** (optional) → `stem_separator.remove_drums_and_vocals()`
+4. **Music gen** → 48 kHz mono float32 (ACE-Step, Lyria, or `upload_music` — decode + resample + loop/trim-fit the uploaded file to the same contract)
+5. **Stem separation** (optional; skipped for uploads) → `stem_separator.remove_drums_and_vocals()`
 6. **TTS upsample** 24 → 48 kHz via `audio_processor.upsample_audio(high_accuracy=True)`; then per-chunk humanize (Kokoro)
 7. **Voice FX** → `build_voice_chain()` + `apply_fx()`; then `mixer.normalize_loudness()` to −18 LUFS
 8. **Music FX** → `make_{engine}_music_chain()` + `make_vocal_pocket_chain()`

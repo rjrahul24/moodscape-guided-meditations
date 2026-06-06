@@ -224,6 +224,7 @@ def generate_meditation(
     indextts_emotion_slug,
     indextts_emotion_audio_file,
     indextts_speed,
+    uploaded_music_file,
 ):
     # Initial status
     yield None, _render_status("Initializing Pipeline", 0.0)
@@ -238,6 +239,22 @@ def generate_meditation(
             yield None, _render_status("Error: GOOGLE_API_KEY missing", 0.0, "Please check your .env file")
             return
         music_model = "acestep"  # safe default
+    elif music_model_choice == "Upload File":
+        music_model = "upload"
+        # Validate that an instrumental file was provided and is a supported format.
+        if not uploaded_music_file:
+            yield None, _render_status(
+                "Error: No instrumental uploaded", 0.0,
+                "Upload an instrumental file or pick a different music engine.",
+            )
+            return
+        _ext = os.path.splitext(uploaded_music_file)[1].lower()
+        if _ext not in {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aiff", ".aif"}:
+            yield None, _render_status(
+                f"Error: Unsupported audio format '{_ext}'", 0.0,
+                "Supported: wav, mp3, flac, ogg, m4a, aiff, aif.",
+            )
+            return
 
     # Resolve seed: 0 means auto
     seed = int(seed_value) if seed_value and int(seed_value) != 0 else None
@@ -301,6 +318,7 @@ def generate_meditation(
                 quality_mode=bool(quality_mode_flag),
                 stereo_output=bool(stereo_output_flag),
                 melody_audio_path=reference_audio_file or None,
+                uploaded_music_path=uploaded_music_file or None,
             )
             result_container["result"] = result
         except Exception as e:
@@ -969,10 +987,10 @@ with gr.Blocks(
             # Section 1: Voice & Sound
             with gr.Accordion("Voice & Sound", open=True, elem_classes="accordion-section"):
                 music_model_dropdown = gr.Dropdown(
-                    choices=["ACE-Step 1.5", "Lyria RealTime"],
+                    choices=["ACE-Step 1.5", "Lyria RealTime", "Upload File"],
                     value="ACE-Step 1.5",
                     label="Music Engine",
-                    info="ACE-Step 1.5 recommended for Apple Silicon (~5 min).",
+                    info="ACE-Step 1.5 recommended for Apple Silicon (~5 min). Choose Upload File to bring your own instrumental.",
                     elem_classes="dropdown-container",
                 )
                 acestep_quality = gr.Radio(
@@ -1075,6 +1093,19 @@ with gr.Blocks(
                         lyria_density = gr.Slider(0, 1.0, 0.1, step=0.05, label="Density")
                         lyria_brightness = gr.Slider(0, 1.0, 0.15, step=0.05, label="Brightness")
 
+                with gr.Group(visible=False) as upload_settings:
+                    gr.Markdown("#### Upload Instrumental")
+                    uploaded_music = gr.Audio(
+                        label="Instrumental File (wav, mp3, flac, ogg, m4a, aiff)",
+                        type="filepath",
+                        sources=["upload"],
+                    )
+                    gr.Markdown(
+                        "Your file is looped or trimmed to fit the narration, then "
+                        "ducked and mastered like the generated engines.",
+                        elem_classes="hint-text",
+                    )
+
                 gr.Markdown("#### Export")
                 with gr.Row():
                     format_radio = gr.Radio(
@@ -1117,6 +1148,7 @@ with gr.Blocks(
         is_voc = mode == "Vocals Only"
         show_acestep = (current_music_model == "ACE-Step 1.5") and not is_voc
         show_lyria = (current_music_model == "Lyria RealTime") and not is_voc
+        show_upload = (current_music_model == "Upload File") and not is_voc
         show_kokoro = (current_tts_engine == "Kokoro") and not is_inst
         show_f5 = (current_tts_engine == "F5-TTS") and not is_inst
         show_indextts = (current_tts_engine == "IndexTTS-2") and not is_inst
@@ -1132,6 +1164,7 @@ with gr.Blocks(
             gr.update(visible=show_acestep),  # acestep_quality
             gr.update(visible=show_acestep),  # acestep_metadata
             gr.update(visible=show_lyria),    # lyria_settings
+            gr.update(visible=show_upload),   # upload_settings
             gr.update(visible=show_f5),       # f5_settings
             gr.update(visible=show_indextts), # indextts_settings
         )
@@ -1139,19 +1172,25 @@ with gr.Blocks(
     generation_mode.change(
         fn=toggle_mode_settings,
         inputs=[generation_mode, music_model_dropdown, tts_engine_radio],
-        outputs=[script_input, music_prompt, music_duration, kokoro_settings, speed_slider, duck_slider, reverb_slider, reference_audio, acestep_quality, acestep_metadata, lyria_settings, f5_settings, indextts_settings],
+        outputs=[script_input, music_prompt, music_duration, kokoro_settings, speed_slider, duck_slider, reverb_slider, reference_audio, acestep_quality, acestep_metadata, lyria_settings, upload_settings, f5_settings, indextts_settings],
     )
 
     def toggle_music_engine_ui(model, mode):
         is_acestep = model == "ACE-Step 1.5"
         is_lyria = model == "Lyria RealTime"
+        is_upload = model == "Upload File"
         is_voc = mode == "Vocals Only"
-        return gr.update(visible=is_acestep and not is_voc), gr.update(visible=is_acestep and not is_voc), gr.update(visible=is_lyria and not is_voc)
+        return (
+            gr.update(visible=is_acestep and not is_voc),  # acestep_quality
+            gr.update(visible=is_acestep and not is_voc),  # acestep_metadata
+            gr.update(visible=is_lyria and not is_voc),    # lyria_settings
+            gr.update(visible=is_upload and not is_voc),   # upload_settings
+        )
 
     music_model_dropdown.change(
         fn=toggle_music_engine_ui,
         inputs=[music_model_dropdown, generation_mode],
-        outputs=[acestep_quality, acestep_metadata, lyria_settings],
+        outputs=[acestep_quality, acestep_metadata, lyria_settings, upload_settings],
     )
 
     def toggle_tts_engine_ui(tts_engine, mode):
@@ -1218,6 +1257,7 @@ with gr.Blocks(
             indextts_emotion_dropdown,
             indextts_emotion_audio,
             indextts_speed_slider,
+            uploaded_music,
         ],
         outputs=[audio_output, status_display],
         show_progress="full",
