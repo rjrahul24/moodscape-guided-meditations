@@ -238,7 +238,6 @@ def generate_meditation(
         if not os.environ.get("GOOGLE_API_KEY", "").strip():
             yield None, _render_status("Error: GOOGLE_API_KEY missing", 0.0, "Please check your .env file")
             return
-        music_model = "acestep"  # safe default
     elif music_model_choice == "Upload File":
         music_model = "upload"
         # Validate that an instrumental file was provided and is a supported format.
