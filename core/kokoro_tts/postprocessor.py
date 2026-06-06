@@ -21,9 +21,11 @@ Three processing stages tailored to Kokoro-82M's specific output characteristics
 """
 
 import logging
+import os
 
 import numpy as np
 import noisereduce as nr
+from scipy.signal import butter, sosfiltfilt
 from pedalboard import (
     Compressor,
     HighpassFilter,
@@ -239,7 +241,7 @@ def apply_segment_fades(speech_audio: np.ndarray) -> np.ndarray:
 def reduce_synthesis_noise(
     audio: np.ndarray,
     sr: int = SAMPLE_RATE,
-    prop_decrease: float = 0.7,
+    prop_decrease: float = 0.3,
     n_std_thresh: float = 2.0,
 ) -> np.ndarray:
     """Remove low-level synthesis hiss via stationary spectral gating.
@@ -249,16 +251,19 @@ def reduce_synthesis_noise(
     stationary mode — assumes a consistent noise profile across the signal,
     which matches Kokoro's ISTFTNet vocoder hiss characteristics.
 
-    Tuned per audio-opt research: prop_decrease=0.7 for aggressive gating
-    (TTS noise is consistent/predictable), n_fft=512 for optimal spectral
-    resolution, freq_mask_smooth_hz=300 smooths the spectral gate to
-    prevent sharp on/off ringing ("musical noise").
+    Tuned per KokoroV2 research: spectral gating on already-clean TTS strips
+    breath and introduces "musical noise", so prop_decrease defaults to a
+    gentle 0.3 (was 0.7). The call site (engine.py) gates this off entirely
+    by default and relies on the light DeepFilterNet wet blend instead — this
+    function stays available for A/B via MOODSCAPE_KOKORO_SPECTRAL_GATE.
+    n_fft=512 gives good spectral resolution; freq_mask_smooth_hz=300 smooths
+    the gate to prevent sharp on/off ringing.
 
     Args:
         audio:         1-D float32 audio at sr.
         sr:            Sample rate (default 24 kHz).
         prop_decrease: How much to reduce detected noise (0.0–1.0).
-                       0.7 is aggressive but safe for TTS speech.
+                       0.3 is gentle; higher values risk stripping breath.
         n_std_thresh:  Number of standard deviations above noise mean to
                        consider as "signal". Higher = more conservative.
     """
@@ -279,6 +284,92 @@ def reduce_synthesis_noise(
     except Exception as e:
         logger.warning("Spectral gating failed: %s — returning original audio", e)
         return audio
+
+
+# =====================================================================
+# Stage 2c: De-essing and parallel compression (KokoroV2 research)
+# =====================================================================
+
+def split_band_deess(
+    audio: np.ndarray,
+    sr: int = SAMPLE_RATE,
+    center_freq: float = 6500.0,
+    bandwidth: float = 3000.0,
+    threshold_db: float = -24.0,
+    ratio: float = 3.0,
+) -> np.ndarray:
+    """Dynamic split-band de-esser for ISTFTNet sibilant harshness (5–8 kHz).
+
+    Kokoro's ISTFTNet vocoder produces high-frequency harshness in the
+    sibilant/presence region that the compressor amplifies. Ports the proven
+    F5/IndexTTS approach (KokoroV2 research §4): split the signal into a
+    sibilant band (default 5–8 kHz) and the rest, compress only the sibilant
+    band, then recombine. Applied AFTER the compressor so it catches sibilance
+    the compressor brings up. No-op if the band is empty.
+
+    Args:
+        audio:        1-D float32 audio at sr.
+        sr:           Sample rate (default 24 kHz).
+        center_freq:  Sibilant band centre (6.5 kHz → 5–8 kHz band).
+        bandwidth:    Band width in Hz.
+        threshold_db: Compressor threshold on the sibilant band.
+        ratio:        Compressor ratio on the sibilant band.
+    """
+    nyquist = sr / 2.0
+    low = max((center_freq - bandwidth / 2.0) / nyquist, 0.01)
+    high = min((center_freq + bandwidth / 2.0) / nyquist, 0.99)
+    if low >= high:
+        return audio.astype(np.float32)
+
+    try:
+        sos = butter(4, [low, high], btype="band", output="sos")
+        sibilant_band = sosfiltfilt(sos, audio)
+        non_sibilant = audio - sibilant_band
+
+        comp = Compressor(
+            threshold_db=threshold_db,
+            ratio=ratio,
+            attack_ms=0.5,
+            release_ms=12.0,
+        )
+        s_2d = sibilant_band.reshape(1, -1) if sibilant_band.ndim == 1 else sibilant_band
+        compressed_sibilant = comp(s_2d, sr).squeeze(0)
+        return (non_sibilant + compressed_sibilant).astype(np.float32)
+    except Exception as e:
+        logger.warning("De-essing failed: %s — returning original audio", e)
+        return audio.astype(np.float32)
+
+
+def apply_parallel_compression(
+    audio: np.ndarray,
+    sr: int = SAMPLE_RATE,
+    blend_db: float = -12.0,
+) -> np.ndarray:
+    """Blend a heavily-compressed parallel bus low for presence/intimacy.
+
+    KokoroV2 research §4: a parallel "New York" compression bus adds presence
+    to soft meditation delivery without flattening dynamics. The parallel path
+    is high-passed at 120 Hz first so low-energy breath transients aren't
+    pumped up and become distractingly loud, then summed back at blend_db.
+
+    Note: summing after the main chain's limiter can exceed the −1 dBTP
+    ceiling; callers should clip afterwards.
+    """
+    try:
+        bus = Pedalboard([
+            HighpassFilter(cutoff_frequency_hz=120.0),
+            Compressor(threshold_db=-35, ratio=6.0, attack_ms=5.0, release_ms=120.0),
+        ])
+        a_2d = audio.reshape(1, -1) if audio.ndim == 1 else audio
+        wet = bus(a_2d, sr).squeeze(0)
+        gain = float(10 ** (blend_db / 20.0))
+        n = min(len(audio), len(wet))
+        out = audio.copy().astype(np.float32)
+        out[:n] = out[:n] + wet[:n] * gain
+        return out
+    except Exception as e:
+        logger.warning("Parallel compression failed: %s — returning original audio", e)
+        return audio.astype(np.float32)
 
 
 # =====================================================================
@@ -474,9 +565,10 @@ def build_voice_chain(reverb_amount: float = 0.18, ir_name: str = "warm_studio")
       2. HPF 80 Hz (12dB/oct): removes sub-bass rumble and plosive energy.
       3. PeakFilter -2.5 dB @ 400 Hz (Q=1.0): mud cut for ISTFTNet boxy
          resonance in the low-mid region.
-      4. LowShelf +1.5 dB @ 200 Hz: warmth / close-mic proximity effect.
-         Research: +3dB low-shelf at 120-200Hz simulates proximity effect;
-         +1.5 dB is conservative to avoid boominess on headphones.
+      4. LowShelf +2.5 dB @ 180 Hz (env-tunable) + PeakFilter +1 dB @ 120 Hz:
+         warmth / close-mic proximity effect. KokoroV2 research §8: +2–3 dB
+         low-shelf at 150–250 Hz plus a resonance bump above the HPF cutoff
+         restores chest/body. The 400 Hz mud cut contains any boom.
       5. Compressor 2.5:1 @ -28 dB, 15ms/150ms: catches whisper-level
          meditation delivery that fell below the old -22 dB threshold.
          ~2-3 dB additional GR on soft phrases — transparent but consistent.
@@ -497,13 +589,21 @@ def build_voice_chain(reverb_amount: float = 0.18, ir_name: str = "warm_studio")
     reverb_amount = float(np.clip(reverb_amount, 0.0, 0.5))
     ir_path = IR_CATALOG.get(ir_name, IR_CATALOG[DEFAULT_IR])["path"]
 
+    # Proximity / warmth (KokoroV2 research §8): a +2–3 dB low-shelf at
+    # 150–250 Hz plus a slight resonance bump just above the HPF cutoff
+    # restores close-mic chest/body without the mud cut letting it boom.
+    # Defaults nudged from +1.5 dB @ 200 Hz to +2.5 dB @ 180 Hz; env-tunable.
+    prox_gain = float(os.environ.get("MOODSCAPE_KOKORO_PROXIMITY_DB", "2.5"))
+    prox_hz = float(os.environ.get("MOODSCAPE_KOKORO_PROXIMITY_HZ", "180"))
+
     return Pedalboard([
         # ── Cleanup ──
         NoiseGate(threshold_db=-40, ratio=2.5, attack_ms=1.0, release_ms=100),
         HighpassFilter(cutoff_frequency_hz=80.0),
         # ── Tone shaping ──
         PeakFilter(cutoff_frequency_hz=400, gain_db=-2.5, q=1.0),
-        LowShelfFilter(cutoff_frequency_hz=200, gain_db=1.5),
+        LowShelfFilter(cutoff_frequency_hz=prox_hz, gain_db=prox_gain),
+        PeakFilter(cutoff_frequency_hz=120, gain_db=1.0, q=1.2),  # body above HPF
         # ── Dynamics ──
         # 2.5:1 @ -28 dB: catches whisper-level meditation delivery below the old -22 dB threshold.
         # ~2-3 dB additional GR on soft phrases — transparent but consistent.
@@ -550,35 +650,78 @@ def apply_soft_saturation(
     return (audio * (1.0 - wet) + saturated * wet).astype(np.float32)
 
 
+def _run_chain(chain: Pedalboard, audio: np.ndarray, sample_rate: int) -> np.ndarray:
+    """Run a Pedalboard chain on a 1-D float32 buffer, returning 1-D float32."""
+    is_1d = audio.ndim == 1
+    audio_2d = audio.reshape(1, -1) if is_1d else audio
+    processed = chain(audio_2d, sample_rate)
+    return processed.squeeze(0) if is_1d else processed
+
+
 def apply_fx(
     audio: np.ndarray,
     chain: Pedalboard,
     sample_rate: int = SAMPLE_RATE,
     tape_saturation: bool = True,
+    engine: str | None = None,
 ) -> np.ndarray:
     """Apply soft saturation + Pedalboard FX chain to an audio array.
 
-    Research-spec soft saturation runs before the Pedalboard chain,
-    adding subtle even harmonics for perceived warmth. The saturation
-    formula (12% wet tanh blend) is from the audio optimization research.
-    Disable with tape_saturation=False for raw processing.
+    Research-spec soft saturation runs before the Pedalboard chain by default,
+    adding subtle even harmonics for perceived warmth. The saturation formula
+    (12% wet tanh blend) is from the audio optimization research. Disable with
+    tape_saturation=False for raw processing.
+
+    This function is shared by the Kokoro, F5 and IndexTTS voice chains. The
+    KokoroV2-research extras below (saturation reorder, de-essing, parallel
+    compression) apply ONLY when engine == "kokoro", so F5/IndexTTS — which
+    already de-ess in their mastering phase — are unaffected.
+
+    Kokoro-only env flags:
+      MOODSCAPE_KOKORO_SAT_PLACEMENT  "pre" (default) | "pre_reverb"
+      MOODSCAPE_KOKORO_DEESS          "1" (default on) | "0"
+      MOODSCAPE_KOKORO_PARALLEL_COMP  "0" (default off) | "1"
     """
     audio = np.clip(audio.astype(np.float32), -1.0, 1.0)
+    is_kokoro = engine == "kokoro"
 
-    # Soft saturation: subtle harmonic warmth (research formula)
-    if tape_saturation:
+    placement = (
+        os.environ.get("MOODSCAPE_KOKORO_SAT_PLACEMENT", "pre") if is_kokoro else "pre"
+    )
+
+    # Soft saturation (pre-chain) — research-spec default for all engines.
+    if tape_saturation and placement != "pre_reverb":
         audio = apply_soft_saturation(audio)
 
-    is_1d = audio.ndim == 1
-    if is_1d:
-        audio_2d = audio.reshape(1, -1)
+    if tape_saturation and placement == "pre_reverb":
+        # KokoroV2 research §4: saturate shaped tone, not raw signal — place
+        # saturation after tone EQ/compression, just before the reverb. Split
+        # the chain at the first Convolution (reverb) plugin.
+        plugins = list(chain)
+        split_idx = next(
+            (i for i, p in enumerate(plugins) if isinstance(p, Convolution)), None
+        )
+        if split_idx is not None:
+            pre = Pedalboard(plugins[:split_idx])
+            post = Pedalboard(plugins[split_idx:])
+            result = _run_chain(pre, audio, sample_rate)
+            result = apply_soft_saturation(result)
+            result = _run_chain(post, result, sample_rate)
+        else:
+            # No reverb in chain — fall back to pre-chain saturation.
+            result = _run_chain(chain, apply_soft_saturation(audio), sample_rate)
     else:
-        audio_2d = audio
-    processed = chain(audio_2d, sample_rate)
-    if is_1d:
-        result = processed.squeeze(0)
-    else:
-        result = processed
+        result = _run_chain(chain, audio, sample_rate)
+
+    # De-essing (Kokoro only) — after the compressor (which is inside the chain)
+    # to catch sibilance the compressor brings up. ISTFTNet harshness sits at 5–8 kHz.
+    if is_kokoro and os.environ.get("MOODSCAPE_KOKORO_DEESS", "1") == "1":
+        result = split_band_deess(result, sample_rate)
+
+    # Parallel compression bus (Kokoro only, default off) — presence/intimacy.
+    if is_kokoro and os.environ.get("MOODSCAPE_KOKORO_PARALLEL_COMP", "0") == "1":
+        result = apply_parallel_compression(result, sample_rate)
+
     # Do NOT truncate to input length — this would clip the convolution reverb tail.
     # The pipeline (pipeline.py) reconciles voice_activity length after apply_fx().
     return np.clip(result, -1.0, 1.0).astype(np.float32)

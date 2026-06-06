@@ -7,6 +7,7 @@ normalization, crossfading, segment fades).
 
 import gc
 import logging
+import os
 import random
 
 import numpy as np
@@ -252,7 +253,17 @@ class KokoroEngine(SpeechEngine):
 
                 for s_idx, sentence in enumerate(sentences):
                     sentence_speed = annotate_speed(sentence, speed)
-                    sentence_voice = add_voice_jitter(resolved_voice)
+                    # Fixed-style-per-session (KokoroV2 research): re-deriving the
+                    # style vector per sentence drives inter-chunk prosody drift, so
+                    # reuse the once-resolved tensor unchanged by default. Cold-start
+                    # is still masked by the 100ms segment fade-in + pyworld humanize.
+                    # MOODSCAPE_KOKORO_VOICE_JITTER>0 restores per-sentence jitter.
+                    _jitter = float(os.environ.get("MOODSCAPE_KOKORO_VOICE_JITTER", "0.0"))
+                    sentence_voice = (
+                        add_voice_jitter(resolved_voice, amount=_jitter)
+                        if _jitter > 0.0
+                        else resolved_voice
+                    )
                     gen = pipe(
                         sentence,
                         voice=sentence_voice,
@@ -325,8 +336,15 @@ class KokoroEngine(SpeechEngine):
         voice_activity = np.concatenate(activity_chunks)
 
         # Stage 2c: Spectral gating — remove low-level ISTFTNet synthesis hiss.
-        # Runs on the full assembled audio so the noise profile estimate is stable.
-        voice_audio = reduce_synthesis_noise(voice_audio, sr=SAMPLE_RATE)
+        # Off by default (KokoroV2 research): the light DeepFilterNet wet blend
+        # downstream handles the noise floor without stripping breath, and
+        # stacking two denoisers degrades already-clean TTS. Re-enable / tune via
+        # MOODSCAPE_KOKORO_SPECTRAL_GATE (the prop_decrease value; 0 = off).
+        _gate = float(os.environ.get("MOODSCAPE_KOKORO_SPECTRAL_GATE", "0.0"))
+        if _gate > 0.0:
+            voice_audio = reduce_synthesis_noise(
+                voice_audio, sr=SAMPLE_RATE, prop_decrease=_gate
+            )
 
         return voice_audio, voice_activity
 

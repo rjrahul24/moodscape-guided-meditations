@@ -9,6 +9,9 @@ from core.kokoro_tts.postprocessor import (
     process_chunk,
     crossfade_chunks,
     apply_segment_fades,
+    apply_fx,
+    split_band_deess,
+    apply_parallel_compression,
     normalize_chunk_rms,
     SAMPLE_RATE,
 )
@@ -153,6 +156,101 @@ class TestBuildVoiceChainParameters(unittest.TestCase):
         chain = build_voice_chain(reverb_amount=0.10)
         convolution = next((p for p in chain if isinstance(p, Convolution)), None)
         self.assertAlmostEqual(convolution.mix, 0.10, places=2)
+
+
+class TestSplitBandDeess(unittest.TestCase):
+    def _tone(self, freq, dur=0.5, amp=0.5):
+        t = np.arange(int(dur * SAMPLE_RATE)) / SAMPLE_RATE
+        return (amp * np.sin(2 * np.pi * freq * t)).astype(np.float32)
+
+    def test_attenuates_sibilant_band(self):
+        # A loud 6.5 kHz tone sits inside the de-esser band and should be reduced.
+        sib = self._tone(6500, amp=0.7)
+        out = split_band_deess(sib, sr=SAMPLE_RATE)
+        self.assertLess(
+            np.sqrt(np.mean(out ** 2)),
+            np.sqrt(np.mean(sib ** 2)),
+            "6.5 kHz energy should be attenuated by the de-esser",
+        )
+
+    def test_preserves_low_band(self):
+        # A 200 Hz tone is well outside the band and should pass ~unchanged.
+        low = self._tone(200, amp=0.5)
+        out = split_band_deess(low, sr=SAMPLE_RATE)
+        rms_in = np.sqrt(np.mean(low ** 2))
+        rms_out = np.sqrt(np.mean(out ** 2))
+        self.assertAlmostEqual(rms_out, rms_in, delta=rms_in * 0.1)
+
+    def test_float32_output(self):
+        out = split_band_deess(self._tone(6500), sr=SAMPLE_RATE)
+        self.assertEqual(out.dtype, np.float32)
+
+
+class TestParallelCompression(unittest.TestCase):
+    def test_float32_and_finite(self):
+        t = np.arange(SAMPLE_RATE // 2) / SAMPLE_RATE
+        sig = (0.2 * np.sin(2 * np.pi * 300 * t)).astype(np.float32)
+        out = apply_parallel_compression(sig, sr=SAMPLE_RATE)
+        self.assertEqual(out.dtype, np.float32)
+        self.assertTrue(np.all(np.isfinite(out)))
+        self.assertEqual(len(out), len(sig))
+
+
+class TestApplyFxKokoroFlags(unittest.TestCase):
+    def setUp(self):
+        t = np.arange(SAMPLE_RATE // 2) / SAMPLE_RATE
+        # Mix of a mid tone + a strong sibilant tone.
+        self.sig = (
+            0.3 * np.sin(2 * np.pi * 300 * t)
+            + 0.4 * np.sin(2 * np.pi * 6500 * t)
+        ).astype(np.float32)
+        self.chain = build_voice_chain()
+
+    def test_deess_off_is_passthrough_vs_on(self):
+        with patch.dict('os.environ', {'MOODSCAPE_KOKORO_DEESS': '0'}):
+            off = apply_fx(self.sig, build_voice_chain(), SAMPLE_RATE, engine='kokoro')
+        with patch.dict('os.environ', {'MOODSCAPE_KOKORO_DEESS': '1'}):
+            on = apply_fx(self.sig, build_voice_chain(), SAMPLE_RATE, engine='kokoro')
+        n = min(len(off), len(on))
+        # De-essing should change the output (reduce sibilant energy).
+        self.assertFalse(np.allclose(off[:n], on[:n], atol=1e-6))
+
+    def test_non_kokoro_engine_ignores_kokoro_flags(self):
+        # With engine != "kokoro", de-essing/parallel comp must not run even
+        # if flags are set — F5/IndexTTS handle de-essing in their mastering.
+        with patch.dict('os.environ', {
+            'MOODSCAPE_KOKORO_DEESS': '1',
+            'MOODSCAPE_KOKORO_PARALLEL_COMP': '1',
+        }):
+            f5 = apply_fx(self.sig, build_voice_chain(), SAMPLE_RATE, engine='f5')
+            none = apply_fx(self.sig, build_voice_chain(), SAMPLE_RATE, engine=None)
+        n = min(len(f5), len(none))
+        self.assertTrue(np.allclose(f5[:n], none[:n], atol=1e-6))
+
+    def test_output_within_peak_ceiling(self):
+        with patch.dict('os.environ', {'MOODSCAPE_KOKORO_PARALLEL_COMP': '1'}):
+            out = apply_fx(self.sig, build_voice_chain(), SAMPLE_RATE, engine='kokoro')
+        self.assertLessEqual(np.max(np.abs(out)), 1.0)
+
+    def test_saturation_reorder_runs(self):
+        with patch.dict('os.environ', {'MOODSCAPE_KOKORO_SAT_PLACEMENT': 'pre_reverb'}):
+            out = apply_fx(self.sig, build_voice_chain(), SAMPLE_RATE, engine='kokoro')
+        self.assertEqual(out.dtype, np.float32)
+        self.assertTrue(np.all(np.isfinite(out)))
+
+
+class TestProximityEqEnv(unittest.TestCase):
+    def test_proximity_gain_env_respected(self):
+        from pedalboard import LowShelfFilter
+        with patch.dict('os.environ', {
+            'MOODSCAPE_KOKORO_PROXIMITY_DB': '3.0',
+            'MOODSCAPE_KOKORO_PROXIMITY_HZ': '160',
+        }):
+            chain = build_voice_chain()
+        shelf = next((p for p in chain if isinstance(p, LowShelfFilter)), None)
+        self.assertIsNotNone(shelf)
+        self.assertAlmostEqual(shelf.gain_db, 3.0, places=2)
+        self.assertAlmostEqual(shelf.cutoff_frequency_hz, 160.0, places=1)
 
 
 if __name__ == '__main__':

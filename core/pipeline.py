@@ -304,7 +304,15 @@ class MeditationPipeline:
                     # IndexTTS-2's BigVGANv2 output is already clean — full-strength
                     # denoising strips natural breaths and yields an "AI voice". Use a
                     # light wet blend there; keep stronger denoising for noisier engines.
-                    df_wet = 0.10 if tts_engine == "indextts" else 1.0
+                    # Kokoro's ISTFTNet output is also clean enough that full-strength
+                    # denoising strips breath/naturalness (KokoroV2 research): use a light
+                    # wet blend by default. Override via MOODSCAPE_KOKORO_DF_WET (0 = off).
+                    if tts_engine == "indextts":
+                        df_wet = 0.10
+                    elif tts_engine == "kokoro":
+                        df_wet = float(os.environ.get("MOODSCAPE_KOKORO_DF_WET", "0.25"))
+                    else:
+                        df_wet = 1.0
                     voice_audio = enhance_voice_deepfilter(voice_audio, sr=mix_sr, wet=df_wet)
 
                 # F5-TTS Phase B mastering (Kokoro skips — unified voice chain in Step 7)
@@ -472,7 +480,7 @@ class MeditationPipeline:
                 else:
                     from core.kokoro_tts.postprocessor import build_voice_chain, apply_fx
                     voice_chain = build_voice_chain(reverb_amount=reverb_amount, ir_name=reverb_ir)
-                voice_audio = apply_fx(voice_audio, voice_chain, mix_sr)
+                voice_audio = apply_fx(voice_audio, voice_chain, mix_sr, engine=tts_engine)
 
                 # Align voice_activity to post-FX voice length (reverb tail trim
                 # may change length slightly)

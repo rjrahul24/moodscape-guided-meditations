@@ -7,6 +7,7 @@ Consolidates all preprocessing steps tailored to Kokoro-82M:
   4. Token-aware chunking: sentences merged into 100–150 token chunks
 """
 
+import os
 import re
 
 from core.text_utils import expand_text as expand_for_tts
@@ -502,7 +503,12 @@ def preprocess_for_meditation(text: str) -> str:
     text = expand_for_tts(text)
     text = _convert_to_contractions(text)
     text = inject_phonemes(text)
-    text = _apply_stress_markers(text)       # step 4 — after IPA so collision guard works
+    # KokoroV2 research flags the [word](+1)/(-1) relative-stress syntax as not
+    # canonical misaki — likely inert. Flag-gated (default on, preserving current
+    # behavior) so an A/B with MOODSCAPE_KOKORO_STRESS_MARKERS=0 can confirm whether
+    # the markers change output before deciding on the IPA-based replacement.
+    if os.environ.get("MOODSCAPE_KOKORO_STRESS_MARKERS", "1") == "1":
+        text = _apply_stress_markers(text)   # step 4 — after IPA so collision guard works
     text = enhance_prosody_punctuation(text)
     text = _inject_sensory_ellipses(text)
     text = _vary_sentence_lengths(text)
