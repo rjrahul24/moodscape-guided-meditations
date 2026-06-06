@@ -2,13 +2,13 @@
 
 Directory layout (relative to project root):
 
-    assets/speakers/              — 24 kHz, 16-bit PCM .wav files (shared pool;
-                                    also used by IndexTTS-2)
-    assets/speakers/transcripts/  — verbatim .txt transcripts (F5-only)
+    assets/speakers/reference_audio/  — 24 kHz, 16-bit PCM .wav files (shared
+                                        pool; also used by IndexTTS-2)
+    assets/speakers/reference_text/   — verbatim .txt transcripts (F5-only)
 
 A voice slug is derived from the filename without extension, e.g.:
-    assets/speakers/calm_brittney.wav
-    assets/speakers/transcripts/calm_brittney.txt
+    assets/speakers/reference_audio/calm_brittney.wav
+    assets/speakers/reference_text/calm_brittney.txt
     → slug: "calm_brittney"
 
 A voice is only registered with F5 if both the .wav AND the matching .txt file
@@ -36,9 +36,10 @@ logger = logging.getLogger(__name__)
 
 # Asset directories, anchored to the project root (three levels up from this file)
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
-_AUDIO_DIR = _PROJECT_ROOT / "assets" / "speakers"
-_TRANSCRIPT_DIR = _AUDIO_DIR / "transcripts"
-_VOICES_TOML = _AUDIO_DIR / "voices.toml"
+_SPEAKERS_DIR = _PROJECT_ROOT / "assets" / "speakers"
+_AUDIO_DIR = _SPEAKERS_DIR / "reference_audio"
+_TRANSCRIPT_DIR = _SPEAKERS_DIR / "reference_text"
+_VOICES_TOML = _SPEAKERS_DIR / "voices.toml"
 
 
 def scan() -> dict[str, dict[str, dict[str, Path | str]]]:
@@ -61,7 +62,7 @@ def scan() -> dict[str, dict[str, dict[str, Path | str]]]:
 
         if not _TRANSCRIPT_DIR.is_dir():
             logger.warning(
-                "F5-TTS reference_transcript directory not found: %s", _TRANSCRIPT_DIR
+                "F5-TTS reference_text directory not found: %s", _TRANSCRIPT_DIR
             )
             break
 

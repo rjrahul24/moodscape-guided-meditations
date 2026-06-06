@@ -44,8 +44,8 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 │   ├── breath_sounds/                # [breath]/[inhale]/[exhale] samples
 │   ├── impulse_responses/            # convolution reverb IRs
 │   ├── speakers/                     # shared voice pool (F5 + IndexTTS)
-│   │   ├── *.wav                     #   speaker reference clips
-│   │   ├── transcripts/*.txt         #   F5-only transcripts (paired by slug)
+│   │   ├── reference_audio/*.wav     #   speaker reference clips (both engines)
+│   │   ├── reference_text/*.txt      #   F5-only transcripts (paired by slug)
 │   │   └── voices.toml               #   F5 multi-phase definitions
 │   └── emotions/                     # IndexTTS-only emotion references
 ├── models/                           # gitignored; all model weights

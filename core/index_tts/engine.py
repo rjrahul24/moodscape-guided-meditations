@@ -4,7 +4,7 @@ Voice identity is resolved at construction time via a voice slug that maps to
 a speaker reference WAV file in assets/speakers/:
 
     IndexTTSEngine(voice_slug="calm_meditation")
-    # loads: assets/speakers/calm_meditation.wav
+    # loads: assets/speakers/reference_audio/calm_meditation.wav
 
 Emotion control is applied via an optional emotion reference WAV from
 assets/emotions/, or a user-uploaded emotion audio file.
@@ -597,7 +597,7 @@ class IndexTTSEngine(SpeechEngine):
         voices = voice_registry.scan_voices()
         if not voices:
             return [{"id": "none", "name": "No voices registered",
-                     "description": "Add .wav files to assets/speakers/"}]
+                     "description": "Add .wav files to assets/speakers/reference_audio/"}]
         return [
             {
                 "id": slug,

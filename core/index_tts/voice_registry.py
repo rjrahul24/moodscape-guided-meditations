@@ -1,19 +1,19 @@
 """VoiceRegistry for IndexTTS-2 — scans and validates speaker and emotion assets.
 
 IndexTTS-2 uses two types of reference audio:
-  1. Speaker references (voice cloning) — stored in assets/speakers/
+  1. Speaker references (voice cloning) — stored in assets/speakers/reference_audio/
   2. Emotion references (emotion control) — stored in assets/emotions/
 
-`assets/speakers/` is a SHARED pool also consumed by F5-TTS. IndexTTS-2 picks up
-every .wav in that directory; F5-TTS only picks up the ones with matching .txt
-transcripts under assets/speakers/transcripts/.
+`assets/speakers/reference_audio/` is a SHARED pool also consumed by F5-TTS.
+IndexTTS-2 picks up every .wav in that directory; F5-TTS only picks up the ones
+with matching .txt transcripts under assets/speakers/reference_text/.
 
 Unlike F5-TTS, IndexTTS-2 does NOT require verbatim transcripts — it performs
 its own speech analysis from the reference audio.
 
 Directory layout (relative to project root):
-    assets/speakers/    — 24 kHz, 16-bit PCM .wav files (shared with F5-TTS)
-    assets/emotions/    — 24 kHz, 16-bit PCM .wav files (IndexTTS-only)
+    assets/speakers/reference_audio/  — 24 kHz, 16-bit PCM .wav files (shared with F5-TTS)
+    assets/emotions/                  — 24 kHz, 16-bit PCM .wav files (IndexTTS-only)
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Asset directories, anchored to the project root (three levels up from this file)
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
-_VOCALS_DIR = _PROJECT_ROOT / "assets" / "speakers"
+_VOCALS_DIR = _PROJECT_ROOT / "assets" / "speakers" / "reference_audio"
 _EMOTIONS_DIR = _PROJECT_ROOT / "assets" / "emotions"
 
 # Reference-audio hygiene thresholds (Conformer encoder + zero-shot timbre quality).
@@ -92,17 +92,17 @@ def _validate_reference(path: Path, kind: str) -> None:
 
 
 def scan_voices() -> dict[str, dict[str, Path]]:
-    """Scan assets/speakers/ for speaker reference audio files.
+    """Scan assets/speakers/reference_audio/ for speaker reference audio files.
 
     Returns mapping:
         voice_slug -> {"audio": Path}
 
-    Each .wav file in assets/speakers/ becomes a selectable voice. The slug is
-    derived from the filename without extension:
+    Each .wav file in assets/speakers/reference_audio/ becomes a selectable voice.
+    The slug is derived from the filename without extension:
         calm_meditation.wav -> slug: "calm_meditation"
 
     The directory is shared with F5-TTS; F5 only uses voices with matching
-    transcripts under assets/speakers/transcripts/.
+    transcripts under assets/speakers/reference_text/.
     """
     registry: dict[str, dict[str, Path]] = {}
 
@@ -121,8 +121,7 @@ def scan_voices() -> dict[str, dict[str, Path]]:
     if not registry:
         logger.warning(
             "No IndexTTS-2 voices found. "
-            "Add .wav files (24 kHz mono, 5-10s) to '%s'.",
-            _VOCALS_DIR,
+            "Add .wav files (24 kHz mono, 5-10s) to assets/speakers/reference_audio/.",
         )
 
     return registry
@@ -169,7 +168,7 @@ def get_voice(slug: str) -> dict[str, Path]:
         raise FileNotFoundError(
             f"IndexTTS-2 voice '{slug}' not found. "
             f"Available voices: {sorted(registry.keys()) or '(none)'}. "
-            f"Add .wav files to '{_VOCALS_DIR}'."
+            f"Add .wav files to assets/speakers/reference_audio/."
         )
     return registry[slug]
 

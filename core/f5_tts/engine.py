@@ -4,8 +4,8 @@ Voice identity is resolved at construction time via a voice slug that maps to a
 registered asset pair in the VoiceRegistry:
 
     F5Engine(voice_slug="calm_brittney")
-    # loads: assets/speakers/calm_brittney.wav
-    #        assets/speakers/transcripts/calm_brittney.txt
+    # loads: assets/speakers/reference_audio/calm_brittney.wav
+    #        assets/speakers/reference_text/calm_brittney.txt
 
 If no slug is given, the engine picks the first available registered voice.
 A FileNotFoundError is raised at construction time (not at inference time) if
@@ -221,10 +221,9 @@ class F5Engine(SpeechEngine):
         else:
             raise FileNotFoundError(
                 "No F5-TTS voice assets found. "
-                "Add 24 kHz mono .wav files to "
-                "assets/speakers/ and matching verbatim "
-                ".txt transcripts to assets/speakers/transcripts/ "
-                "to register at least one voice."
+                "Add 24 kHz mono .wav files to assets/speakers/reference_audio/ "
+                "and matching verbatim .txt transcripts to "
+                "assets/speakers/reference_text/ to register at least one voice."
             )
 
         self._voice_slug = resolved_slug
@@ -517,7 +516,7 @@ class F5Engine(SpeechEngine):
         registry = voice_registry.scan()
         if not registry:
             return [{"id": "none", "name": "No voices registered",
-                     "description": "Add .wav + .txt pairs to assets/speakers/"}]
+                     "description": "Add .wav + .txt pairs to assets/speakers/reference_audio/ and reference_text/"}]
         return [
             {
                 "id": slug,
