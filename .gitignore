@@ -18,6 +18,9 @@ build/
 !assets/**/*.wav
 !assets/**/*.mp3
 
+# Background assets (large collection, generated locally)
+/assets/backgrounds/
+
 # macOS
 .DS_Store
 
