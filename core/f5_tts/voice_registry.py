@@ -2,9 +2,8 @@
 
 Directory layout (relative to project root):
 
-    assets/speakers/reference_audio/  — 24 kHz, 16-bit PCM .wav files (shared
-                                        pool; also used by IndexTTS-2)
-    assets/speakers/reference_text/   — verbatim .txt transcripts (F5-only)
+    assets/speakers/reference_audio/  — 24 kHz, 16-bit PCM .wav files (F5-TTS-only)
+    assets/speakers/reference_text/   — verbatim .txt transcripts (F5-TTS-only)
 
 A voice slug is derived from the filename without extension, e.g.:
     assets/speakers/reference_audio/calm_brittney.wav
@@ -67,9 +66,8 @@ def scan() -> dict[str, dict[str, dict[str, Path | str]]]:
             break
 
         if not txt_path.is_file():
-            # Expected: IndexTTS-only voices share assets/speakers/ but have no transcripts.
             logger.debug(
-                "F5 voice '%s' skipped — no transcript at %s (IndexTTS-only voice?)",
+                "F5 voice '%s' skipped — no transcript at %s",
                 slug, txt_path,
             )
             continue

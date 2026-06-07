@@ -1,10 +1,10 @@
 """IndexTTS-2 engine — wraps IndexTTS2 for zero-shot voice cloning with emotion control.
 
 Voice identity is resolved at construction time via a voice slug that maps to
-a speaker reference WAV file in assets/speakers/:
+a speaker reference WAV file in assets/speakers/index_tts_voices/:
 
     IndexTTSEngine(voice_slug="calm_meditation")
-    # loads: assets/speakers/reference_audio/calm_meditation.wav
+    # loads: assets/speakers/index_tts_voices/calm_meditation.wav
 
 Emotion control is applied via an optional emotion reference WAV from
 assets/emotions/, or a user-uploaded emotion audio file.
@@ -260,7 +260,7 @@ class IndexTTSEngine(SpeechEngine):
         """Initialise the engine and resolve speaker + emotion assets.
 
         Args:
-            voice_slug: Voice identifier matching a .wav in assets/speakers/.
+            voice_slug: Voice identifier matching a .wav in assets/speakers/index_tts_voices/.
                 If None, the first alphabetically sorted voice is used.
             emotion_slug: Emotion identifier matching a .wav in assets/emotions/.
                 If None, no emotion reference is used (model defaults to neutral).
@@ -593,11 +593,11 @@ class IndexTTSEngine(SpeechEngine):
     # ── Voice catalogue ───────────────────────────────────────────────────────
 
     def get_available_voices(self) -> list[dict]:
-        """Return all registered voices from assets/speakers/."""
+        """Return all registered voices from assets/speakers/index_tts_voices/."""
         voices = voice_registry.scan_voices()
         if not voices:
             return [{"id": "none", "name": "No voices registered",
-                     "description": "Add .wav files to assets/speakers/reference_audio/"}]
+                     "description": "Add .wav files to assets/speakers/index_tts_voices/"}]
         return [
             {
                 "id": slug,
