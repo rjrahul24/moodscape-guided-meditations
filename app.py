@@ -63,6 +63,7 @@ from core.kokoro_tts.engine import KokoroEngine
 from core.pipeline import MeditationPipeline
 from core.f5_tts import voice_registry as _f5_registry
 from core.index_tts import voice_registry as _indextts_registry
+from core.upload_music import scan_backgrounds
 
 # Load environment variables (like HF_TOKEN) from .env file
 load_dotenv()
@@ -87,6 +88,13 @@ _INDEXTTS_EMOTION_REGISTRY = _indextts_registry.scan_emotions()
 INDEXTTS_EMOTION_SLUGS = sorted(_INDEXTTS_EMOTION_REGISTRY.keys())
 INDEXTTS_EMOTION_CHOICES = [("None (neutral)", "")] + [(slug.replace("_", " ").title(), slug) for slug in INDEXTTS_EMOTION_SLUGS]
 INDEXTTS_EMOTION_DEFAULT = INDEXTTS_EMOTION_CHOICES[0][1]
+
+# ── Background instrumental library (scanned at startup) ─────────────────────
+
+# (label, abs_path) pairs for the "Background Music" source dropdown.
+# label = "<Short Name> — MM:SS"; value = absolute file path fed to the engine.
+BACKGROUND_CHOICES = scan_backgrounds()
+BACKGROUND_DEFAULT = BACKGROUND_CHOICES[0][1] if BACKGROUND_CHOICES else None
 
 # ── Voice choices for Kokoro engine ──────────────────────────────────────────
 
@@ -238,13 +246,19 @@ def generate_meditation(
         if not os.environ.get("GOOGLE_API_KEY", "").strip():
             yield None, _render_status("Error: GOOGLE_API_KEY missing", 0.0, "Please check your .env file")
             return
-    elif music_model_choice == "Upload File":
+    elif music_model_choice == "Background Music":
         music_model = "upload"
-        # Validate that an instrumental file was provided and is a supported format.
+        # Validate that a background track was selected and still exists on disk.
         if not uploaded_music_file:
             yield None, _render_status(
-                "Error: No instrumental uploaded", 0.0,
-                "Upload an instrumental file or pick a different music engine.",
+                "Error: No background track selected", 0.0,
+                "Pick a track from assets/backgrounds/ or choose a different music engine.",
+            )
+            return
+        if not os.path.exists(uploaded_music_file):
+            yield None, _render_status(
+                "Error: Background track not found", 0.0,
+                "The selected track is no longer in assets/backgrounds/. Click ↻ to refresh.",
             )
             return
         _ext = os.path.splitext(uploaded_music_file)[1].lower()
@@ -986,10 +1000,10 @@ with gr.Blocks(
             # Section 1: Voice & Sound
             with gr.Accordion("Voice & Sound", open=True, elem_classes="accordion-section"):
                 music_model_dropdown = gr.Dropdown(
-                    choices=["ACE-Step 1.5", "Lyria RealTime", "Upload File"],
+                    choices=["ACE-Step 1.5", "Lyria RealTime", "Background Music"],
                     value="ACE-Step 1.5",
                     label="Music Engine",
-                    info="ACE-Step 1.5 recommended for Apple Silicon (~5 min). Choose Upload File to bring your own instrumental.",
+                    info="ACE-Step 1.5 recommended for Apple Silicon (~5 min). Choose Background Music to pick a curated instrumental.",
                     elem_classes="dropdown-container",
                 )
                 acestep_quality = gr.Radio(
@@ -1027,7 +1041,7 @@ with gr.Blocks(
                     )
                 with gr.Group(visible=False, elem_id="indextts-group") as indextts_settings:
                     indextts_voice_dropdown = gr.Dropdown(
-                        choices=INDEXTTS_VOICE_CHOICES if INDEXTTS_VOICE_CHOICES else ["(no voices — add .wav to assets/speakers/reference_audio/)"],
+                        choices=INDEXTTS_VOICE_CHOICES if INDEXTTS_VOICE_CHOICES else ["(no voices — add .wav to assets/speakers/index_tts_voices/)"],
                         value=INDEXTTS_VOICE_DEFAULT,
                         label="Voice",
                         interactive=bool(INDEXTTS_VOICE_CHOICES),
@@ -1093,14 +1107,20 @@ with gr.Blocks(
                         lyria_brightness = gr.Slider(0, 1.0, 0.15, step=0.05, label="Brightness")
 
                 with gr.Group(visible=False) as upload_settings:
-                    gr.Markdown("#### Upload Instrumental")
-                    uploaded_music = gr.Audio(
-                        label="Instrumental File (wav, mp3, flac, ogg, m4a, aiff)",
-                        type="filepath",
-                        sources=["upload"],
-                    )
+                    gr.Markdown("#### Background Instrumental")
+                    with gr.Row():
+                        uploaded_music = gr.Dropdown(
+                            choices=BACKGROUND_CHOICES if BACKGROUND_CHOICES else ["(no tracks found)"],
+                            value=BACKGROUND_DEFAULT,
+                            label="Instrumental Track",
+                            interactive=bool(BACKGROUND_CHOICES),
+                            elem_classes="dropdown-container",
+                            scale=1,
+                        )
+                        refresh_backgrounds_btn = gr.Button("↻", scale=0, min_width=48)
                     gr.Markdown(
-                        "Your file is looped or trimmed to fit the narration, then "
+                        "Picked from assets/backgrounds/ (length shown after each name). "
+                        "The track is looped or trimmed to fit the narration, then "
                         "ducked and mastered like the generated engines.",
                         elem_classes="hint-text",
                     )
@@ -1147,7 +1167,7 @@ with gr.Blocks(
         is_voc = mode == "Vocals Only"
         show_acestep = (current_music_model == "ACE-Step 1.5") and not is_voc
         show_lyria = (current_music_model == "Lyria RealTime") and not is_voc
-        show_upload = (current_music_model == "Upload File") and not is_voc
+        show_upload = (current_music_model == "Background Music") and not is_voc
         show_kokoro = (current_tts_engine == "Kokoro") and not is_inst
         show_f5 = (current_tts_engine == "F5-TTS") and not is_inst
         show_indextts = (current_tts_engine == "IndexTTS-2") and not is_inst
@@ -1177,7 +1197,7 @@ with gr.Blocks(
     def toggle_music_engine_ui(model, mode):
         is_acestep = model == "ACE-Step 1.5"
         is_lyria = model == "Lyria RealTime"
-        is_upload = model == "Upload File"
+        is_upload = model == "Background Music"
         is_voc = mode == "Vocals Only"
         return (
             gr.update(visible=is_acestep and not is_voc),  # acestep_quality
@@ -1191,6 +1211,17 @@ with gr.Blocks(
         inputs=[music_model_dropdown, generation_mode],
         outputs=[acestep_quality, acestep_metadata, lyria_settings, upload_settings],
     )
+
+    def _refresh_backgrounds():
+        # Re-scan assets/backgrounds/ so newly added tracks appear without restart.
+        choices = scan_backgrounds()
+        return gr.update(
+            choices=choices if choices else ["(no tracks found)"],
+            value=choices[0][1] if choices else None,
+            interactive=bool(choices),
+        )
+
+    refresh_backgrounds_btn.click(fn=_refresh_backgrounds, outputs=[uploaded_music])
 
     def toggle_tts_engine_ui(tts_engine, mode):
         is_inst = mode == "Instrumental Only"
