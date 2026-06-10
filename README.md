@@ -392,7 +392,7 @@ broadcast-grade mix. The music prompt and BPM/key controls are ignored. Implemen
 | Setting | Range | Default | Description |
 |---------|-------|---------|-------------|
 | Music Duration | 1–30 min | 3 min | Used for Instrumental Only mode |
-| Music Ducking | -30 to -5 dB | -20 dB | How far music drops under speech |
+| Music Ducking | -30 to -6 dB | -16 dB | How far music drops under speech (auto-calibrated per session unless you move the slider; `MOODSCAPE_ADAPTIVE_BED=0` disables) |
 | ACE-Step Quality | Draft (Turbo/8-step) / Studio (SFT/50-step) | Studio | Speed vs. fidelity |
 | ACE-Step BPM | 40–120 | 50 | Target tempo |
 | ACE-Step Key | Auto + all keys | Auto | Target musical key |
@@ -417,7 +417,7 @@ broadcast-grade mix. The music prompt and BPM/key controls are ignored. Implemen
 
 A brief summary of the quality pipeline under the hood:
 
-- **Breathing sidechain ducking** — Phrases are detected from the narration; the bed descends with a predictive S-curve ~600 ms before each phrase, sits very low during speech, then rises gradually (~1.5 s) and lifts slightly during long pauses so the music "breathes". Applied fullband so the whole bed drops together.
+- **Breathing sidechain ducking** — Phrases are detected from the narration; the bed descends with a predictive S-curve ~600 ms before each phrase, sits very low during speech, then rises gradually (~1.5 s) and lifts slightly during long pauses so the music "breathes". Applied fullband so the whole bed drops together. Bed and duck levels are **auto-calibrated per session** from the measured voice/music loudness, so the music always sits subtly behind the voice regardless of how hot or quiet the source material is.
 - **Vocal pocket EQ** — Music spectrum is carved at 300 Hz, 1 kHz, and 3 kHz to preserve voice intelligibility without reducing overall music volume.
 - **Convolution reverb** — Three impulse responses: Warm Studio (intimate, short decay), Wooden Hall (natural warmth, medium space), Stone Chapel (ethereal, long decay).
 - **HT Demucs separation** — 4-source model (drums, bass, vocals, other). Keeps bass + other; discards drums + vocals. Corrects percussion and vocal artifacts that leaked past prompting.
