@@ -63,11 +63,13 @@ _VAD_CROP_TAIL_MS = 100.0
 # Qwen3 text-emotion path's known "calm → sad" misclassification.
 INDEXTTS_CALM_VECTOR = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
 
-# Blend ratio: 0.55 = 55% emotion override + 45% speaker timbre preservation.
+# Blend ratio: 0.45 = 45% emotion override + 55% speaker timbre preservation.
 # Official IndexTTS-2 guidance recommends emo_alpha ≈ 0.6 or lower for natural
 # speech: pushing the synthetic calm vector harder trades away the cloned
-# speaker's own prosody and reads as robotic. (Was 0.65.)
-INDEXTTS_EMO_ALPHA = 0.55
+# speaker's own prosody and reads as robotic. A/B matrix (scripts/ab_indextts.py,
+# resemblyzer d-vector cosine vs the reference clip) was monotonic:
+# 0.65 → 0.877, 0.55 → 0.888, 0.45 → 0.901 speaker similarity. (Was 0.65.)
+INDEXTTS_EMO_ALPHA = 0.45
 
 # Sampling: pure stochastic (no beam search) at the trained-for top_p/top_k.
 # Temperature lifted just above prior 0.70 to recover prosodic variance the

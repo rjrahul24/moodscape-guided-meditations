@@ -208,7 +208,7 @@ with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         text=chunk_text,
         output_path=tmp.name,
         emo_vector=INDEXTTS_CALM_VECTOR,    # or emo_audio_prompt=<path>
-        emo_alpha=INDEXTTS_EMO_ALPHA,        # 0.55
+        emo_alpha=INDEXTTS_EMO_ALPHA,        # 0.45
         top_p=INDEXTTS_TOP_P,                # 0.85
         temperature=INDEXTTS_TEMPERATURE,    # 0.70
         interval_silence=INDEXTTS_INTERVAL_SILENCE_MS,        # 200ms
@@ -229,7 +229,7 @@ Two paths, with `emo_audio_prompt` winning when both are available:
 | **Calm vector** (default) | `emotion_audio_path is None` | `emo_vector = [0,0,0,0,0,0,0,1.0]` — pure calm dimension. Deterministic, immune to LLM mis-mapping. After the API's internal bias scaling this yields a normalized value of ~0.5625, safely under the 0.8 sum-penalty threshold. |
 | **Audio reference** | `emotion_audio_path` set (UI dropdown or uploaded WAV) | `emo_audio_prompt=<path>` — projects the emotion of that clip onto the cloned voice. Use for emotions outside the 8D vector space, or to match a specific source recording. |
 
-`emo_alpha=0.55` blends 55% emotion override with 45% speaker-timbre preservation — official guidance recommends ≈0.6 or lower for natural speech; pushing the synthetic calm vector harder suppresses the cloned speaker's own prosody and reads as robotic. Below 0.3 fails to suppress reference arousal; at 1.0 timbre flattens. (`scripts/ab_indextts.py` renders an alpha/pace variant matrix for listening tests.)
+`emo_alpha=0.45` blends 45% emotion override with 55% speaker-timbre preservation — official guidance recommends ≈0.6 or lower for natural speech; pushing the synthetic calm vector harder suppresses the cloned speaker's own prosody and reads as robotic. The A/B matrix was monotonic on resemblyzer speaker similarity: 0.65 → 0.877, 0.55 → 0.888, 0.45 → 0.901. Below 0.3 fails to suppress reference arousal; at 1.0 timbre flattens. (`scripts/ab_indextts.py` renders an alpha/pace variant matrix for listening tests.)
 
 We intentionally **do not** use `use_emo_text` — IndexTTS-2's Qwen3 path conflates "calm/serene" with "sad/melancholic" (see Issue research note in `vocal_indextts_instructions.md`).
 
