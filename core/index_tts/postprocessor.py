@@ -112,8 +112,12 @@ class IndexTTSMasteringEngine:
                 PeakFilter(cutoff_frequency_hz=350, gain_db=-2.0, q=1.2),
                 LowShelfFilter(cutoff_frequency_hz=180, gain_db=1.5),
                 PeakFilter(cutoff_frequency_hz=2800, gain_db=-1.5, q=0.8),
-                HighShelfFilter(cutoff_frequency_hz=8000, gain_db=-3.0),
-                LowpassFilter(cutoff_frequency_hz=13000),
+                # Softened from -3.0 dB / 13 kHz: with Rubber Band pacing (no
+                # phase-vocoder smear) the aggressive HF taming dulled the
+                # voice more than it hid artifacts. The split-band de-esser
+                # upstream already handles snake-activation sibilance.
+                HighShelfFilter(cutoff_frequency_hz=8000, gain_db=-1.5),
+                LowpassFilter(cutoff_frequency_hz=15000),
                 Compressor(threshold_db=-18, ratio=2.0, attack_ms=15, release_ms=200),
                 Limiter(threshold_db=-1.5, release_ms=80),
             ])

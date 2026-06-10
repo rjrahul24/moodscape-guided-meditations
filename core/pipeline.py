@@ -95,8 +95,12 @@ class MeditationPipeline:
             voice: Kokoro voice name, preset, or comma-separated blend.
             speed: Speaking speed (0.5–1.0).
             duck_amount_db: How much to reduce music during speech (negative dB).
-                Combined with music_volume_db=-14 dB baseline offset, -12 dB
-                ducking gives ~22 dB voice-music separation during speech.
+                Combined with the -16 dB baseline music level in mix(), the
+                default -16 dB duck gives ~28 LU voice-music separation during
+                speech. When MOODSCAPE_ADAPTIVE_BED=1, both values are instead
+                calibrated per-session from measured stem loudness
+                (mixer.calibrate_music_bed); a non-default duck_amount_db
+                passed here still wins over the calibrated duck.
             reverb_amount: Voice reverb wet level (0.0–0.5).
             fade_in_sec: Fade-in duration for the final mix.
             fade_out_sec: Fade-out duration for the final mix.
@@ -522,15 +526,18 @@ class MeditationPipeline:
                 _progress(progress_cb, 0.77, "Applying music effects...")
                 from core.audio_processor import apply_fx as apply_audio_fx
                 # Per-engine pre-mix loudness calibration.
-                # These targets are tuned so that music_volume_db=-14 dB in mix()
-                # produces the right ambient presence during pauses, while the
-                # duck_amount_db offset provides adequate separation during speech.
+                # These targets are tuned so that the -16 dB baseline music
+                # level in mix() produces the right ambient presence during
+                # pauses, while the duck_amount_db offset provides adequate
+                # separation during speech.
                 #
                 #   ACE-Step  -14 LUFS: VAE output is clean and benefits from the
-                #                       extra headroom; gives -28 LUFS baseline in mix
-                #                       and -40 LUFS during speech (22 dB separation).
+                #                       extra headroom.
                 #   Lyria     -16 LUFS: cloud output is slightly brighter/denser;
                 #                       moderate level balances presence vs. headroom.
+                # When MOODSCAPE_ADAPTIVE_BED=1 these remain useful: they bound
+                # the search space so calibrate_music_bed() only trims the
+                # residual error.
                 if use_acestep:
                     premix_lufs = -14.0
                 else:  # lyria or uploaded instrumental
@@ -571,6 +578,33 @@ class MeditationPipeline:
                 stem_paths = export_stems(voice_audio, music_audio, mix_sr)
                 logger.info("Stems exported: %s", stem_paths)
 
+            # ── Step 8b: Adaptive bed calibration (MOODSCAPE_ADAPTIVE_BED) ──
+            # Replaces the fixed -16 dB bed / -16 dB duck constants with values
+            # derived from the actual post-FX stem loudness, so the bed always
+            # sits at the reference offsets under the voice regardless of how
+            # hot or quiet the source material is. Targets are locked to the
+            # measured golden-path mix, so nominal sessions calibrate back to
+            # (-16, -16). Set MOODSCAPE_ADAPTIVE_BED=0 to force the legacy
+            # constants.
+            music_volume_db = -16.0
+            mix_phrases = None
+            adaptive_bed = os.environ.get("MOODSCAPE_ADAPTIVE_BED", "0") == "1"
+            if adaptive_bed and not is_instrumental and not is_vocals and music_audio.size:
+                from core.mixer import calibrate_music_bed, detect_phrases
+                _progress(progress_cb, 0.81, "Calibrating music bed level...")
+                mix_phrases = detect_phrases(voice_audio, mix_sr, threshold_db=None)
+                cal_volume_db, cal_duck_db = calibrate_music_bed(
+                    voice_audio, music_audio, mix_sr, phrases=mix_phrases,
+                )
+                music_volume_db = cal_volume_db
+                # A user-moved duck slider (non-default) still wins.
+                if duck_amount_db == -16.0:
+                    duck_amount_db = cal_duck_db
+                logger.info(
+                    "Adaptive bed: music_volume_db=%.1f dB, duck_amount_db=%.1f dB (%d phrases)",
+                    music_volume_db, duck_amount_db, len(mix_phrases),
+                )
+
             # ── Step 9: Mix with ducking ────────────────────────────────────
             if is_instrumental:
                 _progress(progress_cb, 0.82, "Applying final fades...")
@@ -591,9 +625,11 @@ class MeditationPipeline:
                     music_audio,
                     sample_rate=mix_sr,
                     duck_amount_db=duck_amount_db,
+                    music_volume_db=music_volume_db,
                     fade_in_sec=fade_in_sec,
                     fade_out_sec=fade_out_sec,
                     stereo_output=stereo_output,
+                    phrases=mix_phrases,
                 )
 
             # ── Step 10: Master processing ──────────────────────────────────

@@ -63,9 +63,11 @@ _VAD_CROP_TAIL_MS = 100.0
 # Qwen3 text-emotion path's known "calm → sad" misclassification.
 INDEXTTS_CALM_VECTOR = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
 
-# Blend ratio: 0.65 = 65% emotion override + 35% speaker timbre preservation.
-# Slightly favours the speaker's natural emotion blend for a less synthetic feel.
-INDEXTTS_EMO_ALPHA = 0.65
+# Blend ratio: 0.55 = 55% emotion override + 45% speaker timbre preservation.
+# Official IndexTTS-2 guidance recommends emo_alpha ≈ 0.6 or lower for natural
+# speech: pushing the synthetic calm vector harder trades away the cloned
+# speaker's own prosody and reads as robotic. (Was 0.65.)
+INDEXTTS_EMO_ALPHA = 0.55
 
 # Sampling: pure stochastic (no beam search) at the trained-for top_p/top_k.
 # Temperature lifted just above prior 0.70 to recover prosodic variance the
@@ -94,17 +96,25 @@ INDEXTTS_MAX_TOKENS_PER_SEG = 180
 INDEXTTS_PACE_RATE = 0.92
 
 
+class _warn_once_rubberband_missing:
+    """Module-level latch so the missing-Rubber-Band warning fires once per session."""
+    warned = False
+
+
 def _apply_meditation_pace(audio: np.ndarray, rate: float, sr: int = SAMPLE_RATE) -> np.ndarray:
     """Pitch-preserving time-stretch on a single IndexTTS-2 speech chunk.
 
     rate < 1.0 lengthens the audio; rate == 1.0 returns the input unchanged.
     Applied per-chunk so the assembly-time crossfade timing stays accurate.
 
-    Prefers Rubber Band (formant-aware, transparent on voice) via pyrubberband,
-    which shells out to the ``rubberband`` CLI. Falls back to librosa's
-    phase-vocoder if Rubber Band is unavailable, then to the unmodified input.
-    The phase-vocoder can smear/metallicise voice, so Rubber Band is preferred
-    for the meditation quality target.
+    Uses Rubber Band (formant-aware, transparent on voice) via pyrubberband,
+    which shells out to the ``rubberband`` CLI (``brew install rubberband``).
+
+    If Rubber Band is unavailable the chunk is returned **unstretched**: the
+    librosa phase-vocoder fallback smears/metallicises voice badly enough to
+    read as "robotic", and unstretched-but-clean beats stretched-but-metallic
+    for the meditation quality target. Set ``MOODSCAPE_INDEXTTS_PV_FALLBACK=1``
+    to opt back into the phase-vocoder.
     """
     if abs(rate - 1.0) < 1e-3:
         return audio
@@ -115,15 +125,23 @@ def _apply_meditation_pace(audio: np.ndarray, rate: float, sr: int = SAMPLE_RATE
         logger.debug("Pacing via Rubber Band (rate=%.2f)", rate)
         return np.asarray(stretched, dtype=np.float32)
     except Exception as e:
-        logger.info("Rubber Band unavailable (%s); falling back to librosa phase-vocoder.", e)
-    try:
-        import librosa
-        stretched = librosa.effects.time_stretch(arr, rate=rate)
-        logger.debug("Pacing via librosa phase-vocoder (rate=%.2f)", rate)
-        return stretched.astype(np.float32)
-    except Exception as e:
-        logger.warning("Pacing time-stretch failed (rate=%.2f), keeping original: %s", rate, e)
-        return audio
+        if not _warn_once_rubberband_missing.warned:
+            _warn_once_rubberband_missing.warned = True
+            logger.warning(
+                "Rubber Band unavailable (%s) — skipping pacing time-stretch. "
+                "Install it with `brew install rubberband` (+ pip pyrubberband) "
+                "for slow meditation pacing, or set MOODSCAPE_INDEXTTS_PV_FALLBACK=1 "
+                "to allow the lower-quality librosa phase-vocoder.", e,
+            )
+    if os.environ.get("MOODSCAPE_INDEXTTS_PV_FALLBACK", "0") == "1":
+        try:
+            import librosa
+            stretched = librosa.effects.time_stretch(arr, rate=rate)
+            logger.debug("Pacing via librosa phase-vocoder (rate=%.2f)", rate)
+            return stretched.astype(np.float32)
+        except Exception as e:
+            logger.warning("Pacing time-stretch failed (rate=%.2f), keeping original: %s", rate, e)
+    return audio
 
 
 def _patch_bigvgan_mps_safety(tts_model) -> None:

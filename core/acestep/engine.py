@@ -271,13 +271,40 @@ class AceStepEngine:
                     reference_audio_path=ref_path
                 )
 
-            # ── Infinite Generation ───────────────────────────────────────────
-            # For long tracks (> 90s), use three-phase pipeline (genesis +
-            # cover continuation + boundary smoothing) at native 48 kHz.
+            # ── Long-form routing ─────────────────────────────────────────────
+            # Tracks > 90s need multi-call assembly. Two strategies:
+            #   "loop"   — generate one strong ~4-minute piece (genesis + a
+            #              couple of repaints, whole-piece QA retry), then loop
+            #              it to the target with equal-power crossfades.
+            #              Deterministic, few seams, ~4x faster for 10-15 min
+            #              beds; meditation beds are meant to be static.
+            #   "evolve" — chained repaint continuation for music that keeps
+            #              evolving across the full duration (hardened with
+            #              seed pinning, per-segment QA and seam checks).
+            #   "auto"   — loop above 5 minutes, evolve otherwise.
+            seed = kwargs.get("seed")
+            long_form_mode = kwargs.get("long_form_mode", "auto")
+            if long_form_mode not in ("auto", "loop", "evolve"):
+                logger.warning(
+                    "[AceStepEngine] Unknown long_form_mode %r — using 'auto'", long_form_mode,
+                )
+                long_form_mode = "auto"
+
             if total_duration_sec > 90.0:
+                use_loop = (
+                    long_form_mode == "loop"
+                    or (long_form_mode == "auto" and total_duration_sec > 300.0)
+                )
+                if use_loop:
+                    return self._generate_looped(
+                        prompt, total_duration_sec, progress_cb, lyrics=lyrics,
+                        bpm=bpm, keyscale=keyscale, reference_audio_path=ref_path,
+                        seed=seed,
+                    )
                 return self._generate_infinite(
                     prompt, total_duration_sec, progress_cb, lyrics=lyrics,
-                    bpm=bpm, keyscale=keyscale, reference_audio_path=ref_path
+                    bpm=bpm, keyscale=keyscale, reference_audio_path=ref_path,
+                    seed=seed,
                 )
 
             # ── Single-stage generation ───────────────────────────────────────
@@ -303,7 +330,8 @@ class AceStepEngine:
             for attempt in range(3):
                 audio = self._generate_single(
                     enhanced_prompt, total_duration_sec, lyrics=enhanced_lyrics,
-                    bpm=bpm, keyscale=keyscale, reference_audio_path=ref_path
+                    bpm=bpm, keyscale=keyscale, reference_audio_path=ref_path,
+                    seed=(seed + attempt * 7919) if seed is not None else None,
                 )
                 valid, reason = self._validate_output(audio, total_duration_sec)
                 if valid:
@@ -395,6 +423,7 @@ class AceStepEngine:
         bpm: int | None = 50,
         keyscale: str | None = "Auto",
         reference_audio_path: str | None = None,
+        seed: int | None = None,
     ) -> np.ndarray:
         """Two-phase long-form generation at native 48 kHz stereo.
 
@@ -402,17 +431,31 @@ class AceStepEngine:
         Phase 2 — Repaint continuation: overlapping repaint calls that treat the
                   last 20 seconds of accumulated audio as anchor context, then
                   generate new audio from that point forward.  Repaint produces
-                  seamless transitions at the model level — no post-hoc STFT
-                  crossfades required.
+                  seamless transitions at the model level.
+
+        Long-chain hardening (ACE-Step is seed-sensitive — "gacha" per the
+        official tutorial — and a 12-minute track needs ~11 repaint calls):
+          - the seed is pinned per segment (``seed + seg_num``) so the chain
+            stays in one sonic character and is reproducible;
+          - each continuation's *new* tail is QA-scored
+            (``compute_composite_score``) and retried once with an offset
+            seed when it lands under threshold, keeping the better take;
+          - the junction is checked for spectral discontinuity and blended
+            with a 3-second STFT crossfade when the repaint failed to be
+            seamless at the model level.
 
         All intermediate audio stays at 48 kHz stereo.  Single postprocess
         at the end eliminates quality-degrading sample-rate round-trips.
         """
         import tempfile
         import soundfile as sf
+        from core.qa_monitor import compute_composite_score
 
         GENESIS_LEN = 90.0
         CONTINUATION_LEN = 60.0
+        SEGMENT_QA_THRESHOLD = 0.6
+        SEAM_DISCONTINUITY_DB = 6.0
+        SEAM_BLEND_SEC = 3.0
 
         enhanced_prompt, enhanced_lyrics = self._enhance_prompt(
             prompt, duration_hint=total_duration_sec,
@@ -421,7 +464,8 @@ class AceStepEngine:
             enhanced_lyrics = f"{enhanced_lyrics}, {lyrics}"
 
         logger.info(
-            "[AceStepEngine] Three-phase infinite: %.0fs target", total_duration_sec,
+            "[AceStepEngine] Three-phase infinite: %.0fs target (seed=%s)",
+            total_duration_sec, seed,
         )
 
         # ── Phase 1: Genesis ─────────────────────────────────────────────
@@ -434,6 +478,7 @@ class AceStepEngine:
         full_tensor, sr = self._generate_single_raw(
             enhanced_prompt, genesis_len, lyrics=enhanced_lyrics,
             bpm=bpm, keyscale=keyscale, reference_audio_path=reference_audio_path,
+            seed=seed,
         )
         seg_num = 1
 
@@ -445,8 +490,7 @@ class AceStepEngine:
 
         # ── Phase 2: Overlapping repaint continuation ────────────────────
         # repaint (task_type="repaint") treats the first N seconds as anchor
-        # and generates new audio from repainting_start onward — producing
-        # seamless transitions without needing post-hoc STFT crossfades.
+        # and generates new audio from repainting_start onward.
         CONTINUATION_OVERLAP = 20.0  # seconds of context passed to each repaint call
 
         while full_tensor.shape[-1] / sr < total_duration_sec - 1.0:
@@ -471,41 +515,89 @@ class AceStepEngine:
             # soundfile expects (samples, channels) — transpose from (C, T)
             sf.write(tmp_path, src_chunk.cpu().numpy().T, sr)
 
-            continuation_audio = None
+            # Per-segment QA: score the newly generated tail; one retry with
+            # an offset seed when the take lands under threshold.
+            new_start_sample = int(CONTINUATION_OVERLAP * sr)
+            best_audio: np.ndarray | None = None
+            best_score = -1.0
             try:
-                continuation_audio = self._generate_single_repaint(
-                    enhanced_prompt,
-                    tmp_path,
-                    CONTINUATION_OVERLAP,
-                    repaint_total,
-                    lyrics=enhanced_lyrics,
-                    bpm=bpm,
-                    keyscale=keyscale,
-                    reference_audio_path=reference_audio_path,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "[AceStepEngine] Repaint continuation seg %d error: %s — stopping early",
-                    seg_num, exc,
-                )
+                for attempt in range(2):
+                    attempt_seed = None
+                    if seed is not None:
+                        attempt_seed = seed + seg_num + (1000 if attempt else 0)
+                    try:
+                        candidate = self._generate_single_repaint(
+                            enhanced_prompt,
+                            tmp_path,
+                            CONTINUATION_OVERLAP,
+                            repaint_total,
+                            lyrics=enhanced_lyrics,
+                            bpm=bpm,
+                            keyscale=keyscale,
+                            reference_audio_path=reference_audio_path,
+                            seed=attempt_seed,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "[AceStepEngine] Repaint seg %d attempt %d error: %s",
+                            seg_num, attempt + 1, exc,
+                        )
+                        continue
+                    new_tail = candidate[new_start_sample:]
+                    if new_tail.size == 0:
+                        continue
+                    score = compute_composite_score(new_tail, sr)
+                    if score > best_score:
+                        best_audio, best_score = candidate, score
+                    if score >= SEGMENT_QA_THRESHOLD:
+                        break
+                    logger.info(
+                        "[AceStepEngine] Seg %d attempt %d QA score %.3f < %.2f — %s",
+                        seg_num, attempt + 1, score, SEGMENT_QA_THRESHOLD,
+                        "retrying with offset seed" if attempt == 0 else "keeping best take",
+                    )
             finally:
                 try:
                     os.unlink(tmp_path)
                 except Exception:
                     pass
 
-            if continuation_audio is None:
-                logger.warning("[AceStepEngine] Repaint continuation returned None — stopping early")
+            if best_audio is None:
+                logger.warning("[AceStepEngine] Repaint continuation failed — stopping early")
                 break
 
-            # continuation_audio is mono float32 numpy from _generate_single_repaint
-            # Convert to (1, T) torch tensor to match full_tensor shape
-            cont_tensor = torch.from_numpy(continuation_audio).unsqueeze(0)
-
-            # Append only the newly generated tail (after the overlap region)
-            new_start_sample = int(CONTINUATION_OVERLAP * sr)
-            new_audio = cont_tensor[:, new_start_sample:]
-            full_tensor = torch.cat([full_tensor, new_audio], dim=-1)
+            # best_audio is mono float32 numpy from _generate_single_repaint.
+            # Seam check: compare band energies across the junction; when the
+            # repaint was not seamless, blend with an STFT crossfade instead
+            # of hard-concatenating.
+            new_audio_np = best_audio[new_start_sample:]
+            blend_n = min(
+                int(SEAM_BLEND_SEC * sr), full_tensor.shape[-1], new_audio_np.shape[-1],
+            )
+            prev_tail_np = full_tensor[0, -blend_n:].cpu().numpy()
+            seam_db = self._seam_discontinuity_db(
+                prev_tail_np, new_audio_np[:blend_n], sr,
+            )
+            if seam_db > SEAM_DISCONTINUITY_DB and blend_n > 0:
+                logger.info(
+                    "[AceStepEngine] Seg %d seam discontinuity %.1f dB > %.1f — "
+                    "applying %.0fs STFT crossfade",
+                    seg_num, seam_db, SEAM_DISCONTINUITY_DB, SEAM_BLEND_SEC,
+                )
+                blended = self._stft_crossfade(
+                    prev_tail_np.copy(), new_audio_np[:blend_n].copy(),
+                )
+                stitched = np.concatenate([blended, new_audio_np[blend_n:]])
+                full_tensor = torch.cat(
+                    [full_tensor[:, :-blend_n],
+                     torch.from_numpy(stitched).unsqueeze(0)],
+                    dim=-1,
+                )
+            else:
+                full_tensor = torch.cat(
+                    [full_tensor, torch.from_numpy(new_audio_np).unsqueeze(0)],
+                    dim=-1,
+                )
 
             if progress_cb:
                 done = full_tensor.shape[-1] / sr
@@ -514,12 +606,128 @@ class AceStepEngine:
                     max(1, int(total_duration_sec / CONTINUATION_LEN)),
                 )
 
-        # ── Final: single postprocess to 24 kHz mono ────────────────────
+        # ── Final: single postprocess ────────────────────────────────────
         logger.info(
             "[AceStepEngine] Final postprocess: %.1fs at %d Hz",
             full_tensor.shape[-1] / sr, sr,
         )
         return self._postprocess(full_tensor, sr)
+
+    def _generate_looped(
+        self,
+        prompt: str,
+        total_duration_sec: float,
+        progress_cb=None,
+        lyrics: str | None = None,
+        bpm: int | None = 50,
+        keyscale: str | None = "Auto",
+        reference_audio_path: str | None = None,
+        seed: int | None = None,
+        base_duration_sec: float = 240.0,
+        loop_crossfade_ms: float = 4000.0,
+    ) -> np.ndarray:
+        """Loop-mode long form: one strong ~4-minute piece, looped to target.
+
+        A 12-minute evolving chain needs ~11 repaint calls — 11 chances for
+        drift and seams. Meditation beds are deliberately static, so instead:
+        generate ``base_duration_sec`` once (genesis + 2-3 repaints), QA the
+        whole piece with one retry, then loop it to the target length with
+        equal-power crossfades via the proven ``fit_to_length`` machinery the
+        uploaded-instrumental path uses. 4-second crossfades on ambient pads
+        are inaudible. Deterministic and ~4x faster for 10-15 minute beds.
+        """
+        from core.qa_monitor import compute_composite_score
+        from core.upload_music.arrange import fit_to_length
+
+        base_len = min(base_duration_sec, total_duration_sec)
+        logger.info(
+            "[AceStepEngine] Loop mode: %.0fs base looped to %.0fs (seed=%s)",
+            base_len, total_duration_sec, seed,
+        )
+
+        best_audio: np.ndarray | None = None
+        best_score = -1.0
+        for attempt in range(2):
+            attempt_seed = None
+            if seed is not None:
+                attempt_seed = seed + attempt * 7919
+            try:
+                candidate = self._generate_infinite(
+                    prompt, base_len, progress_cb, lyrics=lyrics,
+                    bpm=bpm, keyscale=keyscale,
+                    reference_audio_path=reference_audio_path,
+                    seed=attempt_seed,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[AceStepEngine] Loop-mode base attempt %d failed: %s",
+                    attempt + 1, exc,
+                )
+                continue
+            valid, reason = self._validate_output(candidate, base_len)
+            score = compute_composite_score(candidate, TARGET_SAMPLE_RATE) if valid else 0.0
+            if not valid:
+                logger.warning(
+                    "[AceStepEngine] Loop-mode base attempt %d invalid: %s",
+                    attempt + 1, reason,
+                )
+            if score > best_score:
+                best_audio, best_score = candidate, score
+            if score > 0.8:
+                break
+            if attempt == 0:
+                logger.info(
+                    "[AceStepEngine] Loop-mode base QA score %.3f ≤ 0.8 — one retry",
+                    score,
+                )
+
+        if best_audio is None:
+            raise RuntimeError("[AceStepEngine] Loop-mode base generation failed twice")
+
+        target_samples = int(total_duration_sec * TARGET_SAMPLE_RATE)
+        looped, report = fit_to_length(
+            best_audio, TARGET_SAMPLE_RATE, target_samples,
+            crossfade_ms=loop_crossfade_ms,
+        )
+        logger.info(
+            "[AceStepEngine] Loop mode: base score %.3f, fit=%s (%d loop(s), %.0fms crossfade)",
+            best_score, report.mode, report.loops, report.crossfade_ms,
+        )
+        if looped.ndim == 2:
+            looped = looped[0] if looped.shape[0] == 1 else looped.mean(axis=0)
+        return np.ascontiguousarray(looped, dtype=np.float32)
+
+    @staticmethod
+    def _seam_discontinuity_db(
+        prev_tail: np.ndarray,
+        new_head: np.ndarray,
+        sr: int,
+        n_bands: int = 8,
+        window_s: float = 1.0,
+    ) -> float:
+        """Worst-band energy jump (dB) across a continuation junction.
+
+        Compares mean magnitude spectra of the last/first ``window_s`` on
+        either side of the seam in ``n_bands`` log-spaced bands. A seamless
+        repaint continuation keeps every band within a few dB; a timbral
+        jump shows up as a large single-band delta.
+        """
+        n = min(int(window_s * sr), prev_tail.shape[-1], new_head.shape[-1])
+        if n < 256:
+            return 0.0
+        a = np.abs(np.fft.rfft(prev_tail[-n:] * np.hanning(n)))
+        b = np.abs(np.fft.rfft(new_head[:n] * np.hanning(n)))
+        freqs = np.fft.rfftfreq(n, 1.0 / sr)
+        edges = np.geomspace(40.0, min(16000.0, sr / 2.0), n_bands + 1)
+        worst = 0.0
+        for lo, hi in zip(edges[:-1], edges[1:]):
+            band = (freqs >= lo) & (freqs < hi)
+            if not band.any():
+                continue
+            ea = float(np.mean(a[band] ** 2)) + 1e-12
+            eb = float(np.mean(b[band] ** 2)) + 1e-12
+            worst = max(worst, abs(10.0 * np.log10(eb / ea)))
+        return worst
 
     def _get_inference_steps(self, is_repaint: bool = False) -> int:
         """Resolve inference steps based on current model type."""
@@ -527,14 +735,27 @@ class AceStepEngine:
             return 8
         return _INFERENCE_STEPS_REPAINT if is_repaint else _INFERENCE_STEPS
 
+    @staticmethod
+    def _seed_config_kwargs(seed: int | None) -> dict:
+        """GenerationConfig kwargs that pin the diffusion seed.
+
+        ACE-Step is highly seed-sensitive ("gacha" per the official tutorial);
+        pinning the seed across the repaint chain keeps long-form segments in
+        the same sonic character. ``None`` preserves random behaviour.
+        """
+        if seed is None:
+            return {}
+        return {"use_random_seed": False, "seeds": [int(seed)]}
+
     def _generate_single(
-        self, 
-        enhanced_prompt: str, 
-        duration_sec: float, 
+        self,
+        enhanced_prompt: str,
+        duration_sec: float,
         lyrics: str | None = None,
         bpm: int | None = 50,
         keyscale: str | None = "Auto",
-        reference_audio_path: str | None = None
+        reference_audio_path: str | None = None,
+        seed: int | None = None,
     ) -> np.ndarray:
         """One ACE-Step inference call → 24 kHz mono float32 numpy array.
 
@@ -571,6 +792,7 @@ class AceStepEngine:
         config = GenerationConfig(
             batch_size=1,
             audio_format="wav",
+            **self._seed_config_kwargs(seed),
         )
 
         # ── Generate ─────────────────────────────────────────────────────
@@ -608,7 +830,8 @@ class AceStepEngine:
         lyrics: str | None = None,
         bpm: int | None = 50,
         keyscale: str | None = "Auto",
-        reference_audio_path: str | None = None
+        reference_audio_path: str | None = None,
+        seed: int | None = None,
     ) -> np.ndarray:
         """One ACE-Step Repaint inference call."""
         from acestep.inference import GenerationConfig, GenerationParams, generate_music
@@ -643,6 +866,7 @@ class AceStepEngine:
         config = GenerationConfig(
             batch_size=1,
             audio_format="wav",
+            **self._seed_config_kwargs(seed),
         )
 
         result = generate_music(
@@ -676,6 +900,7 @@ class AceStepEngine:
         bpm: int | None = 50,
         keyscale: str | None = "Auto",
         reference_audio_path: str | None = None,
+        seed: int | None = None,
     ) -> tuple[torch.Tensor, int]:
         """One ACE-Step inference call → raw 48 kHz stereo tensor.
 
@@ -711,7 +936,9 @@ class AceStepEngine:
             shift=_SHIFT,
             infer_method=_INFER_METHOD,
         )
-        config = GenerationConfig(batch_size=1, audio_format="wav")
+        config = GenerationConfig(
+            batch_size=1, audio_format="wav", **self._seed_config_kwargs(seed),
+        )
 
         result = generate_music(
             dit_handler=self._dit, llm_handler=self._llm,

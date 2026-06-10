@@ -13,6 +13,7 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+import pytest
 import soundfile as sf
 
 sys.path.append(os.getcwd())
@@ -134,7 +135,7 @@ def test_meditation_lexicon_phoneticizes_sanskrit_terms():
     assert "shah-vah-sana" in out.lower()
 
 
-# ── Pacing (Rubber Band → librosa fallback) ──────────────────────────────────
+# ── Pacing (Rubber Band, passthrough when unavailable) ───────────────────────
 
 def test_pace_rate_one_is_noop():
     """rate == 1.0 returns the input unchanged (no stretch backend invoked)."""
@@ -144,15 +145,65 @@ def test_pace_rate_one_is_noop():
     assert np.array_equal(out, sig)
 
 
-def test_pace_lengthens_audio():
-    """rate < 1.0 lengthens the chunk by ~1/rate (Rubber Band or librosa fallback)."""
+def test_pace_lengthens_audio_with_rubberband():
+    """rate < 1.0 lengthens the chunk by ~1/rate when Rubber Band is available."""
+    pytest.importorskip("pyrubberband")
+    import shutil as _shutil
+    if _shutil.which("rubberband") is None:
+        pytest.skip("rubberband CLI not installed")
     sr = 24000
     sig = np.sin(2 * np.pi * 220 * np.arange(sr) / sr).astype(np.float32)
     out = _apply_meditation_pace(sig, rate=0.92, sr=sr)
-    # Expect ~1/0.92 ≈ 1.087x longer; allow generous tolerance across backends.
+    # Expect ~1/0.92 ≈ 1.087x longer.
     assert len(out) > len(sig) * 1.03
     assert len(out) < len(sig) * 1.18
     assert out.dtype == np.float32
+
+
+def test_pace_passthrough_when_rubberband_missing(monkeypatch):
+    """Without Rubber Band the chunk must come back UNSTRETCHED — the librosa
+    phase-vocoder fallback metallicises voice and is opt-in only."""
+    import builtins
+    from core.index_tts import engine as idx_engine
+
+    real_import = builtins.__import__
+
+    def block_pyrb(name, *args, **kwargs):
+        if name == "pyrubberband":
+            raise ImportError("blocked for test")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", block_pyrb)
+    monkeypatch.delenv("MOODSCAPE_INDEXTTS_PV_FALLBACK", raising=False)
+    monkeypatch.setattr(idx_engine._warn_once_rubberband_missing, "warned", False)
+
+    sr = 24000
+    sig = np.sin(2 * np.pi * 220 * np.arange(sr) / sr).astype(np.float32)
+    out = _apply_meditation_pace(sig, rate=0.92, sr=sr)
+    assert len(out) == len(sig)
+    assert np.allclose(out, sig)
+
+
+def test_pace_phase_vocoder_fallback_is_opt_in(monkeypatch):
+    """MOODSCAPE_INDEXTTS_PV_FALLBACK=1 re-enables the librosa fallback."""
+    import builtins
+    from core.index_tts import engine as idx_engine
+
+    real_import = builtins.__import__
+
+    def block_pyrb(name, *args, **kwargs):
+        if name == "pyrubberband":
+            raise ImportError("blocked for test")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", block_pyrb)
+    monkeypatch.setenv("MOODSCAPE_INDEXTTS_PV_FALLBACK", "1")
+    monkeypatch.setattr(idx_engine._warn_once_rubberband_missing, "warned", True)
+
+    sr = 24000
+    sig = np.sin(2 * np.pi * 220 * np.arange(sr) / sr).astype(np.float32)
+    out = _apply_meditation_pace(sig, rate=0.92, sr=sr)
+    assert len(out) > len(sig) * 1.03
 
 
 # ── DeepFilterNet dry/wet blend ──────────────────────────────────────────────
