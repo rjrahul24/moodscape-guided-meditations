@@ -70,6 +70,7 @@ class MeditationPipeline:
         bpm: int = 50,
         keyscale: str = "Auto",
         acestep_model_type: str = "sft",
+        acestep_long_form_mode: str = "auto",
         lyria_bpm: int = 70,
         lyria_density: float = 0.2,
         lyria_brightness: float = 0.3,
@@ -440,11 +441,18 @@ class MeditationPipeline:
                             bpm=lyria_bpm, density=lyria_density, brightness=lyria_brightness,
                         )
                     elif use_acestep:
-                        enhanced_prompt, lyrics = _enhance_acestep_prompt(music_prompt, duration_hint=music_duration)
+                        # Pass the RAW prompt — AceStepEngine enhances internally
+                        # (caption + structural lyrics). Pre-enhancing here and
+                        # passing lyrics= made the engine re-enhance and append,
+                        # duplicating structure tags — the official ACE-Step
+                        # tutorial flags caption/lyrics conflicts as the primary
+                        # artifact cause.
                         music_audio = music_engine.generate(
-                            enhanced_prompt, music_duration, progress_cb=music_progress,
-                            lyrics=lyrics, bpm=bpm, keyscale=keyscale,
+                            music_prompt, music_duration, progress_cb=music_progress,
+                            bpm=bpm, keyscale=keyscale,
                             acestep_model_type=acestep_model_type,
+                            long_form_mode=acestep_long_form_mode,
+                            seed=seed,
                             **ref_audio_kwargs,
                         )
                     else:
@@ -588,7 +596,7 @@ class MeditationPipeline:
             # constants.
             music_volume_db = -16.0
             mix_phrases = None
-            adaptive_bed = os.environ.get("MOODSCAPE_ADAPTIVE_BED", "0") == "1"
+            adaptive_bed = os.environ.get("MOODSCAPE_ADAPTIVE_BED", "1") == "1"
             if adaptive_bed and not is_instrumental and not is_vocals and music_audio.size:
                 from core.mixer import calibrate_music_bed, detect_phrases
                 _progress(progress_cb, 0.81, "Calibrating music bed level...")
