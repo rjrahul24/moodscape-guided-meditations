@@ -13,8 +13,7 @@ When you need to change something, start here. Locate the row that matches your 
 | Voice FX chain (EQ, reverb, compression) | `core/kokoro_tts/postprocessor.py :: build_voice_chain()` | `core/f5_tts/postprocessor.py`, `core/index_tts/postprocessor.py` |
 | Music FX chain (per engine) | `core/audio_processor.py :: make_{engine}_music_chain()` | — |
 | Vocal pocket / intelligibility EQ | `core/audio_processor.py :: make_vocal_pocket_chain()` | — |
-| Ducking behavior (fullband) | `core/mixer.py :: apply_envelope_ducking()` | `core/pipeline.py` (`duck_amount_db`) |
-| Ducking behavior (multiband) | `core/mixer.py :: apply_multiband_ducking()` | `core/mixer.py :: mix(multiband=True)` |
+| Ducking behavior | `core/mixer.py :: apply_breathing_duck()` / `compute_breathing_gain_db()` | `core/pipeline.py` (`duck_amount_db`) |
 | LUFS target | `core/pipeline.py` | `core/mixer.py :: export_audio()` |
 | ACE-Step generation params | `core/acestep/engine.py` (module-level constants) | — |
 | ACE-Step reference audio (melody conditioning) | `core/pipeline.py` (`melody_audio_path` param) | `core/acestep/engine.py :: _prepare_reference_audio()` |

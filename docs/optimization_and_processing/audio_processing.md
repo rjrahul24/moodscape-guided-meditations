@@ -1,8 +1,8 @@
 <!-- QUICK-REF ──────────────────────────────────────────────────────── -->
 **Files:** `core/pipeline.py` · `core/audio_processor.py` · `core/mixer.py`
-**Key functions:** `upsample_audio()` · `apply_envelope_ducking()` · `normalize_loudness()` · `export_audio()`
+**Key functions:** `upsample_audio()` · `apply_breathing_duck()` · `normalize_loudness()` · `export_audio()`
 **Mix SR:** 48 kHz for all music engine paths (ACE-Step /  / Lyria / F5) — see `pipeline.py:213`
-**Active ducking:** `apply_envelope_ducking()` — called inside `mix()`; `apply_rms_ducking()` exists but is NOT used
+**Active ducking:** `apply_breathing_duck()` — called inside `mix()`; script/VAD-aware S-curve duck, applied fullband
 **Upsample method:** `librosa soxr_vhq` (highest accuracy, zero-crossing safe)
 **Export:** 20s chunk streaming via Pedalboard AudioFile; LUFS pre-computed as single scalar
 **See also:** `docs/ARCHITECTURE.md#pipeline-phase-breakdown` · `docs/model_implementation_guides/pedalboard.md`
@@ -35,18 +35,19 @@ All audio is upsampled to a *mix sample rate* before Pedalboard FX and mixing. T
 
 ## 2. Dynamic Audio Mixing Processing
 
-### Lookahead Sidechain Ducking (Primary Method)
+### Breathing Sidechain Duck (Primary Method)
 
-MoodScape uses **vectorized offline lookahead sidechain ducking** (`apply_rms_ducking` in `mixer.py`) as the primary ducking method. The method pre-computes the full voice RMS envelope in advance, then shifts it backward by a lookahead offset so the music ducks *before* the voice onset — matching professional broadcast DAW behaviour.
+MoodScape uses the **breathing sidechain duck** (`apply_breathing_duck` in `mixer.py`). The full gain envelope is pre-computed offline from phrases detected in the voice signal, so the music starts falling *before* the first syllable — matching professional broadcast behaviour — and rises gradually during pauses.
 
-The `mix()` function calls `apply_rms_ducking` with these meditation-optimized parameters:
+The `mix()` function calls `apply_breathing_duck` with these meditation-optimized parameters:
 
-- **Lookahead**: **75ms** — music starts fading before the first syllable.
-- **Attack**: **50ms** — music drops promptly once the voice begins.
-- **Release**: **500ms** — music recovers gently during pauses.
-- **Duck depth**: Configurable via UI (default **-21 dB**), applied on top of the base music volume (-17 dB), yielding ~-38 dB total during speech — nearly inaudible behind the voice.
+- **Pre-descent**: **600 ms** before each phrase, with a **700 ms** cubic-S-curve ramp.
+- **Hold**: bed sits at `duck_amount_db` (default **−16 dB**, configurable via UI) for the entire phrase.
+- **Release**: **1.5 s** S-curve recovery after each phrase.
+- **Pause lift**: **+1.5 dB** during pauses ≥ 1.5 s so the bed "breathes".
+- **Safety net**: a reactive 200 Hz–4 kHz envelope follower catches off-script breaths; the deeper of script/reactive gain wins.
 
-A secondary `apply_envelope_ducking()` (10ms lookahead, 800ms release) is available in `mixer.py` for alternative ducking curves.
+Combined with the **−16 dB** baseline music volume, the bed sits roughly **28 LU below the voice during speech** and ~16 LU below during pauses — subtle, always in the background.
 
 ### Spectral Masking (Vocal Pocket Carving)
 

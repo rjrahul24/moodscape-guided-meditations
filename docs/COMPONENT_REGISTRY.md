@@ -30,11 +30,10 @@ Authoritative map of every class and module in `core/`. Use this when you need t
 | Uploaded instrumental | `core/upload_music/engine.py` | `UploadMusicEngine` | `load_model()`, `unload_model()`, `generate()` |
 | Upload length-fit | `core/upload_music/arrange.py` | `FitReport` | `fit_to_length()`, `_equal_power_curves()` |
 | Audio FX | `core/audio_processor.py` | — | `make_{engine}_music_chain()` (incl. `make_upload_music_chain()`), `make_vocal_pocket_chain()`, `make_master_chain()`, `upsample_audio()` |
-| Mixer | `core/mixer.py` | — | `apply_envelope_ducking()`, `apply_multiband_ducking()`, `overlay_tracks()`, `mix()`, `normalize_loudness()`, `export_audio()` |
+| Mixer | `core/mixer.py` | — | `apply_breathing_duck()`, `detect_phrases()`, `overlay_tracks()`, `mix()`, `normalize_loudness()`, `export_audio()` |
 | QA monitor | `core/qa_monitor.py` | — | `run_qa_checks()`, `compute_composite_score()`, `check_voice_music_ratio()`, `check_ducking_smoothness()` |
 | Stem separator | `core/stem_separator.py` | `StemSeparator` | `remove_drums_and_vocals()` |
 | Text utils | `core/text_utils.py` | — | `expand_text()`, `ABBREV_MAP` |
 | Breath sounds | `core/breath_sounds.py` | — | `load_breath()` |
 | DeepFilter enhancer | `core/deepfilter_enhancer.py` | — | `enhance_voice_deepfilter()` |
 | Stereo upmix | `core/stereo_upmix.py` | — | `haas_stereo()`, `center_pan_voice()` |
-| Stitch client | `core/stitch_client.py` | `StitchClient` | `generate_design_concept()` |

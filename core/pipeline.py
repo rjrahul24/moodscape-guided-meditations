@@ -1,7 +1,6 @@
 """Orchestrates the full meditation audio generation pipeline."""
 
 import gc
-import json
 import logging
 import os
 import time
@@ -17,7 +16,6 @@ from core.audio_processor import make_master_chain
 from core.mixer import export_audio, export_stems, mix, normalize_loudness
 from core.qa_monitor import run_qa_checks
 from core.kokoro_tts.engine import KokoroEngine
-from core.stitch_client import StitchClient
 
 logger = logging.getLogger("moodscape")
 
@@ -48,7 +46,6 @@ class MeditationPipeline:
 
     def __init__(self):
         self.tts = KokoroEngine()
-        self.stitch = StitchClient()
 
     def generate(
         self,
@@ -84,12 +81,11 @@ class MeditationPipeline:
         indextts_emotion_slug: str | None = None,
         indextts_emotion_audio_path: str | None = None,
         indextts_speed: float = 1.0,
-        do_stitch: bool = False,
         quality_mode: bool = False,
         stereo_output: bool = False,
         melody_audio_path: str | None = None,
         uploaded_music_path: str | None = None,
-    ) -> tuple[str, str | None, dict | None]:
+    ) -> tuple[str, str]:
         """Run the full pipeline and return the path to the output audio file.
 
         Args:
@@ -128,10 +124,9 @@ class MeditationPipeline:
                 or vocals that the model may have produced despite prompting.
 
         Returns:
-            Tuple of (path_to_output_file, status_message, stitch_design).
+            Tuple of (path_to_output_file, status_message).
         """
         status_message = ""
-        stitch_design = None
 
         # Generate a session seed if not provided
         if seed is None:
@@ -630,22 +625,6 @@ class MeditationPipeline:
                 target_lufs=target_lufs,
             )
 
-            # ── Step 12: Stitch Design Generation ───────────────────────────
-            if do_stitch:
-                _progress(progress_cb, 0.98, "Generating Stitch UI design concept...")
-                metadata = {
-                    "mood": "calm",  # This should be derived from the prompt/script
-                    "theme": music_prompt,
-                    "duration": music_duration / 60.0 if not is_vocals else 10.0
-                }
-                stitch_design = self.stitch.generate_design_concept(metadata)
-                
-                # Save stitch design to a file next to the audio
-                design_path = os.path.splitext(output_path)[0] + "_design.json"
-                with open(design_path, "w") as f:
-                    json.dump(stitch_design, f, indent=2)
-                logger.info("Stitch design saved to %s", design_path)
-
         finally:
             # Prevent PyTorch/MPS teardown segfaults
             import torch
@@ -659,4 +638,4 @@ class MeditationPipeline:
                 mx.clear_cache()
 
         _progress(progress_cb, 1.0, "Done!")
-        return output_path, status_message, stitch_design
+        return output_path, status_message

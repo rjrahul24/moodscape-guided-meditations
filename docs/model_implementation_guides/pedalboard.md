@@ -1,12 +1,12 @@
 <!-- QUICK-REF ──────────────────────────────────────────────────────── -->
 **Files:** `core/audio_processor.py` · `core/mixer.py` · `core/kokoro_tts/postprocessor.py` · `core/f5_tts/postprocessor.py`
 **Key functions:** `make__music_chain()` · `make_acestep_music_chain()` · `make_lyria_music_chain()` · `make_vocal_pocket_chain()` · `make_master_chain()` · `build_voice_chain()` · `apply_fx()`
-**Mix defaults:** `music_volume_db=−14.0` · `duck_amount_db=−12.0` · `hold_ms=1200` · `target_lufs=−16.0` · export streamed in 20s chunks
-**Active ducking:** `mixer.mix()` calls `apply_multiband_ducking()` by default (`multiband=True`). Falls back to `apply_envelope_ducking()` when `multiband=False`. `apply_rms_ducking()` exists but is NOT used in production.
+**Mix defaults:** `music_volume_db=−16.0` · `duck_amount_db=−16.0` · `target_lufs=−16.0` · export streamed in 20s chunks
+**Active ducking:** `mixer.mix()` calls `apply_breathing_duck()` — a script/VAD-aware sidechain duck (predictive S-curve descent, deep hold during speech, gradual release, pause lift). Applied fullband.
 **IR files:** `assets/impulse_responses/{warm_studio,wooden_hall,stone_chapel}.wav` · default: `warm_studio`
 **Tasks:**
 - See full plugin-by-plugin parameter tables → `docs/ARCHITECTURE.md#fx-chains--full-parameter-tables`
-- Change ducking params → `mixer.py :: apply_envelope_ducking()` (attack/release/lookahead/depth)
+- Change ducking params → `mixer.py :: compute_breathing_gain_db()` (pre_descent/attack_ramp/release/lift/VAD threshold)
 - Change LUFS target → `pipeline.py` (`target_lufs`) + `mixer.py :: export_audio()`
 - Change master limiter → `audio_processor.py :: make_master_chain()`
 **See also:** `docs/ARCHITECTURE.md#fx-chains--full-parameter-tables` · `docs/optimization_and_processing/audio_processing.md`
@@ -157,46 +157,45 @@ def make__music_chain() -> Pedalboard:
 
 ## 6. Master Chain
 
-The master chain applies subsonic filtering and final true-peak limiting. The 30 Hz highpass filter removes inaudible sub-bass rumble. Bus compression is intentionally absent — the multiband ducking system already shapes the voice-music dynamic contour; adding a bus compressor would fight that balance.
+The master chain applies subsonic filtering, gentle glue compression, and a touch of air. Peak control is deliberately **not** done here: pedalboard 0.9.23's `Limiter` inflates sub-threshold signals (~+4.75 dB) and adds broadband distortion, so true-peak limiting happens at export instead.
 
 ```python
 def make_master_chain() -> Pedalboard:
     return Pedalboard([
         HighpassFilter(cutoff_frequency_hz=30.0),   # Remove sub-bass rumble
-        Limiter(threshold_db=-1.5, release_ms=400.0),  # True-peak safety (-1.5 dBTP)
+        Compressor(threshold_db=-12.0, ratio=1.5, attack_ms=50.0, release_ms=200.0),  # glue (~1-2 dB GR)
+        HighShelfFilter(cutoff_frequency_hz=12000.0, gain_db=1.0),  # air
     ])
 ```
 
-Export target: **−16 LUFS** (Apple Music / Spotify standard). True-peak clip at ±0.841 linear (−1.5 dBTP) applied after chain in `export_audio()`.
+Export target: **−16 LUFS** (Apple Music / Spotify standard). `export_audio()` LUFS-normalizes first, then applies `mixer.true_peak_limit()` to a −1.0 dBTP ceiling (oversampled brickwall, clamped release), then streams to file in 20 s chunks.
 
 ---
 
 ## 7. Auto-Ducking
 
-MoodScape's ducking uses a **voice-activity mask–driven** algorithm (`apply_mask_ducking` in `mixer.py`). This is the preferred method when using Kokoro TTS because the `voice_activity` boolean mask is a sample-accurate ground-truth map of speaking regions, constructed during synthesis.
+MoodScape's ducking is the **breathing sidechain duck** (`apply_breathing_duck` in `mixer.py`), built from two combined gain curves:
 
-Algorithm:
-1. Build a raw dB automation curve from the boolean mask (0 dB for silence, -9 dB for speech).
-2. **100ms lookahead shift** — roll the envelope earlier using `np.roll` so the music starts fading *before* the first syllable.
-3. Apply exponential attack/release smoothing (**150ms attack**, **2000ms release**).
-4. Convert dB → linear gain and multiply the music array directly.
+1. **Script curve** (`_script_gain_db`): phrases are detected from the voice via RMS-envelope VAD (`detect_phrases`, −40 dB threshold, merge gaps <250 ms, drop phrases <150 ms). A predictive cubic-S-curve descent starts ~600 ms *before* each phrase, holds at `duck_amount_db` during speech, releases over ~1.5 s, and lifts +1.5 dB during pauses ≥1.5 s so the bed "breathes". Zero-phase smoothed (~6 Hz).
+2. **Reactive curve** (`_reactive_gain_db`): a vectorized envelope-follower safety net (200 Hz–4 kHz speech-band detector) that catches off-script breaths.
+
+The curves are combined by `combine_script_with_reactive()` — where the script lifts, the script wins; elsewhere the deeper of the two applies. The result is applied **fullband** so the whole bed drops under speech.
 
 **Key parameter values:**
 | Parameter | Value | Rationale |
 |---|---|---|
-| `duck_amount_db` | −12 dB | Pipeline default; combined with music_volume_db=−14 → ~22 dB voice-music separation |
-| `attack_ms` | 40ms | Responsive but smooth duck onset |
-| `release_ms` | 800ms | Gradual recovery matches meditation pacing |
-| `hold_ms` | 1200ms | Bridges slow meditation phrase gaps (typical inter-phrase pause = 1–3s); prevents per-sentence pumping during deliberate narration |
-| `lookahead_ms` | 30ms | Subtle pre-duck before first syllable |
-
-The previous RMS-based method (`apply_rms_ducking`, formerly `apply_lookahead_ducking`) is retained as a fallback for edge cases where a boolean mask is unavailable.
+| `duck_amount_db` | −16 dB | Pipeline default; combined with `music_volume_db=−16` → ~28 LU voice-music separation during speech |
+| `pre_descent_ms` | 600 ms | Bed starts falling before the first syllable |
+| `attack_ramp_ms` | 700 ms | S-curve descent duration |
+| `release_ms` | 1500 ms | Gradual recovery matches meditation pacing |
+| `lift_db` / `lift_pause_s` | +1.5 dB / 1.5 s | Bed rises slightly during long pauses |
+| `vad_threshold_db` | −40 dB | Phrase-detection threshold on the voice RMS envelope |
 
 ---
 
 ## 8. Track Overlay & Alignment
 
-The music naturally `pre_rolls` for 2 seconds to establish the environment before the narrator begins. Fade-in and fade-out functionality creates smooth 0→1 ramps natively in NumPy to taper the combined experience gracefully.
+The music naturally pre-rolls for 8 seconds (and post-rolls for 15 seconds) to establish the environment before the narrator begins. Fade-in and fade-out functionality creates smooth 0→1 ramps natively in NumPy to taper the combined experience gracefully.
 
 ---
 

@@ -368,7 +368,7 @@ def generate_meditation(
         yield None, _render_status("Generation Failed", 0.0, result_container["error"], elapsed=elapsed)
         return
 
-    output_path, status_msg, _ = result_container["result"]
+    output_path, status_msg = result_container["result"]
     duration = _get_duration(output_path)
     minutes = int(duration // 60)
     seconds = int(duration % 60)

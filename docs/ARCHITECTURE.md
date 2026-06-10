@@ -85,7 +85,6 @@ class SpeechEngine(ABC):
 - **Best-of-N selection:** Multiple candidates generated per segment; best selected via `compute_composite_score()` QA ranking
 - **Scheduling:** `cfg_scale=1.8`, `temperature=0.75`, `top_k=30`, `codec_guidance_scale=1.25`, `codec_num_steps=12`
 - **Token continuation:** Long-form segments reuse trailing tokens as context for seamless transitions
-- **MPS path:** heartlib's `lazy_load=True` + `__call__` API (writes to temp file internally)
 -  dtype: **always fp32** — `mx.float32` (MLX) / `{"codec": torch.float32}` (MPS)
 - Long-form (>240s): `_generate_segments()` — 240s segments with 8s cosine crossfades
 - `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7` set in engine module scope (not just `__init__`)
@@ -171,8 +170,6 @@ make_vocal_pocket_chain()    →  apply_audio_fx()   # carves 300Hz/1kHz/3kHz la
    - `_reactive_gain_db()`: vectorized envelope-follower safety net (200 Hz–4 kHz detector), combined via `combine_script_with_reactive()` (script lift wins; else the deeper of the two)
    - Applied **fullband** (whole bed drops, not just mids), so speech sits "very low" while pauses recover
 3. `apply_fades(audio, sr, fade_in_sec, fade_out_sec, curve="exponential")` — natural DAW-style curves
-
-The legacy `apply_multiband_ducking()` / `apply_envelope_ducking()` / `apply_rms_ducking()` remain in `mixer.py` but are no longer used by `mix()`.
 
 ---
 
@@ -361,7 +358,7 @@ The worker process holds Demucs weights; when it exits, all its memory is reclai
 
 ### atexit Hook
 
-`atexit.register(lambda: os._exit(0))` in `app.py` and `test_modes.py`. Suppresses MPS deallocation bus error (SIGBUS) on Python interpreter shutdown. Do not remove.
+`atexit.register(lambda: os._exit(0))` in `app.py`. Suppresses MPS deallocation bus error (SIGBUS) on Python interpreter shutdown. Do not remove.
 
 ---
 
@@ -408,7 +405,7 @@ mix() output (48 kHz mono float32)
 
 - Type: `np.ndarray(dtype=bool)`, same length as `voice_audio`
 - `True` = speech frame; `False` = silence/pause
-- Used by `apply_envelope_ducking()` to detect voice onset
+- Carried through the pipeline for alignment; ducking itself detects phrases from the voice signal (`detect_phrases()`)
 - After upsample (2×): extended via `np.repeat(mask, 2)`
 - After voice FX (reverb tail can change length): mask trimmed/padded to match new length
 
@@ -436,7 +433,7 @@ Controls: BPM (40–140), Density (0.0–1.0), Brightness (0.0–1.0), Guidance 
 
 | Test file | What it covers |
 |-----------|---------------|
-| `tests/unit/test_mixer.py` | `apply_rms_ducking`, `apply_envelope_ducking`, `overlay_tracks`, `apply_fades`, `normalize_loudness`, `resample_for_export` |
+| `tests/unit/test_mixer.py` | `overlay_tracks`, `apply_fades`, `normalize_loudness`, `resample_for_export` |
 | `tests/unit/test_audio_processor.py` | All 5 Pedalboard chains + `apply_fx()` + `upsample_audio()` |
 | `tests/unit/test_qa_monitor.py` | All 11 QA checks + composite score |
 | `tests/unit/test_meditation_mastering.py` | Full mastering chain (ducking → FX → export) |
@@ -452,6 +449,5 @@ Controls: BPM (40–140), Density (0.0–1.0), Brightness (0.0–1.0), Guidance 
 | `tests/unit/test_f5_pacing.py` | WPM-based pacing, `fix_duration` |
 | `tests/unit/test_acestep_engine.py` | ACE-Step generation, MESA prompt enhancement |
 | `tests/unit/test_acestep_infinite.py` | Two-phase long-form generation (genesis + repaint continuation) |
-| `tests/unit/test_stitch_client.py` | `StitchClient.generate_design_concept()` |
 | `tests/integration/test_integration_modes.py` | Full pipeline (all mode combinations) |
 | `tests/integration/test_stress.py` | Load testing, memory management across sessions |

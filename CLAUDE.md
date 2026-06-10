@@ -35,7 +35,7 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 │   ├── mixer.py                      # ducking · overlay · loudness · export
 │   ├── qa_monitor.py                 # output validation
 │   ├── stem_separator.py             # Demucs source separation
-│   ├── text_utils.py · breath_sounds.py · stereo_upmix.py · deepfilter_enhancer.py · stitch_client.py
+│   ├── text_utils.py · breath_sounds.py · stereo_upmix.py · deepfilter_enhancer.py
 │   ├── kokoro_tts/  f5_tts/  index_tts/   # TTS engines (engine + preproc + postproc + voices)
 │   ├── acestep/  lyria/                   # Generative music engines
 │   └── upload_music/                      # User-uploaded instrumental (engine + arrange/length-fit)
@@ -96,7 +96,7 @@ The six that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
 - **Kokoro forced to CPU** → MPS causes deallocation bus errors. British voices (`bf_*`, `bm_*`) need `KPipeline(lang_code="b")`.
 - **IndexTTS-2 NaN clamp** → BigVGANv2 may emit NaN on MPS. Use `torch.clamp(mel, -10, 10)`; force `use_fp16=False, use_deepspeed=False, use_cuda_kernel=False`.
 - **No pedalboard `Limiter`** → pedalboard 0.9.23's `Limiter` inflates sub-threshold signals ~+4.75 dB and adds broadband "static". It was removed from all music + master chains. Peak control is `mixer.true_peak_limit()` at export (LUFS-normalize → true-peak limit to −1 dBTP).
-- **Breathing duck** → `mixer.mix()` uses `apply_breathing_duck` (deep gradual S-curve, rises in pauses). `duck_amount_db=-16` (`pipeline.py`) = how low the bed sits under speech. The old multiband/`hold_ms` reactive ducker is retired.
+- **Breathing duck** → `mixer.mix()` uses `apply_breathing_duck` (deep gradual S-curve, rises in pauses). `duck_amount_db=-16` (`pipeline.py`) = how low the bed sits under speech. The old multiband/`hold_ms` reactive ducker has been removed.
 
 ## Where to Look
 

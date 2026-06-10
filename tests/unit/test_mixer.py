@@ -1,9 +1,6 @@
 import unittest
 import numpy as np
 from core.mixer import (
-    apply_rms_ducking,
-    apply_envelope_ducking,
-    apply_multiband_ducking,
     overlay_tracks,
     apply_fades,
     normalize_loudness,
@@ -12,90 +9,6 @@ from core.mixer import (
 
 
 class TestMixer(unittest.TestCase):
-    def test_apply_rms_ducking(self):
-        sr = 24000
-        voice = np.random.uniform(-0.1, 0.1, sr).astype(np.float32)
-        music = np.ones(sr, dtype=np.float32)
-        out = apply_rms_ducking(voice, music, sample_rate=sr)
-        self.assertEqual(out.shape, music.shape)
-        self.assertEqual(out.dtype, np.float32)
-
-    def test_apply_envelope_ducking_basic(self):
-        sr = 24000
-        voice = np.random.uniform(-0.1, 0.1, sr).astype(np.float32)
-        music = np.ones(sr, dtype=np.float32)
-        out = apply_envelope_ducking(voice, music, sample_rate=sr)
-        self.assertEqual(out.shape, music.shape)
-        self.assertEqual(out.dtype, np.float32)
-
-    def test_envelope_ducking_hold_bridges_gaps(self):
-        """Hold time should keep music ducked across short silence gaps."""
-        sr = 48000
-        duration_sec = 4.0
-        n = int(sr * duration_sec)
-        voice = np.zeros(n, dtype=np.float32)
-        music = np.ones(n, dtype=np.float32) * 0.5
-
-        # Two spoken phrases with a 0.5s gap (shorter than 1.2s hold)
-        phrase1_start, phrase1_end = int(0.5 * sr), int(1.5 * sr)
-        phrase2_start, phrase2_end = int(2.0 * sr), int(3.0 * sr)
-        voice[phrase1_start:phrase1_end] = 0.3
-        voice[phrase2_start:phrase2_end] = 0.3
-
-        # With hold=0 (no hold), the gap should recover
-        out_no_hold = apply_envelope_ducking(
-            voice, music, sample_rate=sr, duck_amount_db=-12.0,
-            hold_ms=0.0, attack_ms=20.0, release_ms=200.0,
-        )
-        # With hold=1200ms, the gap should stay ducked
-        out_held = apply_envelope_ducking(
-            voice, music, sample_rate=sr, duck_amount_db=-12.0,
-            hold_ms=1200.0, attack_ms=20.0, release_ms=200.0,
-        )
-
-        # Measure music level in the gap between phrases
-        gap_mid = int(1.75 * sr)
-        gap_slice = slice(gap_mid - 500, gap_mid + 500)
-        gap_no_hold = np.mean(np.abs(out_no_hold[gap_slice]))
-        gap_held = np.mean(np.abs(out_held[gap_slice]))
-
-        # With hold, music in the gap should be lower (still ducked)
-        self.assertLess(gap_held, gap_no_hold,
-                        "Hold time should keep music ducked across short gaps")
-
-    def test_multiband_ducking_preserves_bass(self):
-        """Multiband ducking should attenuate mid more than low frequencies."""
-        sr = 48000
-        n = sr * 2
-        voice = np.zeros(n, dtype=np.float32)
-        voice[sr // 2: sr] = 0.3  # speech in middle
-
-        # Music: mix of 100Hz sine (bass) and 1kHz sine (mid)
-        t = np.arange(n, dtype=np.float32) / sr
-        bass = np.sin(2 * np.pi * 100 * t).astype(np.float32) * 0.3
-        mid = np.sin(2 * np.pi * 1000 * t).astype(np.float32) * 0.3
-        music = bass + mid
-
-        out = apply_multiband_ducking(
-            voice, music, sample_rate=sr, duck_amount_db=-12.0,
-            low_duck_ratio=0.25, high_duck_ratio=0.5,
-        )
-
-        # During speech, bass should be preserved more than mid
-        speech_slice = slice(int(0.6 * sr), int(0.9 * sr))
-
-        # Fullband ducking for comparison
-        out_full = apply_envelope_ducking(
-            voice, music, sample_rate=sr, duck_amount_db=-12.0,
-        )
-
-        # The multiband output should have higher overall energy during speech
-        # (because bass is preserved) compared to fullband
-        mb_rms = np.sqrt(np.mean(out[speech_slice] ** 2))
-        fb_rms = np.sqrt(np.mean(out_full[speech_slice] ** 2))
-        self.assertGreater(mb_rms, fb_rms,
-                           "Multiband should preserve more energy (bass) than fullband")
-
     def test_overlay_tracks(self):
         sr = 24000
         voice = np.zeros(sr * 2, dtype=np.float32)  # 2 seconds

@@ -176,23 +176,23 @@ Voice Pre-Normalization
 
 Mixer
   • 8s music pre-roll, 15s music post-roll
-  • Multiband sidechain ducking (default, preserves bass warmth + HF shimmer)
-    - 3 bands: low (<250Hz, 25% duck), mid (250-4kHz, full duck), high (>4kHz, 50% duck)
-    - Linkwitz-Riley 4th-order crossovers (scipy sosfiltfilt)
-    - Base music: -17 dB | Duck: -12 dB → ~-29 dB total during speech
-    - Attack: 80ms | Release: 1000ms | Hold: 1200ms | Lookahead: 60ms
-    - Hold time bridges inter-phrase gaps — prevents per-sentence pumping
-    - Fullband fallback: mix(multiband=False) uses apply_envelope_ducking()
+  • Breathing sidechain duck (apply_breathing_duck) — fullband, script/VAD-aware
+    - Phrases detected from voice RMS envelope (detect_phrases, -40 dB threshold)
+    - Predictive S-curve descent ~600ms before each phrase (700ms ramp)
+    - Holds at duck_amount_db (-16 dB default) during speech
+    - S-curve release over 1.5s; +1.5 dB lift during pauses >= 1.5s
+    - Reactive envelope-follower safety net for off-script breaths
+    - Base music: -16 dB | Duck: -16 dB → bed ~28 LU under voice during speech
   • Exponential fades (3s in / 8s out) — natural DAW-style curves
 
 QA checks (11 metrics + ducking QA — see §9)
 
 Master Chain
-  • HPF 30 Hz → Compressor (1.5:1 @ -22 dB, 40ms/300ms) → Limiter (-1.5 dBTP, 400ms)
-  • Bus compressor provides subtle 'glue' (~1-2 dB GR max)
-  Applied per-chunk in export_audio() to avoid memory spikes
+  • HPF 30 Hz → Compressor (1.5:1 @ -12 dB, 50ms/200ms) → High-shelf +1 dB @ 12 kHz
+  • No limiter in the chain — LUFS-normalize then mixer.true_peak_limit() at export
+  Applied in export_audio(); audio streamed to file in 20s chunks
 
-Export: 44.1 kHz or 48 kHz / 24-bit WAV | Target: -16 LUFS | TP ceiling: -1.5 dBTP
+Export: 44.1 kHz or 48 kHz / 24-bit WAV | Target: -16 LUFS | TP ceiling: -1.0 dBTP
 ```
 
 ---
@@ -203,8 +203,8 @@ Export: 44.1 kHz or 48 kHz / 24-bit WAV | Target: -16 LUFS | TP ceiling: -1.5 dB
 - **Unified voice FX chain** (`build_voice_chain()`) runs at the mix rate (44.1/48 kHz) so EQ filters operate well below Nyquist. Convolution reverb is integrated into this chain, with the LPF placed after reverb to catch reverb HF content.
 - **Vocal pocket carving** happens on the music track, not the voice, to preserve the voice chain integrity.
 - **Voice pre-normalization** to -18 LUFS ensures consistent voice-to-music ratio regardless of TTS engine.
-- **Multiband sidechain ducking** runs offline (full envelope pre-computed with lookahead shift + hold) for precise timing. Only the mid-range (250-4kHz) receives full ducking; bass warmth and HF shimmer are preserved.
-- **Master chain** (HPF + bus compressor + limiter) runs per-chunk in the streaming export — prevents memory spikes on long sessions.
+- **Breathing sidechain duck** runs offline (full gain envelope pre-computed from detected phrases) for precise, predictive timing — the bed starts falling before the first syllable and rises gradually in pauses.
+- **Master chain** (HPF + gentle bus compressor + air shelf; no limiter) is applied in `export_audio()`, with LUFS normalization and oversampled true-peak limiting after it; audio is streamed to file in 20 s chunks to prevent memory spikes.
 
 ---
 
@@ -260,7 +260,7 @@ Selectable in the UI under "Reverb Space". Applied via Pedalboard `Convolution` 
 | `core/kokoro_tts/postprocessor.py` | Per-chunk cleanup, crossfade assembly, spectral gating, unified voice FX chain (`build_voice_chain()`) |
 | `core/f5_tts/postprocessor.py` | `F5MasteringEngine` — split-band de-esser, crossfade assembly, F5 Phase B EQ |
 | `core/breath_sounds.py` | Shared breath sample loader (cached, 75ms fade-in/out) |
-| `core/mixer.py` | Multiband sidechain ducking (with hold), overlay, cosine crossfade looping, exponential fades, LUFS, streaming export |
+| `core/mixer.py` | Breathing sidechain duck (script + reactive), overlay, cosine crossfade looping, exponential fades, LUFS, true-peak limiting, streaming export |
 | `core/kokoro_tts/preprocessor.py` | Script parsing (breath/pause/voice), text expansion, IPA injection, prosody punctuation, token chunking |
 | `core/f5_tts/preprocessor.py` | Script parsing (breath/pause/voice), character-count chunking |
 | `core/qa_monitor.py` | QA: LUFS, clipping, spectral balance, silence gaps, silence ratio, spectral rolloff, onset strength, spectral smoothness, harmonic stability, onset density, dynamic range, voice-music ratio, ducking smoothness, composite score |
@@ -301,8 +301,7 @@ After the master chain, `qa_monitor.run_qa_checks()` runs 11 automated checks:
 - [x] F5-TTS: 12 kHz lowpass preserves Vocos native air bandwidth
 - [x] Sub-bass below 80 Hz removed from voice (HighpassFilter)
 - [x] Subsonic below 30 Hz removed from master (HighpassFilter)
-- [x] Multiband sidechain ducking: 60ms lookahead, 80ms attack, 1000ms release, 1200ms hold
-- [x] Frequency-selective ducking: low 25%, mid 100%, high 50% of duck amount
+- [x] Breathing sidechain duck: 600ms pre-descent, 700ms S-curve attack, 1500ms release, +1.5 dB pause lift
 - [x] Equal-power cosine² crossfades: 300ms TTS assembly, 2s music, 2s music loop
 - [x]  seams: micro-crossfade (64-sample triangular at zero-crossing) after _stitch()
 - [x] Exponential fade curves (default) for natural meditation transitions
