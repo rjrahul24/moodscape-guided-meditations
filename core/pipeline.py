@@ -423,6 +423,7 @@ class MeditationPipeline:
                             lyrics=enhanced_lyrics,
                             bpm=bpm,
                             keyscale=keyscale,
+                            seed=seed,
                             **ref_audio_kwargs,
                         )
                     else:

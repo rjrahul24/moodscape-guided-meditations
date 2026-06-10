@@ -267,8 +267,8 @@ class AceStepEngine:
         try:
             if prompt_stages is not None:
                 return self._generate_story(
-                    prompt_stages, progress_cb, bpm=bpm, keyscale=keyscale, 
-                    reference_audio_path=ref_path
+                    prompt_stages, progress_cb, bpm=bpm, keyscale=keyscale,
+                    reference_audio_path=ref_path, seed=kwargs.get("seed"),
                 )
 
             # ── Long-form routing ─────────────────────────────────────────────
@@ -371,6 +371,7 @@ class AceStepEngine:
         bpm: int | None = 50,
         keyscale: str | None = "Auto",
         reference_audio_path: str | None = None,
+        seed: int | None = None,
     ) -> np.ndarray:
         """Generate story mode audio: one ACE-Step call per stage, then crossfade.
 
@@ -405,7 +406,8 @@ class AceStepEngine:
             enhanced_cap, enhanced_lyr = self._enhance_prompt(stage_prompt, duration_hint=stage_duration)
             audio = self._generate_single(
                 enhanced_cap, stage_duration, lyrics=enhanced_lyr,
-                bpm=bpm, keyscale=keyscale, reference_audio_path=reference_audio_path
+                bpm=bpm, keyscale=keyscale, reference_audio_path=reference_audio_path,
+                seed=(seed + i) if seed is not None else None,
             )
             stage_audios.append(audio)
 
@@ -719,13 +721,24 @@ class AceStepEngine:
         b = np.abs(np.fft.rfft(new_head[:n] * np.hanning(n)))
         freqs = np.fft.rfftfreq(n, 1.0 / sr)
         edges = np.geomspace(40.0, min(16000.0, sr / 2.0), n_bands + 1)
-        worst = 0.0
+        band_energies: list[tuple[float, float]] = []
         for lo, hi in zip(edges[:-1], edges[1:]):
             band = (freqs >= lo) & (freqs < hi)
             if not band.any():
                 continue
-            ea = float(np.mean(a[band] ** 2)) + 1e-12
-            eb = float(np.mean(b[band] ** 2)) + 1e-12
+            band_energies.append(
+                (float(np.mean(a[band] ** 2)), float(np.mean(b[band] ** 2)))
+            )
+        if not band_energies:
+            return 0.0
+        # Floor each band 60 dB below the loudest band on either side —
+        # near-silent bands carry only spectral leakage and would otherwise
+        # dominate the metric with inaudible deltas.
+        peak = max(max(ea, eb) for ea, eb in band_energies)
+        floor = max(peak * 1e-6, 1e-12)
+        worst = 0.0
+        for ea, eb in band_energies:
+            ea, eb = max(ea, floor), max(eb, floor)
             worst = max(worst, abs(10.0 * np.log10(eb / ea)))
         return worst
 

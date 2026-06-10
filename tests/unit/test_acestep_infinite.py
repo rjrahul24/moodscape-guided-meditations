@@ -49,12 +49,12 @@ class TestAceStepInfinite(unittest.TestCase):
     def test_generate_infinite_retry_logic(
         self, mock_sf_write, mock_raw, mock_repaint,
     ):
-        """Verify that _generate_infinite stops early when repaint returns None."""
+        """Verify that _generate_infinite stops early after both repaint attempts fail."""
         # Genesis returns 90s of stereo audio (GENESIS_LEN = 90.0)
         genesis_samples = int(90 * NATIVE_SAMPLE_RATE)
         mock_raw.return_value = (torch.ones(2, genesis_samples), NATIVE_SAMPLE_RATE)
 
-        # Repaint raises an exception on first call → continuation_audio stays None → early stop
+        # Repaint raises every time → both attempts fail → early stop
         mock_repaint.side_effect = RuntimeError("Repaint failed")
 
         with patch("tempfile.NamedTemporaryFile") as mock_tmpfile, \
@@ -66,8 +66,128 @@ class TestAceStepInfinite(unittest.TestCase):
 
         # Should return the genesis audio (90s) without crashing
         self.assertIsNotNone(result)
-        # Repaint was called once (then stopped early)
-        self.assertEqual(mock_repaint.call_count, 1)
+        # Repaint was attempted twice (initial + one retry), then early stop
+        self.assertEqual(mock_repaint.call_count, 2)
+
+    @patch("core.acestep.engine.AceStepEngine._generate_single_repaint")
+    @patch("core.acestep.engine.AceStepEngine._generate_single_raw")
+    @patch("soundfile.write")
+    def test_generate_infinite_seed_pinning(
+        self, mock_sf_write, mock_raw, mock_repaint,
+    ):
+        """seed must reach genesis unchanged and each repaint as seed + seg_num."""
+        genesis_samples = int(90 * NATIVE_SAMPLE_RATE)
+        mock_raw.return_value = (torch.ones(2, genesis_samples), NATIVE_SAMPLE_RATE)
+        repaint_samples = int(80 * NATIVE_SAMPLE_RATE)
+        # Non-silent tail so QA passes first try (one call per segment).
+        mock_repaint.return_value = (
+            np.random.default_rng(0).standard_normal(repaint_samples).astype(np.float32) * 0.3
+        )
+
+        with patch("tempfile.NamedTemporaryFile") as mock_tmpfile, \
+             patch("os.unlink"), \
+             patch("core.qa_monitor.compute_composite_score", return_value=0.9):
+            mock_tmpfile.return_value.__enter__ = lambda s: s
+            mock_tmpfile.return_value.__exit__ = MagicMock(return_value=False)
+            mock_tmpfile.return_value.name = "/tmp/fake_overlap.wav"
+            self.engine.generate("test prompt", 150.0, seed=1234)
+
+        self.assertEqual(mock_raw.call_args[1]["seed"], 1234)
+        # First continuation is seg_num=2 → seed + 2
+        self.assertEqual(mock_repaint.call_args_list[0][1]["seed"], 1236)
+
+    @patch("core.acestep.engine.AceStepEngine._generate_single_repaint")
+    @patch("core.acestep.engine.AceStepEngine._generate_single_raw")
+    @patch("soundfile.write")
+    def test_generate_infinite_segment_qa_retry(
+        self, mock_sf_write, mock_raw, mock_repaint,
+    ):
+        """A low composite score on a continuation triggers one offset-seed retry."""
+        genesis_samples = int(90 * NATIVE_SAMPLE_RATE)
+        mock_raw.return_value = (torch.ones(2, genesis_samples), NATIVE_SAMPLE_RATE)
+        repaint_samples = int(80 * NATIVE_SAMPLE_RATE)
+        mock_repaint.return_value = np.full(repaint_samples, 0.1, dtype=np.float32)
+
+        with patch("tempfile.NamedTemporaryFile") as mock_tmpfile, \
+             patch("os.unlink"), \
+             patch("core.qa_monitor.compute_composite_score", return_value=0.2), \
+             patch.object(AceStepEngine, "_seam_discontinuity_db", return_value=0.0):
+            mock_tmpfile.return_value.__enter__ = lambda s: s
+            mock_tmpfile.return_value.__exit__ = MagicMock(return_value=False)
+            mock_tmpfile.return_value.name = "/tmp/fake_overlap.wav"
+            self.engine.generate("test prompt", 150.0, seed=1000)
+
+        # One segment needed (150-90=60s), scored 0.2 < 0.6 → retried once.
+        self.assertEqual(mock_repaint.call_count, 2)
+        self.assertEqual(mock_repaint.call_args_list[0][1]["seed"], 1002)
+        self.assertEqual(mock_repaint.call_args_list[1][1]["seed"], 2002)
+
+    def test_seam_discontinuity_metric(self):
+        """Identical material across the junction ≈ 0 dB; a timbral jump is large."""
+        sr = NATIVE_SAMPLE_RATE
+        rng = np.random.default_rng(7)
+        t = np.arange(sr * 2, dtype=np.float32) / sr
+        drone = np.sin(2 * np.pi * 110 * t).astype(np.float32) * 0.3
+
+        same = AceStepEngine._seam_discontinuity_db(drone, drone, sr)
+        self.assertLess(same, 1.0)
+
+        bright = (rng.standard_normal(sr * 2).astype(np.float32) * 0.3)
+        jump = AceStepEngine._seam_discontinuity_db(drone, bright, sr)
+        self.assertGreater(jump, 6.0)
+
+
+class TestAceStepLoopMode(unittest.TestCase):
+    def setUp(self):
+        self.engine = AceStepEngine()
+        self.engine.initialized = True
+        self.engine.model_type = "sft"
+        self.engine._dit = MagicMock()
+        self.engine._llm = MagicMock()
+
+    def _patch_base(self, base_audio):
+        return patch.object(AceStepEngine, "_generate_infinite", return_value=base_audio)
+
+    @patch("core.qa_monitor.compute_composite_score", return_value=0.9)
+    def test_loop_mode_returns_exact_target_length(self, mock_score):
+        base = np.random.default_rng(1).standard_normal(
+            TARGET_SAMPLE_RATE * 240).astype(np.float32) * 0.3
+        with self._patch_base(base):
+            out = self.engine._generate_looped("test", 600.0, seed=5)
+        self.assertEqual(out.shape[-1], int(600.0 * TARGET_SAMPLE_RATE))
+        self.assertEqual(out.dtype, np.float32)
+        self.assertEqual(out.ndim, 1)
+
+    @patch("core.qa_monitor.compute_composite_score", return_value=0.2)
+    def test_loop_mode_low_qa_retries_base_once(self, mock_score):
+        base = np.random.default_rng(2).standard_normal(
+            TARGET_SAMPLE_RATE * 240).astype(np.float32) * 0.3
+        with self._patch_base(base) as mock_inf:
+            self.engine._generate_looped("test", 600.0, seed=5)
+        self.assertEqual(mock_inf.call_count, 2)
+        self.assertEqual(mock_inf.call_args_list[0][1]["seed"], 5)
+        self.assertEqual(mock_inf.call_args_list[1][1]["seed"], 5 + 7919)
+
+    @patch("core.qa_monitor.compute_composite_score", return_value=0.9)
+    def test_long_form_routing(self, mock_score):
+        """auto → loop above 300s, evolve at 90-300s; explicit modes win."""
+        out = np.zeros(TARGET_SAMPLE_RATE * 10, dtype=np.float32)
+        cases = [
+            (600.0, "auto", "loop"),
+            (150.0, "auto", "evolve"),
+            (150.0, "loop", "loop"),
+            (600.0, "evolve", "evolve"),
+        ]
+        for duration, mode, expected in cases:
+            with patch.object(AceStepEngine, "_generate_looped", return_value=out) as m_loop, \
+                 patch.object(AceStepEngine, "_generate_infinite", return_value=out) as m_inf:
+                self.engine.generate("test", duration, long_form_mode=mode)
+                if expected == "loop":
+                    m_loop.assert_called_once()
+                    m_inf.assert_not_called()
+                else:
+                    m_inf.assert_called_once()
+                    m_loop.assert_not_called()
 
     @patch("core.qa_monitor.compute_composite_score", return_value=0.9)
     def test_generate_single_switch(self, mock_score):

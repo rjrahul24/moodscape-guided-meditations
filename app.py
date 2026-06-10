@@ -233,6 +233,7 @@ def generate_meditation(
     indextts_emotion_audio_file,
     indextts_speed,
     uploaded_music_file,
+    acestep_longform_choice,
 ):
     # Initial status
     yield None, _render_status("Initializing Pipeline", 0.0)
@@ -317,6 +318,7 @@ def generate_meditation(
                 bpm=acestep_bpm,
                 keyscale=acestep_key,
                 acestep_model_type=acestep_model_type,
+                acestep_long_form_mode=(acestep_longform_choice or "Auto").lower(),
                 lyria_bpm=int(lyria_bpm),
                 lyria_density=float(lyria_density),
                 lyria_brightness=float(lyria_brightness),
@@ -1013,6 +1015,14 @@ with gr.Blocks(
                     visible=True,
                     elem_classes="pill-radio",
                 )
+                acestep_longform = gr.Radio(
+                    choices=["Auto", "Loop", "Evolve"],
+                    value="Auto",
+                    label="Long-form Mode (tracks over 90s)",
+                    info="Loop: one strong ~4-min piece looped (consistent, fast — Auto picks this above 5 min). Evolve: continuously generated (varied, slower, more seams).",
+                    visible=True,
+                    elem_classes="pill-radio",
+                )
                 tts_engine_radio = gr.Radio(
                     choices=["Kokoro", "F5-TTS", "IndexTTS-2"],
                     value="Kokoro",
@@ -1181,6 +1191,7 @@ with gr.Blocks(
             gr.update(visible=not is_inst),   # reverb_slider
             gr.update(visible=not is_voc),    # reference_audio
             gr.update(visible=show_acestep),  # acestep_quality
+            gr.update(visible=show_acestep),  # acestep_longform
             gr.update(visible=show_acestep),  # acestep_metadata
             gr.update(visible=show_lyria),    # lyria_settings
             gr.update(visible=show_upload),   # upload_settings
@@ -1191,7 +1202,7 @@ with gr.Blocks(
     generation_mode.change(
         fn=toggle_mode_settings,
         inputs=[generation_mode, music_model_dropdown, tts_engine_radio],
-        outputs=[script_input, music_prompt, music_duration, kokoro_settings, speed_slider, duck_slider, reverb_slider, reference_audio, acestep_quality, acestep_metadata, lyria_settings, upload_settings, f5_settings, indextts_settings],
+        outputs=[script_input, music_prompt, music_duration, kokoro_settings, speed_slider, duck_slider, reverb_slider, reference_audio, acestep_quality, acestep_longform, acestep_metadata, lyria_settings, upload_settings, f5_settings, indextts_settings],
     )
 
     def toggle_music_engine_ui(model, mode):
@@ -1201,6 +1212,7 @@ with gr.Blocks(
         is_voc = mode == "Vocals Only"
         return (
             gr.update(visible=is_acestep and not is_voc),  # acestep_quality
+            gr.update(visible=is_acestep and not is_voc),  # acestep_longform
             gr.update(visible=is_acestep and not is_voc),  # acestep_metadata
             gr.update(visible=is_lyria and not is_voc),    # lyria_settings
             gr.update(visible=is_upload and not is_voc),   # upload_settings
@@ -1209,7 +1221,7 @@ with gr.Blocks(
     music_model_dropdown.change(
         fn=toggle_music_engine_ui,
         inputs=[music_model_dropdown, generation_mode],
-        outputs=[acestep_quality, acestep_metadata, lyria_settings, upload_settings],
+        outputs=[acestep_quality, acestep_longform, acestep_metadata, lyria_settings, upload_settings],
     )
 
     def _refresh_backgrounds():
@@ -1288,6 +1300,7 @@ with gr.Blocks(
             indextts_emotion_audio,
             indextts_speed_slider,
             uploaded_music,
+            acestep_longform,
         ],
         outputs=[audio_output, status_display],
         show_progress="full",
