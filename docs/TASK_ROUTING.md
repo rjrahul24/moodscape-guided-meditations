@@ -14,6 +14,8 @@ When you need to change something, start here. Locate the row that matches your 
 | Music FX chain (per engine) | `core/audio_processor.py :: make_{engine}_music_chain()` | — |
 | Vocal pocket / intelligibility EQ | `core/audio_processor.py :: make_vocal_pocket_chain()` | — |
 | Ducking behavior | `core/mixer.py :: apply_breathing_duck()` / `compute_breathing_gain_db()` | `core/pipeline.py` (`duck_amount_db`) |
+| Music bed level (automated) | `core/mixer.py :: calibrate_music_bed()` / `adaptive_vad_threshold()` | `core/pipeline.py` (`MOODSCAPE_ADAPTIVE_BED`) |
+| ACE-Step long-form strategy | `core/acestep/engine.py :: _generate_looped()` / `_generate_infinite()` | `pipeline.generate(acestep_long_form_mode=…)` |
 | LUFS target | `core/pipeline.py` | `core/mixer.py :: export_audio()` |
 | ACE-Step generation params | `core/acestep/engine.py` (module-level constants) | — |
 | ACE-Step reference audio (melody conditioning) | `core/pipeline.py` (`melody_audio_path` param) | `core/acestep/engine.py :: _prepare_reference_audio()` |

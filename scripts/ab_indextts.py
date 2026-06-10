@@ -27,6 +27,11 @@ import sys
 import time
 from pathlib import Path
 
+# indextts → audiotools → tensorboard ships stale *_pb2.py files that crash the
+# protobuf C extension. Force pure-Python mode BEFORE any transitive
+# google.protobuf import (same guard as app.py).
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np

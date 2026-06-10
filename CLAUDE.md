@@ -8,7 +8,7 @@ AI-guided meditation audio generator (Gradio UI). Three TTS engines (Kokoro, F5-
 source .venv/bin/activate
 pip install -r requirements.txt
 brew install espeak-ng                 # Kokoro G2P dependency
-brew install rubberband                # IndexTTS-2 pacing time-stretch (falls back to librosa if absent)
+brew install rubberband                # IndexTTS-2 pacing time-stretch (REQUIRED for slow pacing; without it chunks stay unstretched)
 python app.py                          # Gradio UI at http://localhost:7860
 ```
 
@@ -66,7 +66,7 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 6. **TTS upsample** 24 → 48 kHz via `audio_processor.upsample_audio(high_accuracy=True)`; then per-chunk humanize (Kokoro)
 7. **Voice FX** → `build_voice_chain()` + `apply_fx()`; then `mixer.normalize_loudness()` to −18 LUFS
 8. **Music FX** → `make_{engine}_music_chain()` + `make_vocal_pocket_chain()`
-9. **Mix** → `mixer.mix()` (breathing sidechain duck — deep gradual S-curve, rises in pauses; exponential fades)
+9. **Mix** → `mixer.mix()` (breathing sidechain duck — deep gradual S-curve, rises in pauses; exponential fades). Bed + duck levels auto-calibrated per session from measured stem LUFS (`mixer.calibrate_music_bed`; disable with `MOODSCAPE_ADAPTIVE_BED=0`)
 10. **Master** → `make_master_chain()` (HPF → gentle bus comp → +1 dB air shelf; **no** limiter)
 11. **QA** → `qa_monitor.run_qa_checks()`
 12. **Export** → `mixer.export_audio()` (LUFS-normalize to −16 → `true_peak_limit()` to −1 dBTP → WAV/MP3)
@@ -96,7 +96,9 @@ The six that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
 - **Kokoro forced to CPU** → MPS causes deallocation bus errors. British voices (`bf_*`, `bm_*`) need `KPipeline(lang_code="b")`.
 - **IndexTTS-2 NaN clamp** → BigVGANv2 may emit NaN on MPS. Use `torch.clamp(mel, -10, 10)`; force `use_fp16=False, use_deepspeed=False, use_cuda_kernel=False`.
 - **No pedalboard `Limiter`** → pedalboard 0.9.23's `Limiter` inflates sub-threshold signals ~+4.75 dB and adds broadband "static". It was removed from all music + master chains. Peak control is `mixer.true_peak_limit()` at export (LUFS-normalize → true-peak limit to −1 dBTP).
-- **Breathing duck** → `mixer.mix()` uses `apply_breathing_duck` (deep gradual S-curve, rises in pauses). `duck_amount_db=-16` (`pipeline.py`) = how low the bed sits under speech. The old multiband/`hold_ms` reactive ducker has been removed.
+- **Breathing duck** → `mixer.mix()` uses `apply_breathing_duck` (deep gradual S-curve, rises in pauses). Bed/duck levels are auto-calibrated per session (`calibrate_music_bed`, targets: bed 14.5 LU under voice in pauses, 30.5 LU under during speech); `MOODSCAPE_ADAPTIVE_BED=0` restores the fixed −16/−16 constants. The old multiband/`hold_ms` reactive ducker has been removed.
+- **IndexTTS pacing needs Rubber Band** → without the `rubberband` CLI, chunks are returned **unstretched** (the librosa phase-vocoder fallback metallicises voice; re-enable only via `MOODSCAPE_INDEXTTS_PV_FALLBACK=1`).
+- **ACE-Step >5 min defaults to loop mode** → one ~4-min piece looped via `fit_to_length` (long_form_mode="auto"). Pick "Evolve" in the UI for continuously generated (slower, more seam risk).
 
 ## Where to Look
 

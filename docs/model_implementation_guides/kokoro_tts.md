@@ -15,6 +15,20 @@
 
 # Kokoro TTS — Guided Meditation Implementation Research
 
+## Expressiveness Ceiling (read this first)
+
+Kokoro is an 82M-parameter model with **no emotion conditioning** — it cannot
+reach ElevenLabs/Headspace-level emotional depth. Its lane is *fast, clean,
+pleasant, slightly neutral* narration. For emotional warmth and presence, use
+**F5-TTS** (zero-shot cloning carries the reference's emotion). Two research
+flags exist for modest uplift (A/B renders: `/tmp/ab_kokoro/` recipe):
+
+| Flag | Effect | Default |
+|---|---|---|
+| `MOODSCAPE_KOKORO_VOICE_JITTER=0.001` | Per-sentence style-vector jitter ("liveness"; >0.001 risks timbre shifts at pauses) | off |
+| `MOODSCAPE_KOKORO_PARALLEL_COMP=1` | NY-style parallel compression (presence/intimacy) | off |
+
+
 ---
 
 ## 1. Model Overview

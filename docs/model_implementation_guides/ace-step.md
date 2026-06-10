@@ -8,7 +8,9 @@
 - Tune generation params → module-level constants at top of `core/acestep/engine.py`
 - Change prompt enhancement → `_enhance_prompt()` (MESA framework: Mood/Elements/Structure/Application)
 - Adjust FX chain → `core/audio_processor.py :: make_acestep_music_chain()`
-- Long-form behavior → `_generate_infinite()` (two-phase: genesis [90s] + repaint continuation [20s overlap, 60s new per iteration])
+- Long-form behavior → `long_form_mode` "auto"|"loop"|"evolve" (pipeline `acestep_long_form_mode`, UI radio):
+  - loop (auto default >300s) → `_generate_looped()` — ~4-min base piece (QA-retried) looped to target via `fit_to_length` 4s equal-power crossfades
+  - evolve → `_generate_infinite()` (genesis [90s] + repaint continuation [20s overlap, 60s new per iteration]; per-segment seed pinning `seed+seg_num`, per-segment composite-QA retry, seam check with 3s STFT-crossfade fallback)
 **See also:** `docs/ARCHITECTURE.md#acestepenginecoreacestepenginepy` · `docs/prompting_guides/ace_step_instructions.md`
 <!-- ────────────────────────────────────────────────────────────────── -->
 

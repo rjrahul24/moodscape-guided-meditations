@@ -73,21 +73,12 @@ class SpeechEngine(ABC):
 - `load_model(model_type="sft")` — patches `ACESTEP_GENERATION_TIMEOUT=7200`, `DURATION_MAX=1200` before import
 - `compile_model=True` — mandatory; one-time JIT ~135s, then ~4× faster per step
 - Device: `"auto"` → MPS on Apple Silicon; DiT uses `use_mlx_dit=True`
-- Long-form (>90s): `_generate_infinite()` — two phases:
-  1. **Genesis** (90s): initial anchor segment via `text2music`
-  2. **Repaint continuation**: overlapping repaint calls — 20s context window from tail of accumulated audio; 60s new audio per iteration; seamless at model level (no post-hoc STFT crossfades needed)
-- Story mode: `_generate_story()` — per-stage prompt + 6s equal-power crossfades
+- Long-form (>90s) — two strategies, selected via `long_form_mode` ("auto" | "loop" | "evolve"; pipeline param `acestep_long_form_mode`, UI radio):
+  - **Loop** (auto default above 300s): `_generate_looped()` — one ~4-min piece (genesis + 2-3 repaints, whole-piece composite-QA retry ≤2 attempts), then looped to target with `fit_to_length()` equal-power crossfades (4s). Few seams, deterministic, ~4× faster for 10-15 min beds.
+  - **Evolve**: `_generate_infinite()` — genesis (90s) + chained repaint continuations (20s context, 60s new per call), hardened with per-segment seed pinning (`seed + seg_num`), per-segment composite-QA retry (threshold 0.6, one offset-seed retry), and seam validation (`_seam_discontinuity_db` log-band energy check → 3s STFT crossfade fallback when > 6 dB)
+- Seed pinned end-to-end via `GenerationConfig(use_random_seed=False, seeds=[seed])` — ACE-Step is seed-sensitive; the pipeline forwards its session seed
+- Story mode: `_generate_story()` — per-stage prompt + 6s equal-power crossfades; per-stage seed = `seed + stage_index`
 - `_enhance_prompt(user_prompt, duration_hint)` — MESA framework → `(caption, lyrics)` tuple
-
-**Engine** (`core//engine.py`):
-- Detects MLX vs. MPS backend at `load_model()` time
-- **MLX simultaneous loading:** Both LM (bf16) + codec (fp32) loaded together (~12 GB). `mx.set_memory_limit(30GB)`, `mx.set_cache_limit(4GB)`.
-- **Best-of-N selection:** Multiple candidates generated per segment; best selected via `compute_composite_score()` QA ranking
-- **Scheduling:** `cfg_scale=1.8`, `temperature=0.75`, `top_k=30`, `codec_guidance_scale=1.25`, `codec_num_steps=12`
-- **Token continuation:** Long-form segments reuse trailing tokens as context for seamless transitions
--  dtype: **always fp32** — `mx.float32` (MLX) / `{"codec": torch.float32}` (MPS)
-- Long-form (>240s): `_generate_segments()` — 240s segments with 8s cosine crossfades
-- `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7` set in engine module scope (not just `__init__`)
 
 **LyriaEngine** (`core/lyria/engine.py`):
 - Async WebSocket via `client.aio.live.music.connect(model="models/lyria-realtime-exp")`
@@ -448,6 +439,6 @@ Controls: BPM (40–140), Density (0.0–1.0), Brightness (0.0–1.0), Guidance 
 | `tests/unit/test_f5_phases.py` | Multi-phase voice switching |
 | `tests/unit/test_f5_pacing.py` | WPM-based pacing, `fix_duration` |
 | `tests/unit/test_acestep_engine.py` | ACE-Step generation, MESA prompt enhancement |
-| `tests/unit/test_acestep_infinite.py` | Two-phase long-form generation (genesis + repaint continuation) |
+| `tests/unit/test_acestep_infinite.py` | Long-form generation: repaint chain hardening (seed/QA/seam), loop mode, routing |
 | `tests/integration/test_integration_modes.py` | Full pipeline (all mode combinations) |
 | `tests/integration/test_stress.py` | Load testing, memory management across sessions |
