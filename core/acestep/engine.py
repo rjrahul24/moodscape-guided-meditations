@@ -100,6 +100,54 @@ class AceStepEngine:
     # Model lifecycle
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _patch_inline_generation_thread():
+        """Run ACE-Step's service_generate on the calling thread, not a watchdog.
+
+        MLX (0.31) lazy graphs record the concrete stream of the thread that
+        built them and cannot be evaluated from another thread — ``mx.eval``
+        raises "There is no Stream(gpu, 0) in current thread". ACE-Step's
+        ``generate_music_execute`` runs diffusion in a ``threading.Thread``
+        purely to enforce a wall-clock timeout, so the conditioning graphs
+        built on the main thread blow up inside the worker and **every MLX
+        DiT run silently falls back to the ~10x slower PyTorch path** (the
+        package's loguru warning swallows the exception text).
+
+        We already raise ACESTEP_GENERATION_TIMEOUT to 7200 s, so the
+        watchdog buys nothing — replace Thread with an inline runner inside
+        that one module. Error propagation is unchanged (the target still
+        records into ``_error`` and the caller re-raises after "join").
+        """
+        from acestep.core.generation.handler import generate_music_execute as _gme
+
+        if getattr(_gme, "_moodscape_inline_thread", False):
+            return
+
+        class _InlineThread:
+            def __init__(self, target=None, name=None, daemon=None, **kwargs):
+                self._target = target
+
+            def start(self):
+                if self._target is not None:
+                    self._target()
+
+            def join(self, timeout=None):
+                return None
+
+            def is_alive(self):
+                return False
+
+        class _ThreadingShim:
+            Thread = _InlineThread
+
+            def __getattr__(self, item):
+                import threading as _threading
+                return getattr(_threading, item)
+
+        _gme.threading = _ThreadingShim()
+        _gme._moodscape_inline_thread = True
+        logger.info("[AceStepEngine] Patched service_generate to run inline (MLX thread-stream fix)")
+
     def load_model(self, model_type="sft"):
         """Load ACE-Step DiT and LLM handlers.
 
@@ -126,6 +174,8 @@ class AceStepEngine:
         import acestep.gpu_config as _agc
         _agc.GPU_TIER_CONFIGS["unlimited"]["max_duration_with_lm"] = 1200
         _agc.GPU_TIER_CONFIGS["unlimited"]["max_duration_without_lm"] = 1200
+
+        self._patch_inline_generation_thread()
 
         from acestep.handler import AceStepHandler
         from acestep.llm_inference import LLMHandler

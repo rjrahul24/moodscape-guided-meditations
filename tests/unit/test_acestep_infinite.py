@@ -274,3 +274,48 @@ class TestAceStepLoopMode(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestInlineGenerationPatch(unittest.TestCase):
+    def test_inline_thread_patch_runs_target_synchronously(self):
+        """The patched Thread must run its target inline (MLX graphs cannot
+        cross threads) while everything else still delegates to threading."""
+        import sys
+        import types
+
+        # Build a fake generate_music_execute module so the patch can be
+        # exercised without the heavy acestep package.
+        fake = types.ModuleType("acestep.core.generation.handler.generate_music_execute")
+        import threading as real_threading
+        fake.threading = real_threading
+        pkgs = {
+            "acestep": types.ModuleType("acestep"),
+            "acestep.core": types.ModuleType("acestep.core"),
+            "acestep.core.generation": types.ModuleType("acestep.core.generation"),
+            "acestep.core.generation.handler": types.ModuleType("acestep.core.generation.handler"),
+        }
+        saved = {k: sys.modules.get(k) for k in list(pkgs) + [fake.__name__]}
+        try:
+            sys.modules.update(pkgs)
+            sys.modules[fake.__name__] = fake
+            pkgs["acestep.core.generation.handler"].generate_music_execute = fake
+
+            AceStepEngine._patch_inline_generation_thread()
+
+            ran_in = {}
+            t = fake.threading.Thread(target=lambda: ran_in.setdefault(
+                "thread", real_threading.current_thread().name), name="service-generate", daemon=True)
+            t.start()
+            t.join(timeout=600)
+            self.assertEqual(ran_in["thread"], real_threading.current_thread().name)
+            self.assertFalse(t.is_alive())
+            # Non-Thread attributes still delegate to the real module
+            self.assertIs(fake.threading.Event, real_threading.Event)
+            # Idempotent
+            AceStepEngine._patch_inline_generation_thread()
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    sys.modules.pop(k, None)
+                else:
+                    sys.modules[k] = v
