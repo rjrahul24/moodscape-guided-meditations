@@ -676,7 +676,7 @@ class AceStepEngine:
         reference_audio_path: str | None = None,
         seed: int | None = None,
         base_duration_sec: float = 240.0,
-        loop_crossfade_ms: float = 4000.0,
+        loop_crossfade_ms: float = 8000.0,
     ) -> np.ndarray:
         """Loop-mode long form: one strong ~4-minute piece, looped to target.
 
@@ -685,8 +685,10 @@ class AceStepEngine:
         generate ``base_duration_sec`` once (genesis + 2-3 repaints), QA the
         whole piece with one retry, then loop it to the target length with
         equal-power crossfades via the proven ``fit_to_length`` machinery the
-        uploaded-instrumental path uses. 4-second crossfades on ambient pads
-        are inaudible. Deterministic and ~4x faster for 10-15 minute beds.
+        uploaded-instrumental path uses. 8-second crossfades on ambient pads
+        are inaudible (measured: a 4 s blend left ~6 dB worst-band deltas at
+        the seam on a real 10-min render; doubling the blend smooths it).
+        Deterministic and ~4x faster for 10-15 minute beds.
         """
         from core.qa_monitor import compute_composite_score
         from core.upload_music.arrange import fit_to_length

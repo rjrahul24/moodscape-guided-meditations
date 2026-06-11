@@ -74,7 +74,7 @@ class SpeechEngine(ABC):
 - `compile_model=True` — mandatory; one-time JIT ~135s, then ~4× faster per step
 - Device: `"auto"` → MPS on Apple Silicon; DiT uses `use_mlx_dit=True`
 - Long-form (>90s) — two strategies, selected via `long_form_mode` ("auto" | "loop" | "evolve"; pipeline param `acestep_long_form_mode`, UI radio):
-  - **Loop** (auto default above 300s): `_generate_looped()` — one ~4-min piece (genesis + 2-3 repaints, whole-piece composite-QA retry ≤2 attempts), then looped to target with `fit_to_length()` equal-power crossfades (4s). Few seams, deterministic, ~4× faster for 10-15 min beds.
+  - **Loop** (auto default above 300s): `_generate_looped()` — one ~4-min piece (genesis + 2-3 repaints, whole-piece composite-QA retry ≤2 attempts), then looped to target with `fit_to_length()` equal-power crossfades (8s). Few seams, deterministic, ~4× faster for 10-15 min beds.
   - **Evolve**: `_generate_infinite()` — genesis (90s) + chained repaint continuations (20s context, 60s new per call), hardened with per-segment seed pinning (`seed + seg_num`), per-segment composite-QA retry (threshold 0.6, one offset-seed retry), and seam validation (`_seam_discontinuity_db` log-band energy check → 3s STFT crossfade fallback when > 6 dB)
 - Seed pinned end-to-end via `GenerationConfig(use_random_seed=False, seeds=[seed])` — ACE-Step is seed-sensitive; the pipeline forwards its session seed
 - Story mode: `_generate_story()` — per-stage prompt + 6s equal-power crossfades; per-stage seed = `seed + stage_index`
