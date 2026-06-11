@@ -92,7 +92,7 @@ The six that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
 
 - **MPS bus error on exit** → `atexit.register(lambda: os._exit(0))` in `app.py` — do not remove.
 - **ACE-Step timeout** → always pass `compile_model=True` to `initialize_service()`; first run has ~135s JIT overhead.
-- **transformers pin** → `>=4.51.0,<4.58.0` for ACE-Step compatibility — do not upgrade.
+- **transformers pin** → `>=4.55.0,<4.58.0` — the ACE-Step HF remote code needs `layer_type_validation` (4.55+); 4.58+ breaks ACE-Step. Older 4.52.x fails model load entirely.
 - **Kokoro forced to CPU** → MPS causes deallocation bus errors. British voices (`bf_*`, `bm_*`) need `KPipeline(lang_code="b")`.
 - **IndexTTS-2 NaN clamp** → BigVGANv2 may emit NaN on MPS. Use `torch.clamp(mel, -10, 10)`; force `use_fp16=False, use_deepspeed=False, use_cuda_kernel=False`.
 - **No pedalboard `Limiter`** → pedalboard 0.9.23's `Limiter` inflates sub-threshold signals ~+4.75 dB and adds broadband "static". It was removed from all music + master chains. Peak control is `mixer.true_peak_limit()` at export (LUFS-normalize → true-peak limit to −1 dBTP).

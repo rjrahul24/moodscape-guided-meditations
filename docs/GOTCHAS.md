@@ -11,7 +11,7 @@ Hard-won lessons. The most load-bearing entries are repeated in `CLAUDE.md`; the
 ## ACE-Step
 
 - **Timeout fix**: Always pass `compile_model=True` to `initialize_service()` — without it generation takes ~9s/step and times out. First run has ~135s JIT overhead, then ~4× faster per step.
-- **transformers version pin**: `>=4.51.0,<4.58.0` is required for ACE-Step compatibility — do not upgrade.
+- **transformers version pin**: `>=4.55.0,<4.58.0`. The ACE-Step HF-cached remote code (`configuration_acestep_v15.py`) imports `layer_type_validation`, added in transformers 4.55 — older 4.5x fails ACE-Step model load with an ImportError. 4.58+ breaks ACE-Step the other way. (Hit 2026-06-11 with 4.52.1; fixed by upgrading to 4.57.6.)
 - **ADG disabled**: `_USE_ADG=False`. SFT adherence is baked in; ADG doubles forward passes without quality benefit.
 - **Local checkpoint dir**: `models/acestep/checkpoints/` (relative — run from project root).
 

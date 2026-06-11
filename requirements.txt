@@ -1,7 +1,7 @@
 torch>=2.1.0
 torchaudio>=2.1.0
 kokoro>=0.9.4
-transformers>=4.51.0,<4.58.0
+transformers>=4.55.0,<4.58.0            # >=4.55: ACE-Step remote code needs layer_type_validation; <4.58: ACE-Step pin
 huggingface-hub>=0.23.2,<1.0
 tokenizers>=0.20
 demucs>=4.0.0
