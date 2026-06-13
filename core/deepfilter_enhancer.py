@@ -105,8 +105,8 @@ def enhance_voice_deepfilter(
         sr:    Sample rate (should be 48000 for best results).
         wet:   Dry/wet blend in [0, 1]. The MLX wrapper exposes no denoising
                strength knob, so we attenuate by mixing the dry signal back in.
-               Use a low value (~0.10) for already-clean engines like IndexTTS-2
-               (BigVGANv2) — full-strength denoising strips natural breaths and
+               Use a low value (~0.25) for already-clean engines like Kokoro
+               (ISTFTNet) — full-strength denoising strips natural breaths and
                produces the "AI voice" signature. 1.0 = fully processed.
 
     Returns:

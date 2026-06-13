@@ -12,7 +12,7 @@ A voice slug is derived from the filename without extension, e.g.:
 
 A voice is only registered with F5 if both the .wav AND the matching .txt file
 exist (and the transcript is non-empty). WAVs without transcripts are skipped
-silently — IndexTTS-2 will still pick them up from its own scan.
+silently.
 
 Multi-phase support can be added via assets/speakers/voices.toml:
     [calm_brittney]

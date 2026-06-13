@@ -326,7 +326,6 @@ Load Music → generate() → unload_model() → gc.collect() → [cache clear]
 Never load two engines simultaneously. Peak memory per phase:
 - Kokoro: ~200 MB (CPU RAM only)
 - F5-TTS: ~1.5 GB (MPS)
-- IndexTTS-2: ~6 GB (MPS, fp32)
 - ACE-Step: ~8–12 GB (MLX unified RAM, with compile)
 - HT Demucs: ~168 MB (CPU, subprocess)
 

@@ -4,13 +4,11 @@ When you need to change something, start here. Locate the row that matches your 
 
 | Task | Primary file | Secondary |
 |------|-------------|-----------|
-| TTS chunk splitting | `core/kokoro_tts/preprocessor.py` | `core/f5_tts/preprocessor.py`, `core/index_tts/preprocessor.py` |
+| TTS chunk splitting | `core/kokoro_tts/preprocessor.py` | `core/f5_tts/preprocessor.py` |
 | Voice blend presets (Kokoro) | `core/kokoro_tts/voice_manager.py` | — |
 | Add / edit F5 voice | `assets/speakers/` (audio + transcript) | `core/f5_tts/voice_registry.py` |
-| Add / edit IndexTTS voice | `assets/speakers/` (WAV only) | `core/index_tts/voice_registry.py` |
-| Add / edit IndexTTS emotion | `assets/emotions/` (WAV only) | `core/index_tts/voice_registry.py` |
 | Kokoro prosody / punctuation | `core/kokoro_tts/preprocessor.py` | — |
-| Voice FX chain (EQ, reverb, compression) | `core/kokoro_tts/postprocessor.py :: build_voice_chain()` | `core/f5_tts/postprocessor.py`, `core/index_tts/postprocessor.py` |
+| Voice FX chain (EQ, reverb, compression) | `core/kokoro_tts/postprocessor.py :: build_voice_chain()` | `core/f5_tts/postprocessor.py` |
 | Music FX chain (per engine) | `core/audio_processor.py :: make_{engine}_music_chain()` | — |
 | Vocal pocket / intelligibility EQ | `core/audio_processor.py :: make_vocal_pocket_chain()` | — |
 | Ducking behavior | `core/mixer.py :: apply_breathing_duck()` / `compute_breathing_gain_db()` | `core/pipeline.py` (`duck_amount_db`) |

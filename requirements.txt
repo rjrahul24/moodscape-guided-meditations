@@ -12,8 +12,7 @@ scipy
 soundfile
 pyloudnorm
 noisereduce
-librosa>=0.10.0           # phase-vocoder pacing fallback; audio utils
-pyrubberband             # high-fidelity pacing time-stretch (needs `brew install rubberband`)
+librosa>=0.10.0           # audio utils (resampling, analysis)
 pyworld>=0.3.4
 python-dotenv
 google-genai>=1.16.0
@@ -24,10 +23,8 @@ accelerate>=0.26.0
 f5-tts>=1.0.0
 diffusers>=0.30.0  # AutoencoderOobleck required by ace-step
 silero-vad
-git+https://github.com/index-tts/index-tts.git  # IndexTTS-2: zero-shot voice cloning with emotion control
 git+https://github.com/ace-step/ACE-Step-1.5.git
 # protobuf: onnx 1.21+ (via s3tokenizer/f5-tts) needs builder (added in 3.20).
 # google-api-core 2.30+ needs >=4.25.8. descript-audiotools & tensorboard 2.9
 # have stale <3.20 constraints but don't use protobuf at runtime.
 protobuf>=4.25.8,<7.0.0
-# resemblyzer                          # optional: speaker-similarity metric for scripts/ab_indextts.py

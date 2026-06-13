@@ -14,10 +14,6 @@ Authoritative map of every class and module in `core/`. Use this when you need t
 | F5 engine | `core/f5_tts/engine.py` | `F5Engine` | `load_model()`, `synthesize()` |
 | F5 preproc | `core/f5_tts/preprocessor.py` | — | `parse_script()`, `normalize_for_f5()`, `split_into_chunks()` |
 | F5 voice registry | `core/f5_tts/voice_registry.py` | `VoiceRegistry` | `scan()`, `get_voice()` |
-| IndexTTS engine | `core/index_tts/engine.py` | `IndexTTSEngine` | `load_model()`, `synthesize()` |
-| IndexTTS preproc | `core/index_tts/preprocessor.py` | — | `parse_script()`, `normalize_for_indextts()`, `split_into_chunks()` |
-| IndexTTS postproc | `core/index_tts/postprocessor.py` | `IndexTTSMasteringEngine` | `master_vocals()`, `build_index_voice_chain()` |
-| IndexTTS voice reg | `core/index_tts/voice_registry.py` | — | `scan_voices()`, `scan_emotions()`, `get_voice()`, `get_emotion()` |
 
 ## Music & Pipeline
 

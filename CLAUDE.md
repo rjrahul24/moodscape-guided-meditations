@@ -1,6 +1,6 @@
 # MoodScape Guided Meditations
 
-AI-guided meditation audio generator (Gradio UI). Three TTS engines (Kokoro, F5-TTS, IndexTTS-2) and three music sources (ACE-Step 1.5, Lyria RealTime, or a user-uploaded instrumental). Target hardware: Apple Silicon M1 Max (36 GB unified RAM).
+AI-guided meditation audio generator (Gradio UI). Two TTS engines (Kokoro, F5-TTS) and three music sources (ACE-Step 1.5, Lyria RealTime, or a user-uploaded instrumental). Target hardware: Apple Silicon M1 Max (36 GB unified RAM).
 
 ## Setup & Run
 
@@ -8,7 +8,6 @@ AI-guided meditation audio generator (Gradio UI). Three TTS engines (Kokoro, F5-
 source .venv/bin/activate
 pip install -r requirements.txt
 brew install espeak-ng                 # Kokoro G2P dependency
-brew install rubberband                # IndexTTS-2 pacing time-stretch (REQUIRED for slow pacing; without it chunks stay unstretched)
 python app.py                          # Gradio UI at http://localhost:7860
 ```
 
@@ -36,7 +35,7 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 │   ├── qa_monitor.py                 # output validation
 │   ├── stem_separator.py             # Demucs source separation
 │   ├── text_utils.py · breath_sounds.py · stereo_upmix.py · deepfilter_enhancer.py
-│   ├── kokoro_tts/  f5_tts/  index_tts/   # TTS engines (engine + preproc + postproc + voices)
+│   ├── kokoro_tts/  f5_tts/             # TTS engines (engine + preproc + postproc + voices)
 │   ├── acestep/  lyria/                   # Generative music engines
 │   └── upload_music/                      # User-uploaded instrumental (engine + arrange/length-fit)
 ├── scripts/                          # generate.py · separate_worker.py · generate_breath_samples.py
@@ -44,14 +43,12 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 ├── assets/                           # tracked in git
 │   ├── breath_sounds/                # [breath]/[inhale]/[exhale] samples
 │   ├── impulse_responses/            # convolution reverb IRs
-│   ├── speakers/                     # shared voice pool (F5 + IndexTTS)
-│   │   ├── reference_audio/*.wav     #   speaker reference clips (both engines)
-│   │   ├── reference_text/*.txt      #   F5-only transcripts (paired by slug)
-│   │   └── voices.toml               #   F5 multi-phase definitions
-│   └── emotions/                     # IndexTTS-only emotion references
+│   └── speakers/                     # F5-TTS voice pool
+│       ├── reference_audio/*.wav     #   speaker reference clips
+│       ├── reference_text/*.txt      #   transcripts (paired by slug)
+│       └── voices.toml               #   F5 multi-phase definitions
 ├── models/                           # gitignored; all model weights
 │   ├── acestep/                      # ACE-Step 1.5 (source + checkpoints/)
-│   ├── indextts2/                    # IndexTTS-2 (manual HF download)
 │   └── hf_cache/                     # project-local HF cache
 └── docs/                             # see Where to Look below
 ```
@@ -94,10 +91,8 @@ The six that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
 - **ACE-Step timeout** → always pass `compile_model=True` to `initialize_service()`; first run has ~135s JIT overhead.
 - **transformers pin** → `>=4.55.0,<4.58.0` — the ACE-Step HF remote code needs `layer_type_validation` (4.55+); 4.58+ breaks ACE-Step. Older 4.52.x fails model load entirely.
 - **Kokoro forced to CPU** → MPS causes deallocation bus errors. British voices (`bf_*`, `bm_*`) need `KPipeline(lang_code="b")`.
-- **IndexTTS-2 NaN clamp** → BigVGANv2 may emit NaN on MPS. Use `torch.clamp(mel, -10, 10)`; force `use_fp16=False, use_deepspeed=False, use_cuda_kernel=False`.
 - **No pedalboard `Limiter`** → pedalboard 0.9.23's `Limiter` inflates sub-threshold signals ~+4.75 dB and adds broadband "static". It was removed from all music + master chains. Peak control is `mixer.true_peak_limit()` at export (LUFS-normalize → true-peak limit to −1 dBTP).
 - **Breathing duck** → `mixer.mix()` uses `apply_breathing_duck` (deep gradual S-curve, rises in pauses). Bed/duck levels are auto-calibrated per session (`calibrate_music_bed`, targets: bed 14.5 LU under voice in pauses, 30.5 LU under during speech); `MOODSCAPE_ADAPTIVE_BED=0` restores the fixed −16/−16 constants. The old multiband/`hold_ms` reactive ducker has been removed.
-- **IndexTTS pacing needs Rubber Band** → without the `rubberband` CLI, chunks are returned **unstretched** (the librosa phase-vocoder fallback metallicises voice; re-enable only via `MOODSCAPE_INDEXTTS_PV_FALLBACK=1`).
 - **ACE-Step >5 min defaults to loop mode** → one ~4-min piece looped via `fit_to_length` (long_form_mode="auto"). Pick "Evolve" in the UI for continuously generated (slower, more seam risk).
 
 ## Where to Look
@@ -105,7 +100,7 @@ The six that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
 | Need | Go to |
 |------|-------|
 | Full pipeline, FX params, QA thresholds, memory patterns | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| Engine internals (Kokoro, F5, IndexTTS, ACE-Step, Lyria, Pedalboard) | [docs/model_implementation_guides/](docs/model_implementation_guides/) |
+| Engine internals (Kokoro, F5, ACE-Step, Lyria, Pedalboard) | [docs/model_implementation_guides/](docs/model_implementation_guides/) |
 | Prompt writing per engine | [docs/prompting_guides/](docs/prompting_guides/) |
 | Mix / post-processing details | [docs/optimization_and_processing/](docs/optimization_and_processing/) |
 | Component & class map | [docs/COMPONENT_REGISTRY.md](docs/COMPONENT_REGISTRY.md) |

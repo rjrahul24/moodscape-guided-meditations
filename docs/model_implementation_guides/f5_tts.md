@@ -49,9 +49,9 @@ core/f5_tts/
 ├── postprocessor.py         -- F5MasteringEngine, split-band de-esser, voice FX chain
 └── voice_registry.py        -- voice asset discovery and multi-phase resolution
 
-assets/speakers/             -- shared with IndexTTS-2 (top-level)
+assets/speakers/             -- F5-TTS voice pool (top-level)
 ├── *.wav                    -- 24 kHz, mono, 16-bit PCM reference clips
-├── transcripts/             -- .txt transcripts (verbatim; F5-only)
+├── transcripts/             -- .txt transcripts (verbatim)
 └── voices.toml              -- multi-phase voice definitions
 ```
 
@@ -71,7 +71,7 @@ The `voice_registry.py` module discovers voices by scanning the unified speakers
 
 1. Scans `assets/speakers/*.wav` for audio files
 2. Matches each `.wav` with a corresponding `.txt` transcript in `assets/speakers/transcripts/`
-3. Voices without a transcript are skipped silently (they're picked up by IndexTTS-2 instead, which doesn't need transcripts)
+3. Voices without a transcript are skipped silently (F5 requires a verbatim transcript for each reference clip)
 4. Validates transcript is non-empty
 5. Layers multi-phase definitions from `assets/speakers/voices.toml` (TOML format with phase names as keys)
 

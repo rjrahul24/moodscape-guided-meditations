@@ -217,7 +217,7 @@ class TestApplyFxKokoroFlags(unittest.TestCase):
 
     def test_non_kokoro_engine_ignores_kokoro_flags(self):
         # With engine != "kokoro", de-essing/parallel comp must not run even
-        # if flags are set — F5/IndexTTS handle de-essing in their mastering.
+        # if flags are set — F5 handles de-essing in its mastering.
         with patch.dict('os.environ', {
             'MOODSCAPE_KOKORO_DEESS': '1',
             'MOODSCAPE_KOKORO_PARALLEL_COMP': '1',

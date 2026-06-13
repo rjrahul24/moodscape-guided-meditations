@@ -4,10 +4,9 @@ AI-powered meditation audio generator that synthesizes guided voice, adaptive mu
 
 ## Features
 
-**Three TTS Engines**
+**Two TTS Engines**
 - **Kokoro**: Fast, expressive voice synthesis with multiple languages
 - **F5-TTS**: Natural voice cloning with minimal reference audio
-- **IndexTTS-2**: Zero-shot voice cloning with emotion control
 
 **Two Music Generation Engines**
 - **ACE-Step 1.5**: Controlled, mood-aware music composition via MESA framework

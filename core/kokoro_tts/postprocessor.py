@@ -302,7 +302,7 @@ def split_band_deess(
 
     Kokoro's ISTFTNet vocoder produces high-frequency harshness in the
     sibilant/presence region that the compressor amplifies. Ports the proven
-    F5/IndexTTS approach (KokoroV2 research §4): split the signal into a
+    F5 approach (KokoroV2 research §4): split the signal into a
     sibilant band (default 5–8 kHz) and the rest, compress only the sibilant
     band, then recombine. Applied AFTER the compressor so it catches sibilance
     the compressor brings up. No-op if the band is empty.
@@ -672,10 +672,10 @@ def apply_fx(
     (12% wet tanh blend) is from the audio optimization research. Disable with
     tape_saturation=False for raw processing.
 
-    This function is shared by the Kokoro, F5 and IndexTTS voice chains. The
+    This function is shared by the Kokoro and F5 voice chains. The
     KokoroV2-research extras below (saturation reorder, de-essing, parallel
-    compression) apply ONLY when engine == "kokoro", so F5/IndexTTS — which
-    already de-ess in their mastering phase — are unaffected.
+    compression) apply ONLY when engine == "kokoro", so F5 — which
+    already de-esses in its mastering phase — is unaffected.
 
     Kokoro-only env flags:
       MOODSCAPE_KOKORO_SAT_PLACEMENT  "pre" (default) | "pre_reverb"

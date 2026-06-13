@@ -78,10 +78,6 @@ class MeditationPipeline:
         f5_voice_slug: str | None = None,
         f5_target_wpm: int | None = None,
         reverb_ir: str = "warm_studio",
-        indextts_voice_slug: str | None = None,
-        indextts_emotion_slug: str | None = None,
-        indextts_emotion_audio_path: str | None = None,
-        indextts_speed: float = 1.0,
         quality_mode: bool = False,
         stereo_output: bool = False,
         melody_audio_path: str | None = None,
@@ -153,7 +149,7 @@ class MeditationPipeline:
         # Uploaded instrumentals are decoded/resampled to 48 kHz as well.
         # F5-TTS also mixes at 48 kHz.
         # TTS voice (24 kHz) is upsampled to match whichever rate is selected.
-        mix_sr = 48000 if (use_lyria or use_acestep or use_upload or tts_engine in ("f5", "indextts")) else TARGET_SR
+        mix_sr = 48000 if (use_lyria or use_acestep or use_upload or tts_engine == "f5") else TARGET_SR
 
         logger.info("Starting generation — mode=%s, music_model=%s, voice=%s, speed=%s, seed=%s, lufs=%s",
                     generation_mode, music_model, voice, speed, seed, target_lufs)
@@ -165,8 +161,6 @@ class MeditationPipeline:
 
                 if tts_engine == "f5":
                     from core.f5_tts.preprocessor import prepare_segments as _prepare
-                elif tts_engine == "indextts":
-                    from core.index_tts.preprocessor import prepare_segments as _prepare
                 else:
                     from core.kokoro_tts.preprocessor import prepare_segments as _prepare
                 segments = _prepare(script)
@@ -185,18 +179,6 @@ class MeditationPipeline:
                     from core.f5_tts.engine import F5Engine
                     tts = F5Engine(voice_slug=f5_voice_slug)
                     _progress(progress_cb, 0.05, "Loading F5-TTS voice model...")
-                elif tts_engine == "indextts":
-                    # NOTE: indextts_speed is intentionally ignored — IndexTTS-2
-                    # cannot reliably time-stretch (Issue #422). Pacing is shaped
-                    # by the calm-vector emotion preset + preprocessor pause
-                    # durations (_PARAGRAPH_PAUSE_SEC, MAX_CHUNK_CHARS).
-                    from core.index_tts.engine import IndexTTSEngine
-                    tts = IndexTTSEngine(
-                        voice_slug=indextts_voice_slug,
-                        emotion_slug=indextts_emotion_slug,
-                        emotion_audio_path=indextts_emotion_audio_path,
-                    )
-                    _progress(progress_cb, 0.05, "Loading IndexTTS-2 voice model...")
                 else:
                     tts = self.tts
                     _progress(progress_cb, 0.05, "Loading Kokoro voice model...")
@@ -214,12 +196,6 @@ class MeditationPipeline:
                     voice_audio, voice_activity = tts.synthesize(
                         segments, speed=speed, progress_cb=tts_progress,
                         target_wpm=f5_target_wpm if f5_target_wpm and f5_target_wpm > 0 else None,
-                    )
-                elif tts_engine == "indextts":
-                    voice_audio, voice_activity = tts.synthesize(
-                        segments, speed=indextts_speed, progress_cb=tts_progress,
-                        seed=seed,
-                        emotion_audio_path=indextts_emotion_audio_path,
                     )
                 else:
                     voice_audio, voice_activity = tts.synthesize(
@@ -266,10 +242,6 @@ class MeditationPipeline:
                     _progress(progress_cb, 0.38, "Preparing vocal mastering chain...")
                     from core.f5_tts.postprocessor import F5MasteringEngine
                     mastering_engine = F5MasteringEngine(sample_rate=SAMPLE_RATE)
-                elif tts_engine == "indextts":
-                    _progress(progress_cb, 0.38, "Preparing vocal mastering chain...")
-                    from core.index_tts.postprocessor import IndexTTSMasteringEngine
-                    mastering_engine = IndexTTSMasteringEngine(sample_rate=SAMPLE_RATE)
 
                 # Upsample Voice to the mix sample rate:
                 #   Lyria / ACE-Step path → 48 kHz (preserves native music resolution)
@@ -304,15 +276,11 @@ class MeditationPipeline:
                 if mix_sr == 48000:
                     _progress(progress_cb, 0.39, "Neural denoising (DeepFilterNet MLX)...")
                     from core.deepfilter_enhancer import enhance_voice_deepfilter
-                    # IndexTTS-2's BigVGANv2 output is already clean — full-strength
-                    # denoising strips natural breaths and yields an "AI voice". Use a
-                    # light wet blend there; keep stronger denoising for noisier engines.
-                    # Kokoro's ISTFTNet output is also clean enough that full-strength
+                    # Kokoro's ISTFTNet output is clean enough that full-strength
                     # denoising strips breath/naturalness (KokoroV2 research): use a light
                     # wet blend by default. Override via MOODSCAPE_KOKORO_DF_WET (0 = off).
-                    if tts_engine == "indextts":
-                        df_wet = 0.10
-                    elif tts_engine == "kokoro":
+                    # F5-TTS is noisier — keep full-strength denoising.
+                    if tts_engine == "kokoro":
                         df_wet = float(os.environ.get("MOODSCAPE_KOKORO_DF_WET", "0.25"))
                     else:
                         df_wet = 1.0
@@ -330,7 +298,7 @@ class MeditationPipeline:
                 # ── Step 4: Unload TTS, load music model ────────────────────────
                 if not is_instrumental:
                     tts.unload_model()
-                    if tts_engine in ("f5", "indextts"):
+                    if tts_engine == "f5":
                         del tts
 
                 music_model_label = {
@@ -505,10 +473,6 @@ class MeditationPipeline:
                     from core.f5_tts.postprocessor import build_f5_voice_chain
                     from core.kokoro_tts.postprocessor import apply_fx
                     voice_chain = build_f5_voice_chain(reverb_amount=reverb_amount, ir_name=reverb_ir)
-                elif tts_engine == "indextts":
-                    from core.index_tts.postprocessor import build_index_voice_chain
-                    from core.kokoro_tts.postprocessor import apply_fx
-                    voice_chain = build_index_voice_chain(reverb_amount=reverb_amount, ir_name=reverb_ir)
                 else:
                     from core.kokoro_tts.postprocessor import build_voice_chain, apply_fx
                     voice_chain = build_voice_chain(reverb_amount=reverb_amount, ir_name=reverb_ir)
