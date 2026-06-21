@@ -1,5 +1,6 @@
 """Mixing engine: ducking, overlay, fades, normalization, export — MoodScape."""
 
+import os
 import tempfile
 
 import numpy as np
@@ -123,7 +124,11 @@ def apply_fades(
     fade_in_samples = int(fade_in_sec * sample_rate)
     if 0 < fade_in_samples < result.shape[-1]:
         if curve == "exponential":
-            fade_in = _exponential_curve(fade_in_samples, rising=True)
+            # Gentle steepness (2.0, vs 4.0 for the fade-out): a steepness-4
+            # rising curve sits below -20 dB for the first ~1.5 s, which reads
+            # as "silence then music". 2.0 keeps a soft emergence but reaches an
+            # audible level (~-12 dB) within ~0.7 s of a 1.5 s fade.
+            fade_in = _exponential_curve(fade_in_samples, rising=True, steepness=2.0)
         elif curve == "cosine":
             fade_in = ((1.0 - np.cos(np.linspace(0.0, np.pi, fade_in_samples))) / 2.0).astype(np.float32)
         else:  # linear
@@ -562,6 +567,121 @@ def apply_breathing_duck(
 
 
 # ---------------------------------------------------------------------------
+# Multiband (spectral) ducking — research Issue 2.1
+# ---------------------------------------------------------------------------
+
+
+def _lr_crossover_3way(
+    music: np.ndarray,
+    sample_rate: int,
+    lo_hz: float = 250.0,
+    hi_hz: float = 4000.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Split ``music`` into (low, mid, high) bands via a Linkwitz-Riley crossover.
+
+    ``low`` is a zero-phase 4th-order Butterworth low-pass at ``lo_hz`` and
+    ``high`` is the matching high-pass at ``hi_hz`` (``sosfiltfilt``, so the
+    forward-backward pass cancels phase and squares the magnitude — the
+    Linkwitz-Riley property). The mid band is reconstructed *subtractively*
+    (``mid = music - low - high``) so that ``low + mid + high`` equals the input
+    to floating-point precision. That guarantees the bed is bit-transparent
+    whenever the duck gain is unity, regardless of filter shape.
+
+    Operates along the last axis, so mono ``(N,)`` and stereo ``(2, N)`` inputs
+    both work.
+    """
+    x = music.astype(np.float32)
+    sos_low = butter(4, lo_hz, btype="low", fs=sample_rate, output="sos")
+    sos_high = butter(4, hi_hz, btype="high", fs=sample_rate, output="sos")
+    low = sosfiltfilt(sos_low, x, axis=-1).astype(np.float32)
+    high = sosfiltfilt(sos_high, x, axis=-1).astype(np.float32)
+    mid = (x - low - high).astype(np.float32)
+    return low, mid, high
+
+
+def apply_breathing_duck_multiband(
+    voice_audio: np.ndarray,
+    music_audio: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+    duck_depth_db: float = -12.0,
+    crossover: tuple[float, float] = (250.0, 4000.0),
+    **kwargs,
+) -> np.ndarray:
+    """Apply the breathing duck to the *mid band only* (spectral ducking).
+
+    Splits ``music_audio`` into low / mid / high via a Linkwitz-Riley crossover
+    and applies the same breathing-gain envelope used by the fullband duck to
+    the mid band (``crossover`` Hz, default 250-4000) only. The sub-bass warmth
+    and high-frequency "air" stay constant while the band that masks the voice
+    ducks out of the way, so the bed reads as "felt, not heard" and a textured
+    bed no longer pumps. Recombines transparently (``low + mid*gain + high``);
+    with a unity envelope the output equals the input.
+
+    ``duck_depth_db`` can be deeper than the fullband value (the bass/air no
+    longer move, so the perceived dip is gentler at the same number).
+    """
+    g_db = compute_breathing_gain_db(
+        voice_audio, sample_rate, duck_depth_db=duck_depth_db, **kwargs,
+    )
+    n = min(g_db.shape[0], music_audio.shape[-1])
+    gain_lin = (10.0 ** (g_db[:n] / 20.0)).astype(np.float32)
+    music = music_audio[..., :n].astype(np.float32)
+    low, mid, high = _lr_crossover_3way(
+        music, sample_rate, crossover[0], crossover[1],
+    )
+    if mid.ndim == 2:
+        mid = mid * gain_lin[np.newaxis, :]
+    else:
+        mid = mid * gain_lin
+    return (low + mid + high).astype(np.float32)
+
+
+# ---------------------------------------------------------------------------
+# Shared convolution-reverb send — research Issue 2.3
+# ---------------------------------------------------------------------------
+
+
+def add_shared_reverb(
+    music: np.ndarray,
+    sample_rate: int,
+    send_db: float = -26.0,
+    ir_name: str = "warm_studio",
+) -> np.ndarray:
+    """Return a low-level reverb send of the (mono) music bed through the voice IR.
+
+    Runs a copy of ``music`` through the same convolution impulse response the
+    voice uses, with the voice wet-path EQ (HPF 300 / LPF 6 kHz), scaled to
+    ``send_db`` (≈5% wet at the −26 dB default). Summing the result into the mix
+    places voice and music in one shared acoustic space so the bed and the
+    narration stop sounding like two separate recordings (research Issue 2.3).
+
+    Returns a same-length, same-shape send; returns silence if the IR file is
+    missing so the caller can sum unconditionally.
+    """
+    from core.audio_processor import IR_CATALOG
+    from pedalboard import (
+        Convolution, HighpassFilter, LowpassFilter, Gain, Pedalboard,
+    )
+
+    ir_path = IR_CATALOG.get(ir_name, {}).get("path", "")
+    if not ir_path or not os.path.isfile(ir_path):
+        return np.zeros_like(music, dtype=np.float32)
+
+    board = Pedalboard([
+        Convolution(impulse_response_filename=ir_path, mix=1.0),
+        HighpassFilter(cutoff_frequency_hz=300),
+        LowpassFilter(cutoff_frequency_hz=6000),
+        Gain(gain_db=send_db),
+    ])
+    is_1d = music.ndim == 1
+    x = music.astype(np.float32)
+    x2d = x.reshape(1, -1) if is_1d else x
+    wet = board(x2d, sample_rate).astype(np.float32)
+    wet = wet[..., : music.shape[-1]]
+    return wet.reshape(-1) if is_1d else wet
+
+
+# ---------------------------------------------------------------------------
 # True-peak limiting (ITU-R BS.1770, oversampled, vectorized)
 # ---------------------------------------------------------------------------
 
@@ -691,11 +811,36 @@ def mix(
         aligned_phrases = [
             (s + music_pre_roll_sec, e + music_pre_roll_sec) for s, e in phrases
         ]
-    ducked_music = apply_breathing_duck(
-        aligned_voice, aligned_music, sample_rate,
-        duck_depth_db=duck_amount_db,
-        phrases=aligned_phrases,
-    )
+    # Optional: multiband "spectral" duck (research Issue 2.1) — ducks only the
+    # 250-4000 Hz mid band, leaving sub-bass warmth and high-frequency air
+    # untouched. OFF by default so the validated fullband golden-path mix is
+    # unchanged; MOODSCAPE_SPECTRAL_DUCK=1 opts in.
+    if os.environ.get("MOODSCAPE_SPECTRAL_DUCK", "0") == "1":
+        depth = float(os.environ.get("MOODSCAPE_SPECTRAL_DUCK_DEPTH", "-12.0"))
+        lo = float(os.environ.get("MOODSCAPE_SPECTRAL_DUCK_LO", "250.0"))
+        hi = float(os.environ.get("MOODSCAPE_SPECTRAL_DUCK_HI", "4000.0"))
+        ducked_music = apply_breathing_duck_multiband(
+            aligned_voice, aligned_music, sample_rate,
+            duck_depth_db=depth,
+            crossover=(lo, hi),
+            phrases=aligned_phrases,
+        )
+    else:
+        ducked_music = apply_breathing_duck(
+            aligned_voice, aligned_music, sample_rate,
+            duck_depth_db=duck_amount_db,
+            phrases=aligned_phrases,
+        )
+
+    # 4b. Optional: shared convolution-reverb send (research Issue 2.3) — run
+    #     the bed through the same IR the voice uses and fold a small amount
+    #     back in, so both sit in one room. OFF by default; opt in with
+    #     MOODSCAPE_SHARED_REVERB=1. Done on the mono bed before stereo upmix.
+    if os.environ.get("MOODSCAPE_SHARED_REVERB", "0") == "1":
+        send_db = float(os.environ.get("MOODSCAPE_SHARED_REVERB_SEND_DB", "-26.0"))
+        ducked_music = ducked_music + add_shared_reverb(
+            ducked_music, sample_rate, send_db=send_db,
+        )
 
     # 5. Stereo upmix (opt-in): Haas effect on music, center-pan voice
     if stereo_output:

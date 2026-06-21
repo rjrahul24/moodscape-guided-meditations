@@ -1,6 +1,6 @@
 <!-- QUICK-REF ──────────────────────────────────────────────────────── -->
 **Files:** `core/audio_processor.py` · `core/mixer.py` · `core/kokoro_tts/postprocessor.py` · `core/f5_tts/postprocessor.py`
-**Key functions:** `make__music_chain()` · `make_acestep_music_chain()` · `make_lyria_music_chain()` · `make_vocal_pocket_chain()` · `make_master_chain()` · `build_voice_chain()` · `apply_fx()`
+**Key functions:** `make_lyria_music_chain()` · `make_upload_music_chain()` · `make_vocal_pocket_chain()` · `make_master_chain()` · `build_voice_chain()` · `apply_fx()`
 **Mix defaults:** `music_volume_db=−16.0` · `duck_amount_db=−16.0` · `target_lufs=−16.0` · export streamed in 20s chunks
 **Active ducking:** `mixer.mix()` calls `apply_breathing_duck()` — a script/VAD-aware sidechain duck (predictive S-curve descent, deep hold during speech, gradual release, pause lift). Applied fullband.
 **IR files:** `assets/impulse_responses/{warm_studio,wooden_hall,stone_chapel}.wav` · default: `warm_studio`

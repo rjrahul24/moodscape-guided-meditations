@@ -8,9 +8,9 @@ AI-powered meditation audio generator that synthesizes guided voice, adaptive mu
 - **Kokoro**: Fast, expressive voice synthesis with multiple languages
 - **F5-TTS**: Natural voice cloning with minimal reference audio
 
-**Two Music Generation Engines**
-- **ACE-Step 1.5**: Controlled, mood-aware music composition via MESA framework
-- **Lyria RealTime**: Real-time music generation (cloud API)
+**Music Sources**
+- **Lyria RealTime**: Real-time AI music generation (cloud API)
+- **Background Music**: Curated instrumental library
 
 **Production-Grade Audio Processing**
 - Multiband ducking and dynamic mixing

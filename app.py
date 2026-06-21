@@ -202,10 +202,6 @@ def generate_meditation(
     export_stems_flag,
     upsample_flag,
     stem_separation_flag,
-    reference_audio_file,
-    acestep_quality,
-    acestep_bpm,
-    acestep_key,
     lyria_bpm,
     lyria_density,
     lyria_brightness,
@@ -216,15 +212,25 @@ def generate_meditation(
     quality_mode_flag,
     stereo_output_flag,
     uploaded_music_file,
-    acestep_longform_choice,
+    spectral_duck_flag,
+    shared_reverb_flag,
+    microprosody_flag,
+    f5_cfg_strength,
 ):
     # Initial status
     yield None, _render_status("Initializing Pipeline", 0.0)
 
+    # Research experiment toggles → MOODSCAPE_* env flags read by the mixer /
+    # F5 engine. Set explicitly (including "0") so a toggle turned off clears
+    # any value left over from a previous generation in this session.
+    os.environ["MOODSCAPE_SPECTRAL_DUCK"] = "1" if spectral_duck_flag else "0"
+    os.environ["MOODSCAPE_SHARED_REVERB"] = "1" if shared_reverb_flag else "0"
+    os.environ["MOODSCAPE_F5_MICROPROSODY"] = "1" if microprosody_flag else "0"
+    # F5 classifier-free guidance: lower = warmer/more expressive (default 2.0).
+    os.environ["MOODSCAPE_F5_CFG"] = str(float(f5_cfg_strength))
+
     # Map music model label to engine key
-    if music_model_choice == "ACE-Step 1.5":
-        music_model = "acestep"
-    elif music_model_choice == "Lyria RealTime":
+    if music_model_choice == "Lyria RealTime":
         music_model = "lyria"
         # Validate that the API key is available before launching the pipeline
         if not os.environ.get("GOOGLE_API_KEY", "").strip():
@@ -255,11 +261,6 @@ def generate_meditation(
 
     # Resolve seed: 0 means auto
     seed = int(seed_value) if seed_value and int(seed_value) != 0 else None
-
-    # Map quality label to engine key (Task 5)
-    # "Draft (Turbo / 8-step)" -> "turbo"
-    # "Studio (SFT / 50-step)" -> "sft"
-    acestep_model_type = "turbo" if "Turbo" in acestep_quality else "sft"
 
     # Map TTS engine label to key
     if tts_engine_choice == "F5-TTS":
@@ -296,10 +297,6 @@ def generate_meditation(
                 do_export_stems=export_stems_flag,
                 upsample_48k=upsample_flag,
                 stem_separation=stem_separation_flag,
-                bpm=acestep_bpm,
-                keyscale=acestep_key,
-                acestep_model_type=acestep_model_type,
-                acestep_long_form_mode=(acestep_longform_choice or "Auto").lower(),
                 lyria_bpm=int(lyria_bpm),
                 lyria_density=float(lyria_density),
                 lyria_brightness=float(lyria_brightness),
@@ -309,7 +306,6 @@ def generate_meditation(
                 reverb_ir=reverb_ir_choice,
                 quality_mode=bool(quality_mode_flag),
                 stereo_output=bool(stereo_output_flag),
-                melody_audio_path=reference_audio_file or None,
                 uploaded_music_path=uploaded_music_file or None,
             )
             result_container["result"] = result
@@ -979,41 +975,37 @@ with gr.Blocks(
             # Section 1: Voice & Sound
             with gr.Accordion("Voice & Sound", open=True, elem_classes="accordion-section"):
                 music_model_dropdown = gr.Dropdown(
-                    choices=["ACE-Step 1.5", "Lyria RealTime", "Background Music"],
-                    value="ACE-Step 1.5",
+                    choices=["Lyria RealTime", "Background Music"],
+                    value="Background Music",
                     label="Music Engine",
-                    info="ACE-Step 1.5 recommended for Apple Silicon (~5 min). Choose Background Music to pick a curated instrumental.",
+                    info="Background Music uses curated instrumentals. Lyria RealTime generates AI music (requires Google API key).",
                     elem_classes="dropdown-container",
                 )
-                acestep_quality = gr.Radio(
-                    choices=["Draft (Turbo / 8-step)", "Studio (SFT / 50-step)"],
-                    value="Studio (SFT / 50-step)",
-                    label="Quality",
-                    visible=True,
-                    elem_classes="pill-radio",
-                )
-                acestep_longform = gr.Radio(
-                    choices=["Auto", "Loop", "Evolve"],
-                    value="Auto",
-                    label="Long-form Mode (tracks over 90s)",
-                    info="Loop: one strong ~4-min piece looped (consistent, fast — Auto picks this above 5 min). Evolve: continuously generated (varied, slower, more seams).",
-                    visible=True,
-                    elem_classes="pill-radio",
-                )
+                with gr.Group(visible=True) as upload_settings:
+                    with gr.Row():
+                        uploaded_music = gr.Dropdown(
+                            choices=BACKGROUND_CHOICES if BACKGROUND_CHOICES else ["(no tracks found)"],
+                            value=BACKGROUND_DEFAULT,
+                            label="Instrumental Track",
+                            interactive=bool(BACKGROUND_CHOICES),
+                            elem_classes="dropdown-container",
+                            scale=1,
+                        )
+                        refresh_backgrounds_btn = gr.Button("↻", scale=0, min_width=48)
                 tts_engine_radio = gr.Radio(
                     choices=["Kokoro", "F5-TTS"],
-                    value="Kokoro",
+                    value="F5-TTS",
                     label="Voice Engine",
                     elem_classes="pill-radio",
                 )
-                with gr.Group(visible=True, elem_id="kokoro-group") as kokoro_settings:
+                with gr.Group(visible=False, elem_id="kokoro-group") as kokoro_settings:
                     kokoro_voice_dropdown = gr.Dropdown(
                         choices=KOKORO_VOICE_CHOICES,
                         value="balanced_calm",
                         label="Voice",
                         elem_classes="dropdown-container",
                     )
-                with gr.Group(visible=False, elem_id="f5-group") as f5_settings:
+                with gr.Group(visible=True, elem_id="f5-group") as f5_settings:
                     f5_voice_dropdown = gr.Dropdown(
                         choices=F5_VOICE_CHOICES if F5_VOICE_CHOICES else ["(no voices)"],
                         value=F5_VOICE_DEFAULT,
@@ -1026,6 +1018,30 @@ with gr.Blocks(
                         label="Pacing (WPM)",
                         info="0 = natural rhythm (recommended). 90–110 = meditation. 120–150 = narration.",
                     )
+
+                # ── Voice & mix experiments (A/B listening tests) ──────────────
+                with gr.Row():
+                    spectral_duck_checkbox = gr.Checkbox(
+                        label="Spectral Ducking", value=False,
+                        info="Duck only the mid band — keeps bass warmth + air.",
+                        elem_classes="toggle-switch",
+                    )
+                    shared_reverb_checkbox = gr.Checkbox(
+                        label="Shared Reverb", value=False,
+                        info="Sit the music in the voice's room for cohesion.",
+                        elem_classes="toggle-switch",
+                    )
+                    microprosody_checkbox = gr.Checkbox(
+                        label="Voice Microprosody", value=False,
+                        info="F5 only: phrase-final pitch drop + breathiness.",
+                        elem_classes="toggle-switch",
+                    )
+                f5_cfg_slider = gr.Slider(
+                    minimum=1.0, maximum=2.5, value=2.0, step=0.1,
+                    label="Voice Expressiveness (F5 guidance)",
+                    info="Lower = warmer/more expressive, slightly less voice-identical. "
+                         "2.0 = default; try ~1.2. F5 only.",
+                )
 
             # Section 2: Mix & Effects
             with gr.Accordion("Mix & Effects", open=False, elem_classes="accordion-section"):
@@ -1045,21 +1061,11 @@ with gr.Blocks(
                         elem_classes="dropdown-container",
                     )
                 with gr.Row():
-                    fade_in_slider = gr.Slider(0, 10, 3, step=0.5, label="Fade In (s)")
+                    fade_in_slider = gr.Slider(0, 10, 1.5, step=0.5, label="Fade In (s)")
                     fade_out_slider = gr.Slider(0, 15, 6, step=0.5, label="Fade Out (s)")
 
             # Section 3: Advanced
             with gr.Accordion("Advanced", open=False, elem_classes="accordion-section"):
-                with gr.Group(visible=True) as acestep_metadata:
-                    gr.Markdown("#### ACE-Step Tuning")
-                    with gr.Row():
-                        acestep_bpm = gr.Slider(40, 100, 50, step=1, label="BPM")
-                        acestep_key = gr.Dropdown(
-                            choices=["Auto", "C Major", "C Minor", "C# Major", "C# Minor", "D Major", "D Minor", "Eb Major", "Eb Minor", "E Major", "E Minor", "F Major", "F Minor", "F# Major", "F# Minor", "G Major", "G Minor", "Ab Major", "Ab Minor", "A Major", "A Minor", "Bb Major", "Bb Minor", "B Major", "B Minor"],
-                            value="Auto",
-                            label="Key",
-                            elem_classes="dropdown-container",
-                        )
                 with gr.Group(visible=False) as lyria_settings:
                     gr.Markdown("#### Lyria Tuning")
                     lyria_bpm = gr.Slider(60, 200, 70, step=1, label="BPM")
@@ -1067,24 +1073,6 @@ with gr.Blocks(
                         lyria_density = gr.Slider(0, 1.0, 0.1, step=0.05, label="Density")
                         lyria_brightness = gr.Slider(0, 1.0, 0.15, step=0.05, label="Brightness")
 
-                with gr.Group(visible=False) as upload_settings:
-                    gr.Markdown("#### Background Instrumental")
-                    with gr.Row():
-                        uploaded_music = gr.Dropdown(
-                            choices=BACKGROUND_CHOICES if BACKGROUND_CHOICES else ["(no tracks found)"],
-                            value=BACKGROUND_DEFAULT,
-                            label="Instrumental Track",
-                            interactive=bool(BACKGROUND_CHOICES),
-                            elem_classes="dropdown-container",
-                            scale=1,
-                        )
-                        refresh_backgrounds_btn = gr.Button("↻", scale=0, min_width=48)
-                    gr.Markdown(
-                        "Picked from assets/backgrounds/ (length shown after each name). "
-                        "The track is looped or trimmed to fit the narration, then "
-                        "ducked and mastered like the generated engines.",
-                        elem_classes="hint-text",
-                    )
 
                 gr.Markdown("#### Export")
                 with gr.Row():
@@ -1115,18 +1103,13 @@ with gr.Blocks(
                         label="Stereo Output", value=False,
                         elem_classes="toggle-switch",
                     )
-                reference_audio = gr.Audio(
-                    label="Style / Melody Reference",
-                    type="filepath",
-                    sources=["upload"],
-                )
+
 
     # ── Visibility Callbacks ───────────────────────────────────────────────
 
     def toggle_mode_settings(mode, current_music_model, current_tts_engine):
         is_inst = mode == "Instrumental Only"
         is_voc = mode == "Vocals Only"
-        show_acestep = (current_music_model == "ACE-Step 1.5") and not is_voc
         show_lyria = (current_music_model == "Lyria RealTime") and not is_voc
         show_upload = (current_music_model == "Background Music") and not is_voc
         show_kokoro = (current_tts_engine == "Kokoro") and not is_inst
@@ -1139,10 +1122,6 @@ with gr.Blocks(
             gr.update(visible=not is_inst),   # speed_slider
             gr.update(visible=not is_voc),    # duck_slider
             gr.update(visible=not is_inst),   # reverb_slider
-            gr.update(visible=not is_voc),    # reference_audio
-            gr.update(visible=show_acestep),  # acestep_quality
-            gr.update(visible=show_acestep),  # acestep_longform
-            gr.update(visible=show_acestep),  # acestep_metadata
             gr.update(visible=show_lyria),    # lyria_settings
             gr.update(visible=show_upload),   # upload_settings
             gr.update(visible=show_f5),       # f5_settings
@@ -1151,18 +1130,14 @@ with gr.Blocks(
     generation_mode.change(
         fn=toggle_mode_settings,
         inputs=[generation_mode, music_model_dropdown, tts_engine_radio],
-        outputs=[script_input, music_prompt, music_duration, kokoro_settings, speed_slider, duck_slider, reverb_slider, reference_audio, acestep_quality, acestep_longform, acestep_metadata, lyria_settings, upload_settings, f5_settings],
+        outputs=[script_input, music_prompt, music_duration, kokoro_settings, speed_slider, duck_slider, reverb_slider, lyria_settings, upload_settings, f5_settings],
     )
 
     def toggle_music_engine_ui(model, mode):
-        is_acestep = model == "ACE-Step 1.5"
         is_lyria = model == "Lyria RealTime"
         is_upload = model == "Background Music"
         is_voc = mode == "Vocals Only"
         return (
-            gr.update(visible=is_acestep and not is_voc),  # acestep_quality
-            gr.update(visible=is_acestep and not is_voc),  # acestep_longform
-            gr.update(visible=is_acestep and not is_voc),  # acestep_metadata
             gr.update(visible=is_lyria and not is_voc),    # lyria_settings
             gr.update(visible=is_upload and not is_voc),   # upload_settings
         )
@@ -1170,7 +1145,7 @@ with gr.Blocks(
     music_model_dropdown.change(
         fn=toggle_music_engine_ui,
         inputs=[music_model_dropdown, generation_mode],
-        outputs=[acestep_quality, acestep_longform, acestep_metadata, lyria_settings, upload_settings],
+        outputs=[lyria_settings, upload_settings],
     )
 
     def _refresh_backgrounds():
@@ -1222,10 +1197,6 @@ with gr.Blocks(
             stems_checkbox,
             upsample_checkbox,
             stem_separation_checkbox,
-            reference_audio,
-            acestep_quality,
-            acestep_bpm,
-            acestep_key,
             lyria_bpm,
             lyria_density,
             lyria_brightness,
@@ -1236,7 +1207,10 @@ with gr.Blocks(
             quality_mode_checkbox,
             stereo_output_checkbox,
             uploaded_music,
-            acestep_longform,
+            spectral_duck_checkbox,
+            shared_reverb_checkbox,
+            microprosody_checkbox,
+            f5_cfg_slider,
         ],
         outputs=[audio_output, status_display],
         show_progress="full",

@@ -22,6 +22,7 @@ Device: MPS on Apple Silicon, CPU fallback elsewhere.
 
 import gc
 import logging
+import os
 import random
 import re
 import tempfile
@@ -32,6 +33,7 @@ import numpy as np
 
 from core.speech_engine import SAMPLE_RATE, SpeechEngine
 from core.f5_tts import voice_registry
+from core.f5_tts.postprocessor import apply_microprosody
 
 logger = logging.getLogger(__name__)
 
@@ -162,11 +164,31 @@ def _condition_reference_audio(audio_path: str, sr: int) -> str:
     if audio.ndim > 1:
         audio = audio.mean(axis=1)
 
-    # RMS normalise to target level
+    # RMS normalise to target level. Skipping it (research Issue 3, subtopic 2)
+    # preserves the reference's natural dynamics — the expressive contour the
+    # model imitates — at the cost of cross-voice level consistency. OFF by
+    # default; MOODSCAPE_F5_REF_PRESERVE_DYNAMICS=1 opts out of normalisation.
+    preserve_dynamics = os.environ.get("MOODSCAPE_F5_REF_PRESERVE_DYNAMICS", "0") == "1"
     rms = float(np.sqrt(np.mean(audio ** 2)))
-    if rms > 1e-8:
+    if rms > 1e-8 and not preserve_dynamics:
         target_rms = 10 ** (_REF_TARGET_DBFS / 20.0)
         audio = audio * (target_rms / rms)
+
+    # Append trailing low-level noise (research Issue 3.1). F5-TTS has no
+    # duration predictor, so on short generations ("Breathe in…") it pads the
+    # required mel length with leftover reference audio — leaking a stray
+    # syllable. Ending the reference with ~1 s of quiet noise makes it leak
+    # *silence* instead. The noise sits at -55 dBFS (default): above F5's
+    # internal -42 dBFS edge-trimmer so it survives preprocessing, yet well
+    # below the speech. MOODSCAPE_F5_REF_PAD=0 disables this.
+    if os.environ.get("MOODSCAPE_F5_REF_PAD", "1") == "1":
+        pad_sec = float(os.environ.get("MOODSCAPE_F5_REF_PAD_SEC", "1.0"))
+        pad_dbfs = float(os.environ.get("MOODSCAPE_F5_REF_PAD_DBFS", "-55.0"))
+        n_pad = int(pad_sec * file_sr)
+        if n_pad > 0:
+            pad_rms = 10 ** (pad_dbfs / 20.0)
+            tail = (np.random.randn(n_pad).astype(np.float32) * pad_rms)
+            audio = np.concatenate([audio.astype(np.float32), tail])
 
     # Write conditioned audio to temp file
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix="_conditioned.wav")
@@ -395,6 +417,32 @@ class F5Engine(SpeechEngine):
                 # distinct but reproducible diffusion noise.
                 chunk_seed = seed + speech_idx
 
+                # Short-phrase pacing (research Issue 3, A2). F5's duration
+                # heuristic mis-estimates very short text ("Breathe in…"),
+                # leaking reference audio; slowing those *fragments* gives the
+                # model more frames to land cleanly. The trigger is a non-space
+                # CHARACTER count (research: "<10 chars, excluding spaces") — a
+                # word count caught normal short sentences ("Notice the breathing
+                # in your body."), forcing them slow enough that F5 stretched and
+                # inserted mid-word gaps. Natural-rhythm mode only — in fixed-WPM
+                # mode fix_duration already governs length.
+                chunk_speed = speed
+                if (
+                    target_wpm is None
+                    and os.environ.get("MOODSCAPE_F5_SHORT_PHRASE_PACING", "1") == "1"
+                ):
+                    max_chars = int(os.environ.get("MOODSCAPE_F5_SHORT_PHRASE_MAX_CHARS", "12"))
+                    if len(gen_text.replace(" ", "")) <= max_chars:
+                        chunk_speed = float(os.environ.get("MOODSCAPE_F5_SHORT_PHRASE_SPEED", "0.5"))
+
+                # Latent-parameter overrides (research Issue 3.2, B3). Default to
+                # the validated golden-path constants; MOODSCAPE_F5_CFG / _SWAY /
+                # _NFE let the user A/B more expressive settings without a code
+                # change (research starting points: 1.8 / -0.8 / 64).
+                cfg_strength = float(os.environ.get("MOODSCAPE_F5_CFG", _CFG_STRENGTH))
+                sway_coef = float(os.environ.get("MOODSCAPE_F5_SWAY", _SWAY_COEF))
+                nfe_step = int(os.environ.get("MOODSCAPE_F5_NFE", _NFE_STEPS))
+
                 # Calculate fix_duration for WPM-based pacing.
                 # fix_duration tells F5-TTS the TOTAL mel frame count (ref + gen).
                 # After generation, the reference portion is clipped off, leaving
@@ -403,10 +451,10 @@ class F5Engine(SpeechEngine):
                     ref_file=assets["audio"],
                     ref_text=assets["text"],
                     gen_text=gen_text,
-                    speed=speed,
-                    nfe_step=_NFE_STEPS,
-                    cfg_strength=_CFG_STRENGTH,
-                    sway_sampling_coef=_SWAY_COEF,
+                    speed=chunk_speed,
+                    nfe_step=nfe_step,
+                    cfg_strength=cfg_strength,
+                    sway_sampling_coef=sway_coef,
                     remove_silence=False,
                     seed=chunk_seed,
                 )
@@ -430,6 +478,24 @@ class F5Engine(SpeechEngine):
                 else:
                     arr = np.asarray(wav, dtype=np.float32).squeeze()
                 arr = _trim_trailing_silence(arr, SAMPLE_RATE)
+                # Optional per-phrase microprosody (research Issue 3.3/3.4, B4):
+                # phrase-final pitch declination + breathiness via a WORLD pass.
+                # OFF by default — WORLD resynthesis can colour clean Vocos
+                # output; MOODSCAPE_F5_MICROPROSODY=1 opts in.
+                if os.environ.get("MOODSCAPE_F5_MICROPROSODY", "0") == "1":
+                    decline = float(os.environ.get("MOODSCAPE_F5_DECLINE_CENTS", "120.0"))
+                    tail_ms = float(os.environ.get("MOODSCAPE_F5_DECLINE_TAIL_MS", "600.0"))
+                    ap_scale = float(os.environ.get("MOODSCAPE_F5_AP_SCALE", "1.05"))
+                    pitch_scale = float(os.environ.get("MOODSCAPE_F5_PITCH_SCALE", "1.15"))
+                    formant_shift = float(os.environ.get("MOODSCAPE_F5_FORMANT_SHIFT", "0.98"))
+                    taper_ms = float(os.environ.get("MOODSCAPE_F5_TAPER_MS", "300.0"))
+                    taper_floor = float(os.environ.get("MOODSCAPE_F5_TAPER_FLOOR", "0.6"))
+                    arr = apply_microprosody(
+                        arr, SAMPLE_RATE,
+                        decline_cents=decline, tail_ms=tail_ms, ap_scale=ap_scale,
+                        pitch_scale=pitch_scale, formant_shift=formant_shift,
+                        taper_ms=taper_ms, taper_floor=taper_floor,
+                    )
                 threshold = float(np.abs(arr).mean()) * 0.15
                 activity = np.abs(arr) > threshold
                 chunks.append((arr, activity, "speech", gen_text))

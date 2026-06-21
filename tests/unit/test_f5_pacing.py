@@ -40,7 +40,9 @@ def test_pacing():
     engine._model = MockModel()
     engine._phase_assets = {"default": {"audio": "mock_path", "text": "mock text"}}
 
-    segments = [{"type": "speech", "text": "This is a test sentence."}]
+    # >6 words so short-phrase pacing (A2) does not override speed — this test
+    # verifies the speed param passes straight through for normal-length text.
+    segments = [{"type": "speech", "text": "This is a calm and gentle test sentence for pacing."}]
 
     print("Running synthesis at speed=1.0...")
     audio_1, mask_1 = engine.synthesize(segments, speed=1.0)

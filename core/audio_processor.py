@@ -42,62 +42,17 @@ DEFAULT_IR = "warm_studio"
 
 
 
-def make_acestep_music_chain() -> Pedalboard:
-    """Minimal FX chain for ACE-Step 1.5 — preserves natural VAE output quality.
-
-    ACE-Step's VAE produces clean audio that doesn't need heavy processing.
-    This chain applies only essential corrections:
-
-      1. Noise gate (-55 dB) — catches quiet diffusion residual noise.
-      2. Sub-bass HPF at 60 Hz — removes diffusion rumble.
-      3. Low-shelf warmth at 200 Hz (+1.5 dB) — subtle bass presence.
-      4. Mild presence cut at 3 kHz (-1.5 dB) — creates space for voice;
-         vocal pocket adds -1.5 dB more = -3 dB combined.
-      5. Ultrasonic LPF at 16 kHz — removes diffusion noise above audible range.
-      6. Gentle glue compressor — 2:1 / 80ms attack / 800ms release.
-      7. Limiter at -0.5 dBFS.
-    """
-    plugins = [
-        NoiseGate(
-            threshold_db=-55.0,
-            ratio=2.0,
-            attack_ms=15.0,
-            release_ms=100.0,
-        ),
-        HighpassFilter(cutoff_frequency_hz=60.0),
-        LowShelfFilter(cutoff_frequency_hz=200, gain_db=2.0),
-        PeakFilter(cutoff_frequency_hz=2500, gain_db=-2.0, q=0.7),
-        PeakFilter(cutoff_frequency_hz=4500, gain_db=-2.0, q=0.7),
-        HighShelfFilter(cutoff_frequency_hz=8000.0, gain_db=1.5),
-        LowpassFilter(cutoff_frequency_hz=16000.0),
-        Compressor(
-            threshold_db=-20.0,
-            ratio=2.0,
-            attack_ms=80.0,
-            release_ms=800.0,
-        ),
-    ]
-    # Add warm_studio convolution reverb for spaciousness and to mask diffusion artifacts.
-    # 8% wet is subtle — primarily adds depth and warmth rather than audible room effect.
-    ir_path = IR_CATALOG.get("warm_studio", {}).get("path", "")
-    if os.path.isfile(ir_path):
-        plugins.append(Convolution(ir_path, mix=0.08))
-    # No Limiter — peak control is done by the true-peak limiter at export.
-    # pedalboard's Limiter inflates level (~+4.75 dB) and adds broadband distortion.
-    return Pedalboard(plugins)
-
 
 def make_lyria_music_chain() -> Pedalboard:
     """FX chain tailored for Lyria RealTime output at 48 kHz.
 
     Lyria's diffusion model produces stereo audio that has been averaged to
-    mono by the engine.  Its spectral profile differs from both MusicGen and
-    ACE-Step:
+    mono by the engine.  Its spectral profile:
     - The 48 kHz native rate means content extends above 12 kHz, with full
       bandwidth up to ~22 kHz.
-    - Lyria tends to be brighter and more harmonically dense than ACE-Step's
-      ambient output, so upper-mid softening is more aggressive.
-    - Sub-bass rumble is present but not as severe as ACE-Step diffusion noise.
+    - Lyria tends to be brighter and more harmonically dense, so upper-mid
+      softening is more aggressive.
+    - Sub-bass rumble is present.
 
     Chain:
       1. Sub-bass HPF at 60 Hz — removes inaudible energy from the API stream
@@ -108,8 +63,8 @@ def make_lyria_music_chain() -> Pedalboard:
          that makes the ambient bed sound too forward against the narration.
       4. High shelf at 9000 Hz (-2.5 dB) — gentle rolloff of Lyria's extended
          high-frequency content to maintain a meditative warmth.
-      5. Slow glue compressor (2:1, 500ms release) — same gentle compression as
-         the ACE-Step chain; prevents dynamic spikes without audible pumping.
+      5. Slow glue compressor (2:1, 500ms release) — gentle compression that
+         prevents dynamic spikes without audible pumping.
       6. Limiter at -0.5 dBFS — leaves extra headroom before the master chain.
     """
     return Pedalboard([
@@ -131,7 +86,7 @@ def make_lyria_music_chain() -> Pedalboard:
 def make_upload_music_chain() -> Pedalboard:
     """Light FX chain for user-uploaded instrumentals.
 
-    Unlike ACE-Step / Lyria output, an uploaded file is already a finished
+    Unlike Lyria output, an uploaded file is already a finished
     production, so coloring is kept minimal — we only protect the mix and carve
     a little room for the narration (the dynamic ducker and the vocal-pocket
     chain do the rest):

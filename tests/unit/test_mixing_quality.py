@@ -62,10 +62,10 @@ class TestChainsAreClean(unittest.TestCase):
     def test_no_limiter_in_music_or_master_chains(self):
         from pedalboard import Limiter
         from core.audio_processor import (
-            make_upload_music_chain, make_acestep_music_chain,
+            make_upload_music_chain,
             make_lyria_music_chain, make_master_chain,
         )
-        for chain in (make_upload_music_chain(), make_acestep_music_chain(),
+        for chain in (make_upload_music_chain(),
                       make_lyria_music_chain(), make_master_chain()):
             self.assertFalse(any(isinstance(p, Limiter) for p in chain),
                              "pedalboard Limiter must be removed (it distorts)")

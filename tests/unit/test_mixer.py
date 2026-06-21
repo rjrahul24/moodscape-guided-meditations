@@ -177,6 +177,156 @@ class TestCalibrateMusicBed(unittest.TestCase):
         self.assertEqual(calibrate_music_bed(voice, music, self.SR), (-16.0, -16.0))
 
 
+def _rms(x: np.ndarray) -> float:
+    return float(np.sqrt(np.mean(x.astype(np.float64) ** 2)))
+
+
+class TestFadeIn(unittest.TestCase):
+    """The intro fade must not read as multiple seconds of silence."""
+
+    def test_fade_in_audible_within_three_quarters_second(self):
+        sr = 48000
+        audio = np.ones(sr * 5, dtype=np.float32)
+        out = apply_fades(audio, sr, fade_in_sec=1.5, fade_out_sec=0.0)
+        # Still a gentle fade from near-zero...
+        self.assertLess(out[0], 0.05)
+        # ...but clearly audible (≥ -12 dB) within 0.75 s, not 2-3 s.
+        self.assertGreaterEqual(out[int(0.75 * sr)], 0.25)
+        # Full level once the fade completes (first un-faded sample).
+        self.assertGreater(out[int(1.5 * sr)], 0.99)
+
+
+class TestSpectralDucking(unittest.TestCase):
+    """Multiband spectral ducking: B1 of the research plan."""
+
+    def test_lr_crossover_perfect_reconstruction(self):
+        """low + mid + high must reconstruct the input bit-transparently
+        (subtractive mid) so the bed is untouched when no ducking occurs."""
+        from core.mixer import _lr_crossover_3way
+        sr = 48000
+        rng = np.random.default_rng(0)
+        music = rng.standard_normal(sr * 2).astype(np.float32) * 0.1
+        low, mid, high = _lr_crossover_3way(music, sr, lo_hz=250.0, hi_hz=4000.0)
+        recon = low + mid + high
+        self.assertEqual(recon.shape, music.shape)
+        self.assertLess(float(np.max(np.abs(recon - music))), 1e-5)
+
+    def test_lr_crossover_reconstruction_stereo(self):
+        from core.mixer import _lr_crossover_3way
+        sr = 48000
+        rng = np.random.default_rng(1)
+        music = (rng.standard_normal((2, sr)) * 0.1).astype(np.float32)
+        low, mid, high = _lr_crossover_3way(music, sr)
+        self.assertLess(float(np.max(np.abs((low + mid + high) - music))), 1e-5)
+
+    def test_transparent_when_no_speech(self):
+        """With no detected phrases the gain is unity everywhere, so the
+        multiband duck must return the music essentially unchanged."""
+        from core.mixer import apply_breathing_duck_multiband
+        sr = 48000
+        music = _tone(1000.0, 4.0, sr, rms_db=-20.0)
+        voice = np.zeros_like(music)
+        out = apply_breathing_duck_multiband(
+            voice, music, sr, duck_depth_db=-12.0, phrases=[],
+        )
+        self.assertEqual(out.shape, music.shape)
+        self.assertLess(float(np.max(np.abs(out - music))), 1e-3)
+
+    def test_mid_band_ducked_low_and_high_preserved(self):
+        """During speech, a mid-band tone (1 kHz) is attenuated while a
+        low-band (100 Hz) and high-band (8 kHz) tone are left alone."""
+        from core.mixer import apply_breathing_duck_multiband
+        sr = 48000
+        phrases = [(1.0, 3.0)]
+        a, b = int(1.5 * sr), int(2.5 * sr)   # window inside the phrase
+        q, r = int(0.0 * sr), int(0.5 * sr)   # window before the phrase
+
+        def duck(freq):
+            music = _tone(freq, 4.0, sr, rms_db=-20.0)
+            out = apply_breathing_duck_multiband(
+                np.zeros_like(music), music, sr,
+                duck_depth_db=-12.0, phrases=phrases,
+            )
+            return music, out
+
+        mid_in, mid_out = duck(1000.0)
+        low_in, low_out = duck(100.0)
+        high_in, high_out = duck(8000.0)
+
+        # Mid band: clearly attenuated during the phrase (~-12 dB → <0.5x).
+        self.assertLess(_rms(mid_out[a:b]), 0.6 * _rms(mid_in[a:b]))
+        # Mid band: untouched before the phrase.
+        self.assertGreater(_rms(mid_out[q:r]), 0.95 * _rms(mid_in[q:r]))
+        # Low and high bands: preserved even during the phrase.
+        self.assertGreater(_rms(low_out[a:b]), 0.9 * _rms(low_in[a:b]))
+        self.assertGreater(_rms(high_out[a:b]), 0.9 * _rms(high_in[a:b]))
+
+    def test_mix_branches_to_multiband_via_env(self):
+        """MOODSCAPE_SPECTRAL_DUCK=1 makes mix() preserve a sub-bass bed that
+        the fullband duck would pull down — proving the branch is taken."""
+        import os
+        sr = 48000
+        voice = _gated_voice(sr, rms_db=-21.0, n_phrases=2, on_s=4.0, off_s=3.0)
+        activity = np.abs(voice) > 0
+        music = _tone(80.0, len(voice) / sr + 40.0, sr, rms_db=-18.0)
+        phrases = detect_phrases(voice, sr, threshold_db=-40.0)
+
+        full = mix(voice, activity, music, sample_rate=sr,
+                   fade_in_sec=0.0, fade_out_sec=0.0, phrases=phrases)
+        os.environ["MOODSCAPE_SPECTRAL_DUCK"] = "1"
+        try:
+            multi = mix(voice, activity, music, sample_rate=sr,
+                        fade_in_sec=0.0, fade_out_sec=0.0, phrases=phrases)
+        finally:
+            os.environ.pop("MOODSCAPE_SPECTRAL_DUCK", None)
+
+        self.assertEqual(full.shape, multi.shape)
+        # The 80 Hz bed lives in the low band: ducked fullband, preserved
+        # multiband → the multiband mix retains more total energy.
+        self.assertGreater(_rms(multi), _rms(full))
+
+
+class TestSharedReverb(unittest.TestCase):
+    """Shared convolution-reverb send: B2 of the research plan."""
+
+    def test_send_preserves_length_and_adds_energy(self):
+        from core.mixer import add_shared_reverb
+        sr = 48000
+        music = _tone(440.0, 2.0, sr, rms_db=-18.0)
+        send = add_shared_reverb(music, sr, send_db=-20.0)
+        self.assertEqual(send.shape, music.shape)
+        self.assertTrue(np.all(np.isfinite(send)))
+        self.assertGreater(_rms(send), 0.0)
+
+    def test_send_level_tracks_send_db(self):
+        """A lower send_db must produce a quieter send."""
+        from core.mixer import add_shared_reverb
+        sr = 48000
+        music = _tone(440.0, 2.0, sr, rms_db=-18.0)
+        loud = add_shared_reverb(music, sr, send_db=-18.0)
+        quiet = add_shared_reverb(music, sr, send_db=-30.0)
+        self.assertGreater(_rms(loud), _rms(quiet))
+
+    def test_mix_shared_reverb_changes_output_via_env(self):
+        import os
+        sr = 48000
+        voice = _gated_voice(sr, rms_db=-21.0, n_phrases=2, on_s=4.0, off_s=3.0)
+        activity = np.abs(voice) > 0
+        music = _tone(440.0, len(voice) / sr + 40.0, sr, rms_db=-20.0)
+        phrases = detect_phrases(voice, sr, threshold_db=-40.0)
+
+        base = mix(voice, activity, music, sample_rate=sr,
+                   fade_in_sec=0.0, fade_out_sec=0.0, phrases=phrases)
+        os.environ["MOODSCAPE_SHARED_REVERB"] = "1"
+        try:
+            verb = mix(voice, activity, music, sample_rate=sr,
+                       fade_in_sec=0.0, fade_out_sec=0.0, phrases=phrases)
+        finally:
+            os.environ.pop("MOODSCAPE_SHARED_REVERB", None)
+        self.assertEqual(base.shape, verb.shape)
+        self.assertGreater(float(np.max(np.abs(verb - base))), 1e-4)
+
+
 class TestMixPhrasesPassthrough(unittest.TestCase):
     def test_mix_accepts_precomputed_phrases(self):
         """mix() with explicit phrases must match a phrase-free mix when the

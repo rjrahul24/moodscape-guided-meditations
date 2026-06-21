@@ -31,16 +31,6 @@ def _progress(cb, fraction, message):
 
 
 
-def _enhance_acestep_prompt(user_prompt: str, duration_hint: float = 120.0) -> tuple[str, str]:
-    """Build an ACE-Step-optimized prompt using the MESA framework.
-
-    Delegates to AceStepEngine's prompt enhancer which returns
-    (caption, lyrics) tuple with duration-aware structural tags.
-    """
-    from core.acestep import AceStepEngine
-    return AceStepEngine._enhance_prompt(user_prompt, duration_hint=duration_hint)
-
-
 class MeditationPipeline:
     """End-to-end meditation audio generator."""
 
@@ -55,7 +45,7 @@ class MeditationPipeline:
         speed: float = 0.90,
         duck_amount_db: float = -16.0,
         reverb_amount: float = 0.15,
-        fade_in_sec: float = 3.0,
+        fade_in_sec: float = 1.5,
         fade_out_sec: float = 5.0,
         output_format: str = "wav",
         progress_cb=None,
@@ -64,13 +54,9 @@ class MeditationPipeline:
         upsample_48k: bool = True,
         generation_mode: str = "Instrumental + Vocal",
         instrumental_duration_m: float = 3.0,
-        music_model: str = "acestep",
+        music_model: str = "upload",
         music_prompt_stages: list[tuple[str, float]] | None = None,
         stem_separation: bool = True,
-        bpm: int = 50,
-        keyscale: str = "Auto",
-        acestep_model_type: str = "sft",
-        acestep_long_form_mode: str = "auto",
         lyria_bpm: int = 70,
         lyria_density: float = 0.2,
         lyria_brightness: float = 0.3,
@@ -80,7 +66,6 @@ class MeditationPipeline:
         reverb_ir: str = "warm_studio",
         quality_mode: bool = False,
         stereo_output: bool = False,
-        melody_audio_path: str | None = None,
         uploaded_music_path: str | None = None,
     ) -> tuple[str, str]:
         """Run the full pipeline and return the path to the output audio file.
@@ -106,10 +91,6 @@ class MeditationPipeline:
             seed: Optional deterministic seed for reproducible generation.
             do_export_stems: If True, save voice/music stems alongside the mix.
             upsample_48k: If True, export at 48 kHz instead of 44.1 kHz.
-            melody_audio_path: Optional path to a reference audio file for
-                ACE-Step melody/style conditioning. When provided, the audio is
-                loaded and passed to AceStepEngine as melody_audio + melody_sample_rate
-                kwargs. Has no effect for Lyria engine.
             music_prompt_stages: Optional list of (prompt, duration_sec) pairs
                 for story mode music generation. When provided, overrides
                 music_prompt and instrumental_duration_m (total music duration
@@ -141,7 +122,6 @@ class MeditationPipeline:
 
         is_instrumental = generation_mode == "Instrumental Only"
         is_vocals = generation_mode == "Vocals Only"
-        use_acestep = music_model == "acestep"
         use_lyria = music_model == "lyria"
         use_upload = music_model == "upload"
 
@@ -149,7 +129,7 @@ class MeditationPipeline:
         # Uploaded instrumentals are decoded/resampled to 48 kHz as well.
         # F5-TTS also mixes at 48 kHz.
         # TTS voice (24 kHz) is upsampled to match whichever rate is selected.
-        mix_sr = 48000 if (use_lyria or use_acestep or use_upload or tts_engine == "f5") else TARGET_SR
+        mix_sr = 48000 if (use_lyria or use_upload or tts_engine == "f5") else TARGET_SR
 
         logger.info("Starting generation — mode=%s, music_model=%s, voice=%s, speed=%s, seed=%s, lufs=%s",
                     generation_mode, music_model, voice, speed, seed, target_lufs)
@@ -244,7 +224,7 @@ class MeditationPipeline:
                     mastering_engine = F5MasteringEngine(sample_rate=SAMPLE_RATE)
 
                 # Upsample Voice to the mix sample rate:
-                #   Lyria / ACE-Step path → 48 kHz (preserves native music resolution)
+                #   Lyria / Upload path → 48 kHz (preserves native music resolution)
                 # Always use high_accuracy=True (soxr_vhq) — mathematically zero
                 # aliasing artifacts, avoids subtle metallic shimmer on non-integer
                 # ratio conversions (24 kHz → 44.1 kHz).
@@ -303,18 +283,14 @@ class MeditationPipeline:
 
                 music_model_label = {
                     "lyria": "Lyria RealTime",
-                    "acestep": "ACE-Step 1.5",
-                    "upload": "Uploaded Instrumental",
-                }.get(music_model, "ACE-Step 1.5")
+                    "upload": "Background Music",
+                }.get(music_model, "Background Music")
                 _progress(progress_cb, 0.40, f"Switching to {music_model_label}...")
 
                 # Instantiate the selected music engine
                 if use_lyria:
                     from core.lyria.engine import LyriaEngine
                     music_engine = LyriaEngine()
-                elif use_acestep:
-                    from core.acestep import AceStepEngine
-                    music_engine = AceStepEngine()
                 elif use_upload:
                     from core.upload_music import UploadMusicEngine
                     music_engine = UploadMusicEngine(uploaded_music_path)
@@ -344,58 +320,20 @@ class MeditationPipeline:
                     label = f"story stage {current}/{total}" if story_mode else f"segment {current}/{total}"
                     _progress(progress_cb, frac, f"Generating music {label}...")
 
-                # Load reference audio for ACE-Step melody conditioning (if provided).
-                # Loaded once here and passed as kwargs to all generate calls below.
-                ref_audio_kwargs: dict = {}
-                if use_acestep and melody_audio_path:
-                    import soundfile as sf
-                    try:
-                        _ref_data, _ref_sr = sf.read(melody_audio_path, dtype="float32", always_2d=False)
-                        if _ref_data.ndim == 2:
-                            _ref_data = _ref_data.mean(axis=1)  # stereo → mono
-                        ref_audio_kwargs = {"melody_audio": _ref_data, "melody_sample_rate": _ref_sr}
-                        logger.info(
-                            "[Pipeline] Reference audio loaded: %s — %.1fs @ %d Hz",
-                            melody_audio_path, len(_ref_data) / _ref_sr, _ref_sr,
-                        )
-                    except Exception as e:
-                        logger.warning("[Pipeline] Failed to load reference audio %s: %s — ignoring", melody_audio_path, e)
-
                 if story_mode:
-                    # Build engine-specific stages: enhance each stage prompt
-                    # with its model's meditation guardrails.
-                    if use_lyria:
-                        # LyriaEngine handles prompt enhancement internally;
-                        # pass raw stage prompts so they are not double-enhanced.
-                        engine_stages = music_prompt_stages
-                        enhanced_prompt = music_prompt
-                        music_audio = music_engine.generate(
-                            enhanced_prompt,
-                            music_duration,
-                            progress_cb=music_progress,
-                            prompt_stages=engine_stages,
-                            bpm=lyria_bpm,
-                            density=lyria_density,
-                            brightness=lyria_brightness,
-                        )
-                    elif use_acestep:
-                        # AceStepEngine enhances prompts internally per stage;
-                        # pass raw stage prompts so they are not double-enhanced.
-                        engine_stages = music_prompt_stages
-                        enhanced_prompt, enhanced_lyrics = _enhance_acestep_prompt(music_prompt, duration_hint=music_duration)
-                        music_audio = music_engine.generate(
-                            enhanced_prompt,
-                            music_duration,
-                            progress_cb=music_progress,
-                            prompt_stages=engine_stages,
-                            lyrics=enhanced_lyrics,
-                            bpm=bpm,
-                            keyscale=keyscale,
-                            seed=seed,
-                            **ref_audio_kwargs,
-                        )
-                    else:
-                        raise ValueError(f"No story mode path for music_model: {music_model}")
+                    # LyriaEngine handles prompt enhancement internally;
+                    # pass raw stage prompts so they are not double-enhanced.
+                    engine_stages = music_prompt_stages
+                    enhanced_prompt = music_prompt
+                    music_audio = music_engine.generate(
+                        enhanced_prompt,
+                        music_duration,
+                        progress_cb=music_progress,
+                        prompt_stages=engine_stages,
+                        bpm=lyria_bpm,
+                        density=lyria_density,
+                        brightness=lyria_brightness,
+                    )
                 else:
                     # Single-prompt generation
                     if use_upload:
@@ -409,21 +347,6 @@ class MeditationPipeline:
                             music_prompt, music_duration, progress_cb=music_progress,
                             bpm=lyria_bpm, density=lyria_density, brightness=lyria_brightness,
                         )
-                    elif use_acestep:
-                        # Pass the RAW prompt — AceStepEngine enhances internally
-                        # (caption + structural lyrics). Pre-enhancing here and
-                        # passing lyrics= made the engine re-enhance and append,
-                        # duplicating structure tags — the official ACE-Step
-                        # tutorial flags caption/lyrics conflicts as the primary
-                        # artifact cause.
-                        music_audio = music_engine.generate(
-                            music_prompt, music_duration, progress_cb=music_progress,
-                            bpm=bpm, keyscale=keyscale,
-                            acestep_model_type=acestep_model_type,
-                            long_form_mode=acestep_long_form_mode,
-                            seed=seed,
-                            **ref_audio_kwargs,
-                        )
                     else:
                         raise ValueError(f"No generation path for music_model: {music_model}")
 
@@ -435,8 +358,7 @@ class MeditationPipeline:
                         f"({_r.source_seconds:.0f}s → {_r.target_seconds:.0f}s)"
                     )
                 music_engine.unload_model()
-                if use_acestep or use_lyria or use_upload:
-                    del music_engine
+                del music_engine
                 gc.collect()
                 if mx:
                     # Force release ALL cached MLX metal buffers back to the OS
@@ -449,19 +371,13 @@ class MeditationPipeline:
                 # so there are no model-generated drums/vocals to strip.
                 if stem_separation and not use_upload:
                     _progress(progress_cb, 0.68, "Removing drums/vocals via AI source separation...")
-                    if use_lyria:
-                        from core.lyria.engine import TARGET_SAMPLE_RATE as MUSIC_SR
-                    elif use_acestep:
-                        from core.acestep import TARGET_SAMPLE_RATE as MUSIC_SR
-                    else:
-                        raise ValueError(f"Unknown music model for stem separation: {music_model}")
+                    from core.lyria.engine import TARGET_SAMPLE_RATE as MUSIC_SR
                     from core.stem_separator import StemSeparator
                     separator = StemSeparator()
                     music_audio = separator.remove_drums_and_vocals(music_audio, MUSIC_SR)
                     del separator
                     gc.collect()
 
-                # All engines (ACE-Step, Lyria) output at 48 kHz natively.
                 _progress(progress_cb, 0.71, f"Ensuring {music_model_label} audio is at 48kHz mixing rate...")
             else:
                 music_audio = np.zeros(0, dtype=np.float32)
@@ -498,38 +414,11 @@ class MeditationPipeline:
                 # ── Step 8: Apply music FX ──────────────────────────────────────
                 _progress(progress_cb, 0.77, "Applying music effects...")
                 from core.audio_processor import apply_fx as apply_audio_fx
-                # Per-engine pre-mix loudness calibration.
-                # These targets are tuned so that the -16 dB baseline music
-                # level in mix() produces the right ambient presence during
-                # pauses, while the duck_amount_db offset provides adequate
-                # separation during speech.
-                #
-                #   ACE-Step  -14 LUFS: VAE output is clean and benefits from the
-                #                       extra headroom.
-                #   Lyria     -16 LUFS: cloud output is slightly brighter/denser;
-                #                       moderate level balances presence vs. headroom.
-                # When MOODSCAPE_ADAPTIVE_BED=1 these remain useful: they bound
-                # the search space so calibrate_music_bed() only trims the
-                # residual error.
-                if use_acestep:
-                    premix_lufs = -14.0
-                else:  # lyria or uploaded instrumental
-                    premix_lufs = -16.0
-                music_audio = normalize_loudness(music_audio, mix_sr, target_lufs=premix_lufs)
-
-                # Pre-EQ processing: spectral repair
-                if use_acestep:
-                    # Moderate noise reduction (prop_decrease=0.45) removes diffusion
-                    # static without causing warbling on sustained pads.
-                    from core.audio_processor import reduce_music_noise
-                    music_audio = reduce_music_noise(music_audio, mix_sr, prop_decrease=0.45)
+                music_audio = normalize_loudness(music_audio, mix_sr, target_lufs=-16.0)
 
                 if use_lyria:
                     from core.audio_processor import make_lyria_music_chain
                     music_chain = make_lyria_music_chain()
-                elif use_acestep:
-                    from core.audio_processor import make_acestep_music_chain
-                    music_chain = make_acestep_music_chain()
                 elif use_upload:
                     from core.audio_processor import make_upload_music_chain
                     music_chain = make_upload_music_chain()
@@ -622,8 +511,7 @@ class MeditationPipeline:
             # ── Step 11: Export ─────────────────────────────────────────────
             _progress(progress_cb, 0.95, f"Exporting {output_format.upper()}...")
 
-            # Lyria, ACE-Step, and uploaded instrumentals export at native 48 kHz.
-            export_sr = 48000 if (use_lyria or use_acestep or use_upload or upsample_48k) else TARGET_SR
+            export_sr = 48000 if (use_lyria or use_upload or upsample_48k) else TARGET_SR
 
             output_path = export_audio(
                 mixed,

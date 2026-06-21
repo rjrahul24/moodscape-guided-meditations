@@ -1,7 +1,7 @@
 """UploadMusicEngine — user-supplied instrumental as a music source.
 
 This engine lets a user upload their own instrumental/background file instead
-of generating one with ACE-Step or Lyria.  It implements the same public
+of generating one with Lyria.  It implements the same public
 contract as the generative engines so the pipeline can treat all music sources
 uniformly::
 
@@ -30,7 +30,7 @@ from core.upload_music.arrange import FitReport, fit_to_length
 
 logger = logging.getLogger("moodscape.upload")
 
-# Uploaded audio is decoded to this rate; matches ACE-Step / Lyria output so
+# Uploaded audio is decoded to this rate; matches Lyria output so
 # the pipeline mixes everything at a single rate.
 TARGET_SAMPLE_RATE = 48_000
 

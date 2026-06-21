@@ -66,7 +66,7 @@ _CROSSFADE_SEC = 3.0
 class LyriaEngine:
     """Drop-in music engine backed by the Google Lyria RealTime API.
 
-    Public API mirrors AceStepEngine so the pipeline can
+    Public API mirrors the music engine interface so the pipeline can
     treat all engines uniformly::
 
         engine = LyriaEngine()

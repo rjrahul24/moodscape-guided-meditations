@@ -2,7 +2,7 @@
 
 An uploaded instrumental can be any length, but the pipeline needs a music
 array of a specific duration (mono float32 @ 48 kHz, exactly as long as the
-ACE-Step / Lyria engines would produce).  `fit_to_length` adapts the upload:
+Lyria engine would produce).  `fit_to_length` adapts the upload:
 
 - LONGER than the target → trimmed (the master fade-out covers the cut).
 - SHORTER than the target → looped with equal-power crossfades at every seam.

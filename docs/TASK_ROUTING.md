@@ -13,14 +13,10 @@ When you need to change something, start here. Locate the row that matches your 
 | Vocal pocket / intelligibility EQ | `core/audio_processor.py :: make_vocal_pocket_chain()` | — |
 | Ducking behavior | `core/mixer.py :: apply_breathing_duck()` / `compute_breathing_gain_db()` | `core/pipeline.py` (`duck_amount_db`) |
 | Music bed level (automated) | `core/mixer.py :: calibrate_music_bed()` / `adaptive_vad_threshold()` | `core/pipeline.py` (`MOODSCAPE_ADAPTIVE_BED`) |
-| ACE-Step long-form strategy | `core/acestep/engine.py :: _generate_looped()` / `_generate_infinite()` | `pipeline.generate(acestep_long_form_mode=…)` |
 | LUFS target | `core/pipeline.py` | `core/mixer.py :: export_audio()` |
-| ACE-Step generation params | `core/acestep/engine.py` (module-level constants) | — |
-| ACE-Step reference audio (melody conditioning) | `core/pipeline.py` (`melody_audio_path` param) | `core/acestep/engine.py :: _prepare_reference_audio()` |
 | Uploaded-instrumental music source | `core/upload_music/engine.py :: UploadMusicEngine` | `core/pipeline.py` (`uploaded_music_path`, `music_model="upload"`), `app.py` (upload widget) |
 | How an upload is looped/trimmed to length | `core/upload_music/arrange.py :: fit_to_length()` | — |
 | Uploaded-instrumental FX chain | `core/audio_processor.py :: make_upload_music_chain()` | — |
-| Prompt enhancement logic | `core/pipeline.py :: _enhance_acestep_prompt()` | `core/acestep/engine.py :: _enhance_prompt()` |
 | QA checks / thresholds | `core/qa_monitor.py` | `docs/ARCHITECTURE.md#qa-checks` |
 | Stem separation behavior | `core/stem_separator.py` | `scripts/separate_worker.py` |
 | Export format / sample rate | `core/mixer.py :: export_audio()` | `core/pipeline.py` (`export_sr`) |

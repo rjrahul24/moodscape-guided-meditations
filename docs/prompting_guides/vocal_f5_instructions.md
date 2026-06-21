@@ -287,8 +287,8 @@ F5-TTS works well with any music engine. Recommended pairings:
 
 | Music Engine | Best For |
 |---|---|
-| **ACE-Step** (Studio quality) | Rich, evolving ambient textures. Best quality but slower generation. |
 | **Lyria** | Cloud-generated, high-quality ambient music. Requires API key. |
+| **Background Music** | Curated instrumentals — no generation, instant. |
 
 ---
 

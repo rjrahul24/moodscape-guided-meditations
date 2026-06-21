@@ -1,7 +1,6 @@
 torch>=2.1.0
 torchaudio>=2.1.0
 kokoro>=0.9.4
-transformers>=4.55.0,<4.58.0            # >=4.55: ACE-Step remote code needs layer_type_validation; <4.58: ACE-Step pin
 huggingface-hub>=0.23.2,<1.0
 tokenizers>=0.20
 demucs>=4.0.0
@@ -17,13 +16,10 @@ pyworld>=0.3.4
 python-dotenv
 google-genai>=1.16.0
 mlx
-mlx-lm
 mlx-audio  # DeepFilterNet MLX for neural speech denoising
 accelerate>=0.26.0
 f5-tts>=1.0.0
-diffusers>=0.30.0  # AutoencoderOobleck required by ace-step
 silero-vad
-git+https://github.com/ace-step/ACE-Step-1.5.git
 # protobuf: onnx 1.21+ (via s3tokenizer/f5-tts) needs builder (added in 3.20).
 # google-api-core 2.30+ needs >=4.25.8. descript-audiotools & tensorboard 2.9
 # have stale <3.20 constraints but don't use protobuf at runtime.

@@ -142,10 +142,6 @@ Upsample → mix sample rate (soxr_vhq)
   • Spectral repair: noisereduce (stationary, prop_decrease=0.45)
   • Tape saturation: asymmetric soft clipping (drive=0.2, bias=0.10)
 
-ACE-Step Pre-EQ (ACE-Step only — see audio_processing.md §3)
-  • Spectral repair: noisereduce (stationary, prop_decrease=0.65)
-  • Tape saturation: asymmetric soft clipping (drive=0.3, bias=0.15)
-
 Uploaded Instrumental (music_model="upload")
   • Decode (pedalboard AudioFile) → resample 48 kHz → mono → fit_to_length() loop/trim
   • Enters this shared path like a generated bed: NO pre-EQ / noise reduction / neural
@@ -159,9 +155,6 @@ Neural Enhancement ( only — optional)
   • Apollo GAN (ICASSP 2025) — codec artifact removal
   • Loads after music engine unloads (~7 GB)
   • Graceful fallback if Apollo not installed
-
-ACE-Step /  Post-EQ (ACE-Step and )
-  • Organic noise floor: pink noise at -58 dB, LPF 8 kHz
 
 Vocal Pocket Carving (applied to music before mixing)
   • HPF 30 Hz | -3 dB @ 300 Hz | -2 dB @ 1 kHz | -4 dB @ 3 kHz | LPF 12 kHz

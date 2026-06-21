@@ -69,17 +69,6 @@ class SpeechEngine(ABC):
 
 **Sequential unload pattern:** TTS must fully unload (+ `gc.collect()` + cache clear) before music engine loads.
 
-**AceStepEngine** (`core/acestep/engine.py`):
-- `load_model(model_type="sft")` — patches `ACESTEP_GENERATION_TIMEOUT=7200`, `DURATION_MAX=1200` before import
-- `compile_model=True` — mandatory; one-time JIT ~135s, then ~4× faster per step
-- Device: `"auto"` → MPS on Apple Silicon; DiT uses `use_mlx_dit=True`
-- Long-form (>90s) — two strategies, selected via `long_form_mode` ("auto" | "loop" | "evolve"; pipeline param `acestep_long_form_mode`, UI radio):
-  - **Loop** (auto default above 300s): `_generate_looped()` — one ~4-min piece (genesis + 2-3 repaints, whole-piece composite-QA retry ≤2 attempts), then looped to target with `fit_to_length()` equal-power crossfades (8s). Few seams, deterministic, ~4× faster for 10-15 min beds.
-  - **Evolve**: `_generate_infinite()` — genesis (90s) + chained repaint continuations (20s context, 60s new per call), hardened with per-segment seed pinning (`seed + seg_num`), per-segment composite-QA retry (threshold 0.6, one offset-seed retry), and seam validation (`_seam_discontinuity_db` log-band energy check → 3s STFT crossfade fallback when > 6 dB)
-- Seed pinned end-to-end via `GenerationConfig(use_random_seed=False, seeds=[seed])` — ACE-Step is seed-sensitive; the pipeline forwards its session seed
-- Story mode: `_generate_story()` — per-stage prompt + 6s equal-power crossfades; per-stage seed = `seed + stage_index`
-- `_enhance_prompt(user_prompt, duration_hint)` — MESA framework → `(caption, lyrics)` tuple
-
 **LyriaEngine** (`core/lyria/engine.py`):
 - Async WebSocket via `client.aio.live.music.connect(model="models/lyria-realtime-exp")`
 - PCM bytes (int16 stereo 48kHz) → deinterleave → mono average → float32
@@ -94,7 +83,7 @@ class SpeechEngine(ABC):
 - **Length fitting** (`arrange.fit_to_length`): equal length → used as-is; longer → trim
   tail (master fade-out hides the cut); shorter → seamless loop with 500 ms equal-power
   crossfades (auto-shrinks to ≤25% of source, hard-tile fallback under ~4 ms).
-- Output is byte-identical in contract to ACE-Step/Lyria (mono float32 @ 48 kHz, exact
+- Output is byte-identical in contract to Lyria (mono float32 @ 48 kHz, exact
   length), so the rest of the pipeline treats it uniformly. **Stem separation is skipped**
   for uploads (the file is already an instrumental). A `FitReport` is surfaced in the
   pipeline status message.
@@ -137,11 +126,8 @@ Voice activity mask realigned after FX (reverb tail can alter array length).
 
 ### Phase 7 — Music FX + Vocal Pocket
 
-Pre-mix LUFS normalization per engine (`pipeline.py`, step 8):
-- Lyria: −16 LUFS
-- ACE-Step: −14 LUFS
-- Uploaded instrumental: −16 LUFS (uses `make_upload_music_chain()`; no noise reduction)
-- : −17 LUFS
+Pre-mix LUFS normalization (`pipeline.py`, step 8):
+- All engines (Lyria, uploaded instrumental): −16 LUFS
 
 Then engine-specific chain applied, followed by vocal pocket:
 ```
@@ -205,20 +191,6 @@ make_vocal_pocket_chain()    →  apply_audio_fx()   # carves 300Hz/1kHz/3kHz la
 | 7 | Convolution | IR file, wet=**0.18** default (18%) |
 | 8 | Limiter | threshold=−1.0 dBFS |
 
-### `make_acestep_music_chain()` (`core/audio_processor.py`)
-
-Minimal chain — ACE-Step's VAE output is clean and doesn't need heavy processing.
-
-| # | Plugin | Key params |
-|---|--------|-----------|
-| 1 | NoiseGate | threshold=−55 dB, ratio=2:1, attack=1ms, release=100ms |
-| 2 | HighpassFilter | cutoff=60 Hz |
-| 3 | LowShelfFilter | cutoff=200 Hz, gain=+1.5 dB |
-| 4 | PeakFilter | freq=3 000 Hz, gain=−1.5 dB, Q=1.0 (vocal pocket adds −1.5 dB more = −3 dB combined) |
-| 5 | LowpassFilter | cutoff=16 000 Hz |
-| 6 | Compressor | threshold=−20 dB, ratio=2.0:1, attack=80ms, release=800ms |
-| — | (Convolution warm_studio reverb @ 8% wet appended when the IR file exists; **no Limiter** — true-peak limiting is at export) |
-
 ### `make_lyria_music_chain()` (`core/audio_processor.py`)
 
 | # | Plugin | Key params |
@@ -252,7 +224,7 @@ Applied to music after engine-specific chain to carve spectral room for voice.
 | 1 | HighpassFilter | cutoff=30 Hz |
 | 2 | PeakFilter | freq=300 Hz, gain=−2.0 dB, Q=0.8 |
 | 3 | PeakFilter | freq=1 000 Hz, gain=−1.0 dB, Q=0.7 |
-| 4 | PeakFilter | freq=3 000 Hz, gain=−1.5 dB, Q=1.0 (presence pocket; combined −3 dB with ACE-Step chain) |
+| 4 | PeakFilter | freq=3 000 Hz, gain=−1.5 dB, Q=1.0 (presence pocket) |
 | 5 | LowpassFilter | cutoff=12 000 Hz |
 
 ### `make_master_chain()` (`core/audio_processor.py`)
@@ -326,7 +298,6 @@ Load Music → generate() → unload_model() → gc.collect() → [cache clear]
 Never load two engines simultaneously. Peak memory per phase:
 - Kokoro: ~200 MB (CPU RAM only)
 - F5-TTS: ~1.5 GB (MPS)
-- ACE-Step: ~8–12 GB (MLX unified RAM, with compile)
 - HT Demucs: ~168 MB (CPU, subprocess)
 
 ### Demucs Subprocess Isolation
@@ -367,12 +338,6 @@ F5-TTS (24 kHz mono float32)
   → build_f5_voice_chain() @ 48 kHz
   → mix() @ 48 kHz
 
-ACE-Step 1.5 (48 kHz mono float32, native)
-  → normalize_loudness(premix_lufs=-14)
-  → make_acestep_music_chain() @ 48 kHz
-  → make_vocal_pocket_chain() @ 48 kHz
-  → mix() @ 48 kHz
-
 Lyria RealTime (48 kHz stereo int16 PCM → mono float32)
   → normalize_loudness(premix_lufs=-16)
   → make_lyria_music_chain() @ 48 kHz
@@ -403,15 +368,6 @@ mix() output (48 kHz mono float32)
 
 ## Prompt Engineering Summary
 
-### ACE-Step — MESA Framework (`core/acestep/engine.py :: _enhance_prompt()`)
-
-- **M**ood: emotional context (e.g. "peaceful, introspective, warm")
-- **E**lements: instruments + textures (e.g. "singing bowls, soft piano, ambient pads")
-- **S**tructure: song-form labels `[Intro]` `[Verse]` `[Bridge]` `[Outro]` (standard Qwen3 training vocab)
-- **A**pplication: use case (e.g. "meditation background, sleep journey")
-- Auto-prepended base tags: `ambient, meditation, calm, peaceful, warm, spacious, soft dynamics, gentle, soothing, high fidelity, studio quality, clean production`
-- Auto-appended negatives: `no vocals, instrumental`
-
 ### Lyria — Weighted Prompts (`core/lyria/prompts.py :: parse_weighted_prompts()`)
 
 Syntax: `"Label: weight, Label2: weight2"` e.g. `"Hang Drum: 1.5, Piano: 0.8, Ambient Pads: 1.0"`
@@ -437,7 +393,5 @@ Controls: BPM (40–140), Density (0.0–1.0), Brightness (0.0–1.0), Guidance 
 | `tests/unit/test_f5_params.py` | F5 parameter validation |
 | `tests/unit/test_f5_phases.py` | Multi-phase voice switching |
 | `tests/unit/test_f5_pacing.py` | WPM-based pacing, `fix_duration` |
-| `tests/unit/test_acestep_engine.py` | ACE-Step generation, MESA prompt enhancement |
-| `tests/unit/test_acestep_infinite.py` | Long-form generation: repaint chain hardening (seed/QA/seam), loop mode, routing |
 | `tests/integration/test_integration_modes.py` | Full pipeline (all mode combinations) |
 | `tests/integration/test_stress.py` | Load testing, memory management across sessions |

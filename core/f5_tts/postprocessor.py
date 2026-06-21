@@ -7,6 +7,8 @@ chain uses a 12 kHz lowpass to preserve Vocos's broader native bandwidth
 10 kHz air shelf for breathiness and intimacy.
 """
 
+import logging
+
 import numpy as np
 from scipy.signal import butter, sosfiltfilt
 from pedalboard import (
@@ -22,8 +24,194 @@ from pedalboard import (
     Pedalboard,
 )
 
+logger = logging.getLogger(__name__)
+
 SAMPLE_RATE = 24000
 CROSSFADE_SAMPLES = int(0.150 * SAMPLE_RATE)  # 150 ms overlap-add cosine crossfade
+
+
+# ---------------------------------------------------------------------------
+# Microprosody — phrase-final pitch declination + breathiness (research B4)
+# ---------------------------------------------------------------------------
+
+_PYWORLD_AVAILABLE = None
+
+
+def _check_pyworld() -> bool:
+    """Lazy-check pyworld availability. Warns once if missing."""
+    global _PYWORLD_AVAILABLE
+    if _PYWORLD_AVAILABLE is None:
+        try:
+            import pyworld  # noqa: F401
+            _PYWORLD_AVAILABLE = True
+        except ImportError:
+            _PYWORLD_AVAILABLE = False
+            logger.warning(
+                "pyworld not installed — F5 microprosody disabled. "
+                "Install with: pip install 'pyworld>=0.3.4'"
+            )
+    return _PYWORLD_AVAILABLE
+
+
+def _apply_f0_declination(
+    f0: np.ndarray,
+    frame_period_s: float,
+    tail_ms: float = 600.0,
+    decline_cents: float = 120.0,
+) -> np.ndarray:
+    """Glide the final ``tail_ms`` of the pitch contour downward.
+
+    Multiplies an exponential decay (1.0 → ``2^(-decline_cents/1200)``) onto the
+    last ``tail_ms`` of ``f0`` so each phrase ends on a downward pitch trajectory
+    — the natural breath-group declination that signals relaxation. Only voiced
+    frames (``f0 > 0``) are moved; the head of the contour is untouched.
+    """
+    out = f0.astype(np.float64).copy()
+    n = out.shape[0]
+    if n == 0 or decline_cents <= 0.0:
+        return out
+    tail_frames = int(round((tail_ms / 1000.0) / max(frame_period_s, 1e-6)))
+    tail_frames = max(1, min(tail_frames, n))
+    end_factor = 2.0 ** (-decline_cents / 1200.0)
+    ramp = np.exp(np.linspace(0.0, np.log(end_factor), tail_frames))
+    decay = np.ones(n)
+    decay[-tail_frames:] = ramp
+    voiced = out > 0
+    out[voiced] = out[voiced] * decay[voiced]
+    return out
+
+
+def _widen_pitch(f0: np.ndarray, scale: float = 1.15) -> np.ndarray:
+    """Widen the pitch range about its voiced mean for gentler rises and falls.
+
+    For voiced frames (``f0 > 0``), ``f0 = mean + (f0 - mean) * scale``; unvoiced
+    frames stay 0 and results are clamped positive. ``scale`` 1.0 is a no-op;
+    1.1–1.3 adds expressive contour without sounding warbly (research Issue 3,
+    subtopic 4).
+    """
+    out = f0.astype(np.float64).copy()
+    if scale == 1.0:
+        return out
+    voiced = out > 0
+    if not np.any(voiced):
+        return out
+    mean = float(out[voiced].mean())
+    out[voiced] = np.maximum(mean + (out[voiced] - mean) * scale, 1.0)
+    return out
+
+
+def _warp_formants(sp: np.ndarray, shift: float = 0.98) -> np.ndarray:
+    """Warp the spectral-envelope columns to move formants (``shift`` < 1 = warmer).
+
+    Mirrors the column-warp convention in
+    ``core/kokoro_tts/postprocessor.py::humanize_voice`` so F5 warmth matches the
+    accepted Kokoro behaviour. ``shift`` 1.0 is identity; 0.98 lowers formants ~2%
+    for a larger, warmer vocal-tract feel without changing pitch.
+    """
+    if shift == 1.0:
+        return sp
+    n_bins = sp.shape[1]
+    warped = np.zeros_like(sp)
+    for i in range(n_bins):
+        src = int(i * shift)
+        warped[:, i] = sp[:, src] if src < n_bins else sp[:, -1]
+    return warped
+
+
+def _apply_amplitude_taper(
+    audio: np.ndarray,
+    sr: int,
+    taper_ms: float = 300.0,
+    floor: float = 0.6,
+) -> np.ndarray:
+    """Cosine-ramp the final ``taper_ms`` of amplitude down to ``floor``.
+
+    Adds "trailing softness" at each phrase end (the gentle fade a human guide
+    gives the last word). ``taper_ms`` 0 or ``floor`` ≥ 1.0 is a no-op. Operates
+    on the last axis, so mono and stereo both work.
+    """
+    out = audio.astype(np.float32).copy()
+    if taper_ms <= 0.0 or floor >= 1.0:
+        return out
+    n = out.shape[-1]
+    k = min(int(taper_ms / 1000.0 * sr), n)
+    if k <= 0:
+        return out
+    t = np.linspace(0.0, np.pi, k, dtype=np.float64)
+    ramp = (floor + (1.0 - floor) * 0.5 * (1.0 + np.cos(t))).astype(np.float32)
+    out[..., -k:] = out[..., -k:] * ramp
+    return out
+
+
+def _match_peak(audio: np.ndarray, target_peak: float) -> np.ndarray:
+    """Scale ``audio`` so its absolute peak equals ``target_peak``.
+
+    WORLD analysis/resynthesis is not gain-preserving (it can add ~1–2 dB),
+    which would make the voice hotter than it came in and risk intermediate
+    clipping. Re-matching the input peak keeps the microprosody pass a pure
+    contour/timbre change, not a level change. Silence is returned unchanged.
+    """
+    out = audio.astype(np.float32)
+    peak = float(np.max(np.abs(out))) if out.size else 0.0
+    if peak > 1e-9:
+        out = out * (float(target_peak) / peak)
+    return out.astype(np.float32)
+
+
+def apply_microprosody(
+    audio: np.ndarray,
+    sr: int = SAMPLE_RATE,
+    decline_cents: float = 120.0,
+    tail_ms: float = 600.0,
+    ap_scale: float = 1.05,
+    pitch_scale: float = 1.15,
+    formant_shift: float = 0.98,
+    taper_ms: float = 300.0,
+    taper_floor: float = 0.6,
+) -> np.ndarray:
+    """Phrase-final pitch declination + breathiness via one pyworld pass.
+
+    Decomposes the chunk into pitch / spectral-envelope / aperiodicity, glides
+    the final ``tail_ms`` of the f0 contour downward by ``decline_cents`` (the
+    relaxation cue human meditation guides use), scales aperiodicity by
+    ``ap_scale`` for a breathier, more intimate tone, and resynthesizes.
+
+    Returns the input unchanged if pyworld is unavailable or the clip is too
+    short. WORLD resynthesis can colour Vocos's already-clean output, so this is
+    OFF by default and opted into per session via MOODSCAPE_F5_MICROPROSODY.
+    Research Issue 3.3 / 3.4.
+    """
+    if not _check_pyworld():
+        return audio
+    if len(audio) < int(sr * 0.5):  # skip clips < 500 ms
+        return audio
+
+    import pyworld as pw
+
+    audio_f64 = audio.astype(np.float64)
+    f0, t = pw.harvest(audio_f64, sr)
+    sp = pw.cheaptrick(audio_f64, f0, t, sr)
+    ap = pw.d4c(audio_f64, f0, t, sr)
+
+    frame_period_s = pw.default_frame_period / 1000.0
+    # Pitch: widen about the mean (expressive contour), then glide the tail down.
+    f0_mod = _widen_pitch(f0, pitch_scale)
+    f0_mod = _apply_f0_declination(f0_mod, frame_period_s, tail_ms, decline_cents)
+    # Timbre: lower formants slightly for warmth; lift aperiodicity for breath.
+    sp_mod = _warp_formants(sp, formant_shift)
+    ap_mod = np.clip(ap * float(ap_scale), 0.0, 1.0)
+
+    result = pw.synthesize(f0_mod, sp_mod, ap_mod, sr)
+    if len(result) > len(audio):
+        result = result[: len(audio)]
+    elif len(result) < len(audio):
+        result = np.pad(result, (0, len(audio) - len(result)))
+    # Re-match the input peak so the WORLD pass doesn't inject gain, then apply
+    # the phrase-final amplitude taper for trailing softness.
+    in_peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+    result = _match_peak(result.astype(np.float32), in_peak)
+    result = _apply_amplitude_taper(result, sr, taper_ms, taper_floor)
+    return result.astype(np.float32)
 
 
 def crossfade_chunks(chunks: list[np.ndarray]) -> np.ndarray:

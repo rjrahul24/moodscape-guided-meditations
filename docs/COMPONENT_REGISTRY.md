@@ -19,8 +19,7 @@ Authoritative map of every class and module in `core/`. Use this when you need t
 
 | Component | File | Class | Key Methods |
 |-----------|------|-------|-------------|
-| Pipeline | `core/pipeline.py` | `MeditationPipeline` | `generate()`, `_enhance_acestep_prompt()` |
-| ACE-Step | `core/acestep/engine.py` | `AceStepEngine` | `load_model()`, `generate()`, `_generate_infinite()`, `_enhance_prompt()` |
+| Pipeline | `core/pipeline.py` | `MeditationPipeline` | `generate()` |
 | Lyria | `core/lyria/engine.py` | `LyriaEngine` | `load_model()`, `generate()`, `_run_session()` |
 | Lyria prompts | `core/lyria/prompts.py` | — | `parse_weighted_prompts()` |
 | Uploaded instrumental | `core/upload_music/engine.py` | `UploadMusicEngine` | `load_model()`, `unload_model()`, `generate()` |

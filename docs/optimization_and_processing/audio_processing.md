@@ -1,7 +1,7 @@
 <!-- QUICK-REF ──────────────────────────────────────────────────────── -->
 **Files:** `core/pipeline.py` · `core/audio_processor.py` · `core/mixer.py`
 **Key functions:** `upsample_audio()` · `apply_breathing_duck()` · `normalize_loudness()` · `export_audio()`
-**Mix SR:** 48 kHz for all music engine paths (ACE-Step /  / Lyria / F5) — see `pipeline.py:213`
+**Mix SR:** 48 kHz for all music engine paths (Lyria / Background Music / F5) — see `pipeline.py`
 **Active ducking:** `apply_breathing_duck()` — called inside `mix()`; script/VAD-aware S-curve duck, applied fullband
 **Upsample method:** `librosa soxr_vhq` (highest accuracy, zero-crossing safe)
 **Export:** 20s chunk streaming via Pedalboard AudioFile; LUFS pre-computed as single scalar
@@ -20,14 +20,13 @@ Generative AI audio models operate at different native rates:
 |--------|-------------|-------|
 | Kokoro TTS | 24 kHz | CPU-only on Apple Silicon |
 | F5-TTS | 24 kHz | MPS (Apple Silicon GPU) |
-| ACE-Step 1.5 | **48 kHz** stereo | MLX backend |
 | Lyria RealTime | 48 kHz stereo | Cloud WebSocket API |
 
 **MoodScape pipeline resample strategy:**
 
 All audio is upsampled to a *mix sample rate* before Pedalboard FX and mixing. The mix rate depends on the music engine selected:
 
-- **All music engine paths** (ACE-Step, Lyria): mix at **48 kHz** — see `pipeline.py:213`.
+- **All music engine paths** (Lyria, Background Music): mix at **48 kHz** — see `pipeline.py`.
 - The mix sample rate is also the default export rate (configurable in the UI via "48 kHz Output" checkbox).
 - TTS audio (24 kHz) is upsampled to the mix rate using high-accuracy resampling for all engines:
   - All TTS engines: `librosa.resample(res_type="soxr_vhq")` — highest accuracy mode, minimises zero-crossing errors
@@ -70,31 +69,6 @@ HighShelfFilter(8000 Hz, -3.0 dB)         # Gentle HF rolloff
 Limiter(-1.0 dB)
 ```
 
-### ACE-Step 1.5 — Full Processing Pipeline
-
-Before the EQ chain, ACE-Step output receives two pre-processing stages (applied in `pipeline.py`):
-
-1. **Spectral repair** (`reduce_music_noise`) — stationary noise reduction via `noisereduce` (prop_decrease=0.65, n_fft=2048) targeting the 60 Hz diffusion noise floor and broadband VAE artifacts.
-2. **Tape saturation** (`apply_tape_saturation`) — asymmetric soft clipping (drive=0.3, bias=0.15) adding even-order harmonics for analog warmth.
-
-Then the Pedalboard EQ chain (`make_acestep_music_chain`):
-```python
-NoiseGate(-50 dB, 2:1, 1ms/100ms)              # Catches diffusion residual noise
-HighpassFilter(60 Hz)                           # Sub-bass removal
-LowShelfFilter(200 Hz, +2.5 dB)                # Fletcher-Munson bass compensation
-PeakFilter(3000 Hz, -4.5 dB, Q=1.5)           # Primary AI artifact zone (surgical)
-PeakFilter(4000 Hz, -2.5 dB, Q=0.8)           # Upper-mid diffusion artifacts
-PeakFilter(6000 Hz, -2.0 dB, Q=1.0)           # 5-7 kHz gap fill (AI harshness zone)
-HighShelfFilter(8000 Hz, +0.5 dB)              # Gentle air
-HighShelfFilter(10000 Hz, -2.5 dB)             # HF rolloff
-HighShelfFilter(12000 Hz, +1.0 dB)             # Fletcher-Munson treble recovery (headphone air)
-LowpassFilter(16000 Hz)                        # Ultrasonic diffusion noise cutoff
-Compressor(-20 dB, 2.5:1, 80ms/800ms)         # Glue compression
-Limiter(-0.5 dB)
-```
-
-After the EQ chain, an **organic noise floor** (`add_organic_noise_floor`) adds shaped pink noise at -58 dB with 8 kHz LPF to eliminate the clinical digital silence characteristic of AI-generated audio.
-
 ### Lyria RealTime (`make_lyria_music_chain`)
 ```python
 HighpassFilter(60 Hz)
@@ -120,9 +94,7 @@ The master chain is a lightweight safety net applied per-chunk in `export_audio(
 
 Crossfade technique varies by context:
 
-- **ACE-Step story mode** (`core/acestep/engine.py`): **STFT crossfade** in log-magnitude domain — interpolates magnitudes in dB (perceptually linear) for smoother transitions on sustained drones and singing bowls. Falls back to cosine² if energy anomaly detected (>3 dB deviation). 6-second crossfade.
-- **ACE-Step continuation** (`core/acestep/engine.py`): 2-second equal-power cosine² crossfade at each cover segment seam (operates on torch tensors).
-- ** segment stitching** (`core//engine.py`): 2-second macro crossfade at each segment seam, plus a **micro-crossfade** (64-sample triangular window at zero-crossing) to eliminate residual HF clicks.
+- **Lyria session stitching**: 3-second equal-power cosine crossfade between sessions (for durations > 570s).
 - **Music looping** (`mixer.py`): 2-second crossfade when music is looped to cover the full meditation duration.
 - **TTS chunk assembly**: 300ms cosine-squared crossfade for both Kokoro and F5-TTS engines.
 

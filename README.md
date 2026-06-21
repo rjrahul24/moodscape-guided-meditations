@@ -15,9 +15,8 @@ MoodScape is a locally-run AI pipeline that synthesizes professional guided medi
 **AI engines included:**
 - **Kokoro TTS** — fast, lightweight narration (82M params, preset voice blends, CPU)
 - **F5-TTS** — zero-shot voice cloning from any 10s reference recording (MPS)
-- **ACE-Step 1.5** — high-fidelity text-to-music with LM planning (MLX, 48 kHz native)
 - **Lyria RealTime** — Google DeepMind cloud music generation (48 kHz, no local GPU needed)
-- **Upload your own instrumental** — bring any audio file; it's looped/trimmed to fit and mixed through the same ducking + mastering path (no model, no GPU)
+- **Background Music** — curated instrumentals from `assets/backgrounds/`; looped/trimmed to fit and mixed through the same ducking + mastering path (no model, no GPU)
 
 For engine-specific deep dives, see the [docs/](#documentation-guide) directory.
 
@@ -36,9 +35,8 @@ Script text
                   core/f5_tts/      (MPS, 24 kHz mono float32)
     │             → TTS unloaded; memory freed before music loads
     ▼
-[Music Source]    core/acestep/engine.py        (ACE-Step 1.5, MLX, 48 kHz)
-                  core/lyria/engine.py          (Lyria RealTime, cloud, 48 kHz)
-                  core/upload_music/engine.py   (Uploaded instrumental — decode + loop/trim fit, 48 kHz)
+[Music Source]    core/lyria/engine.py          (Lyria RealTime, cloud, 48 kHz)
+                  core/upload_music/engine.py   (Background instrumental — decode + loop/trim fit, 48 kHz)
     │             → Music source unloaded; memory freed
     ▼
 [Stem Separation] core/stem_separator.py   (HT Demucs, optional; skipped for uploads)
@@ -64,9 +62,8 @@ WAV / MP3  (44.1 kHz or 48 kHz)
 | `core/pipeline.py` | End-to-end orchestration |
 | `core/kokoro_tts/` | Kokoro TTS — preprocessor, engine, postprocessor, voice manager |
 | `core/f5_tts/` | F5-TTS — preprocessor, engine, postprocessor, voice registry |
-| `core/acestep/` | ACE-Step 1.5 wrapper (MLX backend, 48 kHz) |
 | `core/lyria/` | Lyria RealTime API — engine, weighted prompt parser |
-| `core/upload_music/` | Uploaded-instrumental engine + length-fitting (loop/trim/crossfade) |
+| `core/upload_music/` | Background instrumental engine + length-fitting (loop/trim/crossfade) |
 | `core/stem_separator.py` | HT Demucs source separation (4-source model) |
 | `core/audio_processor.py` | Pedalboard FX chains (voice / music / master) |
 | `core/mixer.py` | Ducking, overlay, fades, normalization, export |
@@ -82,9 +79,8 @@ WAV / MP3  (44.1 kHz or 48 kHz)
 
 | Platform | Supported Engines | Notes |
 |----------|-------------------|-------|
-| Apple Silicon (M1/M2/M3, 36+ GB unified RAM) | All — Kokoro (CPU), F5-TTS (MPS), ACE-Step (MLX), Lyria (cloud) | Primary target; 36 GB recommended for ACE-Step + Demucs headroom |
-| Apple Silicon (16–24 GB) | Kokoro, F5-TTS, Lyria | ACE-Step may OOM at peak; use Lyria for music if so |
-| Linux + CUDA GPU | Kokoro, F5-TTS, Lyria | ACE-Step MLX path is Apple-only; Linux CUDA fork exists upstream |
+| Apple Silicon (M1/M2/M3, 16+ GB unified RAM) | All — Kokoro (CPU), F5-TTS (MPS), Lyria (cloud), Background Music | Primary target |
+| Linux + CUDA GPU | Kokoro, F5-TTS, Lyria, Background Music | MLX features (DeepFilter) are Apple-only |
 
 ### Python & System Dependency
 
@@ -101,10 +97,6 @@ sudo apt-get install espeak-ng
 # Fedora / RHEL
 sudo dnf install espeak-ng
 ```
-
-### ACE-Step Model Weights
-
-ACE-Step requires local model weights in `models/acestep/checkpoints/`. The weights are not included in this repository. See [`docs/model_implementation_guides/ace-step.md`](docs/model_implementation_guides/ace-step.md) for download instructions. Without the weights, selecting ACE-Step in the UI will fail silently.
 
 ### Environment Variables
 
@@ -137,10 +129,6 @@ echo "HF_TOKEN=your_token_here" > .env
 pip install -r requirements.txt
 ```
 
-> **Note:** `requirements.txt` includes `ace-step` installed directly from GitHub (`git+https://...`), which takes longer than a standard pip install. This is expected.
-
-> **Note:** `transformers` is pinned to `>=4.51.0,<4.58.0` for ACE-Step compatibility. Do not upgrade past 4.57.x.
-
 ---
 
 ## Usage — Web UI
@@ -156,9 +144,9 @@ python app.py
 2. **Write your meditation script** in the left panel — use [pause tags](#script-format) for timed silences
 3. **Choose TTS Engine** — `Kokoro` for preset voices, `F5-TTS` for zero-shot voice cloning
 4. **Select a Voice** — Kokoro preset, or F5-TTS voice from `assets/speakers/`
-5. **Choose Music Engine** — `ACE-Step 1.5`, `Lyria RealTime`, or `Upload File` (use your own instrumental)
-6. **Write a Music Prompt** — describe the background music style (see [Music Engines](#music-engines) for prompt tips per engine); ignored when uploading a file
-7. **Configure ACE-Step / Lyria settings**, or **upload an instrumental** if `Upload File` is selected (BPM, key, density, quality mode)
+5. **Choose Music Engine** — `Lyria RealTime` or `Background Music` (curated instrumentals)
+6. **Write a Music Prompt** — describe the background music style (see [Music Engines](#music-engines) for prompt tips); ignored when using Background Music
+7. **Configure Lyria settings** (BPM, density, brightness), or **select a background track** from `assets/backgrounds/`
 8. **Expand Audio Settings** to tune ducking, reverb, fade durations, reverb IR, and stem export
 9. Click **Generate Meditation** and watch the progress bar
 10. **Preview** in the browser player, then **download** the file
@@ -191,7 +179,7 @@ python scripts/generate.py my_script.txt \
 | `--stems` | off | Save separate `voice.wav` and `music.wav` alongside the mix |
 | `--upsample` | off | Export at 48 kHz instead of 44.1 kHz |
 
-> **Note:** The CLI currently uses Kokoro TTS and ACE-Step 1.5 (defaults). F5-TTS and Lyria are available via the web UI.
+> **Note:** The CLI currently defaults to Kokoro TTS and Background Music. F5-TTS and Lyria are available via the web UI.
 
 ---
 
@@ -290,28 +278,6 @@ See [`docs/model_implementation_guides/f5_tts.md`](docs/model_implementation_gui
 
 ## Music Engines
 
-### ACE-Step 1.5
-
-| Property | Value |
-|----------|-------|
-| Architecture | LM planner (Qwen3 4B) + Diffusion Transformer |
-| Backend | MLX (Apple Silicon Metal native) |
-| Native sample rate | 48 kHz stereo |
-| Long-form strategy | Three-phase pipeline: genesis → continuation → boundary smoothing |
-| Quality modes | Draft (Turbo / 8-step) vs Studio (SFT / 50-step) |
-| BPM control | 40–120 (default 50) |
-| Key control | Auto or specific key |
-
-> **First-run JIT compilation**: ACE-Step uses `compile_model=True` to prevent generation timeouts. The first generation after app startup takes ~135 extra seconds for MLX JIT compilation. Subsequent runs are ~4× faster. This is expected — do not cancel.
-
-> **Local model weights required**: Weights must be present at `models/acestep/checkpoints/` before selecting this engine. See [`docs/model_implementation_guides/ace-step.md`](docs/model_implementation_guides/ace-step.md).
-
-Prompts use the **MESA framework** (Mood + Elements + Structure + Application). Structural section tags (`[Intro]`, `[Verse]`, `[Bridge]`, `[Outro]`) are auto-inserted based on duration.
-
-See [`docs/prompting_guides/ace_step_instructions.md`](docs/prompting_guides/ace_step_instructions.md) for the MESA framework and prompt examples.
-
----
-
 ### Lyria RealTime
 
 | Property | Value |
@@ -374,9 +340,6 @@ broadcast-grade mix. The music prompt and BPM/key controls are ignored. Implemen
 |---------|-------|---------|-------------|
 | Music Duration | 1–30 min | 3 min | Used for Instrumental Only mode |
 | Music Ducking | -30 to -6 dB | -16 dB | How far music drops under speech (auto-calibrated per session unless you move the slider; `MOODSCAPE_ADAPTIVE_BED=0` disables) |
-| ACE-Step Quality | Draft (Turbo/8-step) / Studio (SFT/50-step) | Studio | Speed vs. fidelity |
-| ACE-Step BPM | 40–120 | 50 | Target tempo |
-| ACE-Step Key | Auto + all keys | Auto | Target musical key |
 | Lyria BPM | 40–140 | 70 | Target tempo |
 | Lyria Density | 0.0–1.0 | 0.2 | Textural density (sparse → lush) |
 | Lyria Brightness | 0.0–1.0 | 0.3 | Harmonic brightness (warm → bright) |
@@ -387,7 +350,7 @@ broadcast-grade mix. The music prompt and BPM/key controls are ignored. Implemen
 |---------|---------|---------|-------------|
 | Fade In | 0–10 sec | 3 sec | Opening fade duration |
 | Fade Out | 0–10 sec | 5 sec | Closing fade duration |
-| Upsample to 48 kHz | checkbox | off | Export at 48 kHz (auto-enabled for ACE-Step / Lyria) |
+| Upsample to 48 kHz | checkbox | off | Export at 48 kHz (auto-enabled for Lyria) |
 | Export Stems | checkbox | off | Save `voice.wav` + `music.wav` alongside the mix |
 | Stem Separation | checkbox | on | Run HT Demucs to strip drums/vocals from generated music |
 | Seed | integer | 0 (auto) | Deterministic seed — same seed + same inputs = same output |
@@ -422,13 +385,11 @@ docs/
 ├── model_implementation_guides/
 │   ├── kokoro_tts.md           ← Kokoro internals, voice blending, preprocessing, FX chain
 │   ├── f5_tts.md               ← F5-TTS zero-shot cloning, multi-phase voices, chained reference
-│   ├── ace-step.md             ← ACE-Step architecture, MLX backend, MESA framework, weight download
 │   ├── lyria.md                ← Lyria RealTime API, weighted prompts, session limits, SynthID
 │   └── pedalboard.md           ← Pedalboard FX chain design, all plugin parameters
 ├── prompting_guides/
 │   ├── vocal_kokoro_instructions.md   ← How to write scripts for Kokoro TTS
 │   ├── vocal_f5_instructions.md       ← How to write scripts for F5-TTS + phase guide
-│   └── ace_step_instructions.md       ← ACE-Step MESA framework + story mode prompting
 ├── optimization_and_processing/
 │   ├── audio_processing.md            ← Ducking, FX chains, sample rate strategy, stereo-to-mono
 │   └── post-processing-pipeline.md    ← Export, LUFS, master chain, streaming export
@@ -455,7 +416,7 @@ docs/
 .venv/bin/python -m pytest tests/integration/ -v
 ```
 
-Unit test coverage: mixer, audio_processor, qa_monitor, stem_separator, TTS engines (Kokoro + F5), script preprocessor, F5 pacing/chained-reference/params, ACE-Step long-form. Integration tests cover full pipeline mode combinations and stress scenarios.
+Unit test coverage: mixer, audio_processor, qa_monitor, stem_separator, TTS engines (Kokoro + F5), script preprocessor, F5 pacing/chained-reference/params. Integration tests cover full pipeline mode combinations and stress scenarios.
 
 ---
 
@@ -467,16 +428,12 @@ Unit test coverage: mixer, audio_processor, qa_monitor, stem_separator, TTS engi
 |---------|----------|
 | `ImportError: No module named 'kokoro'` | `pip install kokoro>=0.9.4` — package name is `kokoro`, not `kokoro-tts` |
 | `espeak-ng not found` | `brew install espeak-ng` (macOS) or `sudo apt install espeak-ng` (Linux) |
-| `transformers` version conflict | `pip install "transformers>=4.51.0,<4.58.0"` — ACE-Step is incompatible with ≥4.58.0 |
-| `ace-step` build fails | Requires `git` in PATH; the `git+https://...` entry in `requirements.txt` clones from GitHub |
 
 ### Generation Errors
 
 | Problem | Solution |
 |---------|----------|
 | Lyria error: `GOOGLE_API_KEY not set` | Add `GOOGLE_API_KEY=...` to `.env` and restart the app |
-| ACE-Step generation times out | First run after app start takes ~135s for JIT compilation — wait it out. Subsequent runs are fast. |
-| ACE-Step: `FileNotFoundError` for checkpoints | Model weights missing from `models/acestep/checkpoints/` — see `docs/model_implementation_guides/ace-step.md` |
 | F5-TTS: no voices in dropdown | Add `.wav` to `assets/speakers/` and a matching `.txt` to `assets/speakers/transcripts/` |
 | Output is completely silent | Check Generation Mode — "Vocals Only" produces no music; "Instrumental Only" produces no voice |
 
@@ -495,7 +452,6 @@ Unit test coverage: mixer, audio_processor, qa_monitor, stem_separator, TTS engi
 | Music contains drums or percussion | Enable **Stem Separation** — HT Demucs will strip drums from the generated music |
 | Music is too quiet under narration | Increase Ducking value (e.g., from -20 dB to -12 dB) — less negative = louder music during speech |
 | Voice reverb is too heavy | Reduce Voice Reverb slider; switch from `stone_chapel` to `warm_studio` IR |
-| ACE-Step music sounds harsh or thin | Use **Studio (SFT/50-step)** mode instead of Draft — 50 diffusion steps yields significantly better quality |
 | Narration sounds robotic or rushed | Reduce Speaking Speed to 0.80–0.85; use a vocal blend preset instead of a raw voice ID |
 
 ---
@@ -517,13 +473,12 @@ This allows the 36 GB M1 Max to run all engines comfortably at peak usage of ~12
 |---------|------|
 | [Kokoro](https://github.com/hexgrad/kokoro) | TTS narration (82M params, StyleTTS2, CPU) |
 | [F5-TTS](https://github.com/SWivid/F5-TTS) | Zero-shot voice cloning (Vocos vocoder, MPS) |
-| [ACE-Step 1.5](https://github.com/ace-step/ACE-Step) | Music generation (LM + DiT, MLX, 48 kHz) |
 | [Google Lyria RealTime](https://deepmind.google/technologies/lyria/) | Cloud music generation (48 kHz, no local GPU) |
 | [HT Demucs](https://github.com/facebookresearch/demucs) | AI source separation (4-source model) |
 | [Pedalboard](https://github.com/spotify/pedalboard) | Audio FX — EQ, compression, convolution reverb, limiting |
 | [Gradio](https://gradio.app) | Web UI |
 | [pyloudnorm](https://github.com/csteinmetz1/pyloudnorm) | LUFS normalization (ITU-R BS.1770-4) |
-| [MLX / mlx-lm](https://github.com/ml-explore/mlx) | Apple Silicon native ML acceleration |
+| [MLX](https://github.com/ml-explore/mlx) | Apple Silicon native ML acceleration |
 | [silero-vad](https://github.com/snakers4/silero-vad) | Voice activity detection for F5-TTS chunking |
 | [torchaudio](https://pytorch.org/audio) | Audio resampling |
 | [soundfile](https://python-soundfile.readthedocs.io) | WAV I/O |

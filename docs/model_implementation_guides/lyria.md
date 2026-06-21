@@ -17,7 +17,7 @@
 
 ## What Is Lyria RealTime?
 
-[Lyria RealTime](https://deepmind.google/models/lyria/lyria-realtime/) (`models/lyria-realtime-exp`) is Google DeepMind's experimental streaming music generation model, accessed via the Gemini API. Unlike  and ACE-Step 1.5, which run fully locally, Lyria:
+[Lyria RealTime](https://deepmind.google/models/lyria/lyria-realtime/) (`models/lyria-realtime-exp`) is Google DeepMind's experimental streaming music generation model, accessed via the Gemini API. Lyria:
 
 - Runs as a **cloud API** (no local GPU/NPU time for music generation)
 - Streams **48 kHz stereo 16-bit PCM** over a persistent WebSocket
@@ -39,7 +39,7 @@ core/lyria/
 └── prompts.py        # WeightedPrompt building + meditation presets
 ```
 
-The engine exposes the same public interface as `Engine` and `AceStepEngine`:
+The engine exposes the standard music engine interface:
 
 ```python
 engine = LyriaEngine()
@@ -87,10 +87,7 @@ Mix at 48 kHz                                  [core/mixer.py: mix()]
 
 When Lyria is selected, the pipeline sets `mix_sr = 48000` and all downstream operations (voice FX, music FX, ducking, export) use that rate. No resampling of music occurs — it is already at `mix_sr`.
 
-For context, the other engines' paths are:
-- ****: 44.1 kHz (engine) → 44.1 kHz (pipeline)
-- **ACE-Step 1.5**: 48 kHz → 24 kHz (engine) → 44.1 kHz (pipeline)
-- **Lyria**: 48 kHz (API) → 48 kHz (engine) → 48 kHz (pipeline, TTS upsampled to match)
+**Lyria** outputs 48 kHz natively from the API, matching the pipeline mix rate (TTS is upsampled to match).
 
 ---
 
@@ -178,7 +175,7 @@ Tags already present in the user's input are skipped to avoid diluting the atten
 | 5 | Compressor | 2:1, 80ms attack, 500ms release | Slow glue — no pumping on sustained pads |
 | 6 | Limiter | −0.5 dBFS | Extra headroom before master chain |
 
-**Pre-mix LUFS target**: −22 LUFS (slightly quieter than 's −20, slightly louder than ACE-Step's −24).
+**Pre-mix LUFS target**: −16 LUFS (pipeline normalizes all music sources to this level).
 
 ---
 
