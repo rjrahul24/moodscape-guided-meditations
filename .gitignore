@@ -37,3 +37,6 @@ ckpt-mlx/
 models/
 checkpoints/
 docs/temp/
+
+# Subagent-driven-development scratch (ledger, briefs, review packages)
+.superpowers/
