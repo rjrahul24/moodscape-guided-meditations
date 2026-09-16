@@ -166,13 +166,34 @@ def check_format(script: str) -> list[Violation]:
 
 MAX_BREATH_HOLD_SEC = 7
 
+_NUMBER_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "fifteen": 15,
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+}
+
 _SAFETY_RULES: list[tuple[str, re.Pattern, str]] = [
     (
         "CLINICAL_CLAIM",
         re.compile(
-            r"\b(cure[sd]?|heal[s]?|treat[s]?|diagnos\w+)\b[^.?!]{0,40}"
-            r"\b(anxiety|depression|trauma|ptsd|insomnia|illness|condition)\b"
-            r"|\breplaces?\s+(therapy|medication|treatment)\b",
+            r"\b(?:cur\w+|heal\w+|treat\w+|diagnos\w+)\s+(?:your|the|my|his|her|their)\b\s+(?:\w+\s+){0,2}?\b(?:anxiety|depression|trauma|ptsd|insomnia|illness|condition|stress|grief)\b"
+            r"|\b(?:cur\w+|heal\w+|treat\w+)\s+\b(?:anxiety|depression|trauma|ptsd|insomnia|illness|condition|stress|grief)\b"
+            r"|\breplaces?\s+(?:therapy|medication|treatment)\b",
             re.IGNORECASE,
         ),
         "Clinical claim. This is not treatment and must not present itself as "
@@ -181,8 +202,8 @@ _SAFETY_RULES: list[tuple[str, re.Pattern, str]] = [
     (
         "OUTCOME_PROMISE",
         re.compile(
-            r"\byou\s+will\s+(be|feel)\s+(completely|totally|entirely|fully)\b"
-            r"|\bthis\s+will\s+(eliminate|remove|erase|banish)\b"
+            r"\byou\s+will\s+(?:be|feel)\s+(?:completely|totally|entirely|fully)\s+(?!present\b|here\b|aware\b|awake\b|alive\b|grounded\b)"
+            r"|\bthis\s+will\s+(?:eliminate|remove|erase|banish)\b"
             r"|\bguarantee[sd]?\b",
             re.IGNORECASE,
         ),
@@ -192,9 +213,9 @@ _SAFETY_RULES: list[tuple[str, re.Pattern, str]] = [
     (
         "INVALIDATING",
         re.compile(
-            r"\b(don'?t|do not|stop)\s+feel\w*\b"
+            r"\b(?:don'?t|do not|stop)\b(?:\s+\w+){0,1}\s+feel\w*\b"
             r"|\bthere'?s\s+nothing\s+wrong\s+with\s+you\b"
-            r"|\byou\s+shouldn'?t\s+(feel|be)\b",
+            r"|\byou\s+shouldn'?t\s+(?:feel|be)\b",
             re.IGNORECASE,
         ),
         "Invalidating instruction. Telling a distressed listener not to feel "
@@ -206,7 +227,8 @@ _SAFETY_RULES: list[tuple[str, re.Pattern, str]] = [
             r"\bleave\s+your\s+body\b"
             r"|\bfloat\s+away\s+from\s+your\s*self\b"
             r"|\byou\s+are\s+not\s+your\s+body\b"
-            r"|\bdetach\s+from\s+your\s+body\b",
+            r"|\bdetach\s+from\s+your\s+body\b"
+            r"|\b(?:drift|float|rise|step)\s+(?:up\s+)?(?:out(?:side)?(?:\s+of)?|away\s+from)\s+your\s+body\b",
             re.IGNORECASE,
         ),
         "Dissociation-adjacent imagery, which is contraindicated for trauma "
@@ -215,7 +237,8 @@ _SAFETY_RULES: list[tuple[str, re.Pattern, str]] = [
 ]
 
 _BREATH_HOLD = re.compile(
-    r"\bhold\s+(?:your\s+)?breath\b[^.?!]{0,30}?(\d+)", re.IGNORECASE
+    r"\bhold\s+(?:your\s+)?breath\b[^.!?]*?(?:(\d+)|(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty))\s+seconds?",
+    re.IGNORECASE
 )
 
 
@@ -246,7 +269,17 @@ def check_safety(script: str) -> list[Violation]:
             )
 
     for match in _BREATH_HOLD.finditer(prose):
-        seconds = int(match.group(1))
+        # Group 1 is digit number, Group 2 is word number
+        if match.group(1):
+            seconds = int(match.group(1))
+        elif match.group(2):
+            word_num = match.group(2).lower()
+            seconds = _NUMBER_WORDS.get(word_num)
+            if seconds is None:
+                continue
+        else:
+            continue
+
         if seconds > MAX_BREATH_HOLD_SEC:
             violations.append(
                 Violation(

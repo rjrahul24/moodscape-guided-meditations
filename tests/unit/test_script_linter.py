@@ -139,6 +139,80 @@ class TestSafetyChecks(unittest.TestCase):
         violations = check_safety("This Will Cure Your Depression.")
         self.assertIn("CLINICAL_CLAIM", codes(violations))
 
+    # FIX 1: CLINICAL_CLAIM verb inflections and false positive guards
+    def test_clinical_claim_catches_healing_gerund(self):
+        violations = check_safety(
+            "This recording is designed for healing your anxiety over time."
+        )
+        self.assertIn("CLINICAL_CLAIM", codes(violations))
+
+    def test_clinical_claim_catches_treated_past_tense(self):
+        violations = check_safety("This has treated my depression for years.")
+        self.assertIn("CLINICAL_CLAIM", codes(violations))
+
+    def test_clinical_claim_catches_curing_gerund(self):
+        violations = check_safety(
+            "By curing your anxiety, this meditation helps you sleep."
+        )
+        self.assertIn("CLINICAL_CLAIM", codes(violations))
+
+    def test_clinical_claim_guard_treat_yourself_kindly(self):
+        # "Treat yourself" is warm guidance, not a clinical claim
+        violations = check_safety(
+            "Treat yourself kindly, especially when anxiety creeps in."
+        )
+        self.assertEqual(violations, [])
+
+    # FIX 2: OUTCOME_PROMISE guard for grounding language
+    def test_outcome_promise_guard_fully_present(self):
+        # "Fully present" is grounding language, not an outcome guarantee
+        violations = check_safety(
+            "Notice how you will feel fully present in your body."
+        )
+        self.assertEqual(violations, [])
+
+    # FIX 3: INVALIDATING with intervening adverb
+    def test_invalidating_catches_dont_ever_feel(self):
+        violations = check_safety("Don't ever feel ashamed of needing rest.")
+        self.assertIn("INVALIDATING", codes(violations))
+
+    def test_invalidating_guard_dont_rush_and_feel(self):
+        # "Don't rush and feel" is benign guidance, not invalidation
+        violations = check_safety(
+            "Don't rush and feel the floor beneath you."
+        )
+        self.assertEqual(violations, [])
+
+    # FIX 4: BREATH_HOLD with spelled-out numbers
+    def test_breath_hold_catches_spelled_out_twenty(self):
+        violations = check_safety("Hold your breath for twenty seconds.")
+        self.assertIn("BREATH_HOLD", codes(violations))
+
+    def test_breath_hold_allows_spelled_out_three(self):
+        violations = check_safety("Hold your breath for three seconds.")
+        self.assertEqual(violations, [])
+
+    # FIX 5: BREATH_HOLD with qualifying clause
+    def test_breath_hold_catches_with_qualifying_clause(self):
+        violations = check_safety(
+            "Hold your breath gently, without straining, for about 20 seconds."
+        )
+        self.assertIn("BREATH_HOLD", codes(violations))
+
+    # FIX 6: DISSOCIATION drift imagery
+    def test_dissociation_catches_drift_outside_body(self):
+        violations = check_safety(
+            "Let yourself drift outside your body, watching from above."
+        )
+        self.assertIn("DISSOCIATION", codes(violations))
+
+    def test_dissociation_guard_tension_floats_away(self):
+        # "Tension floats away" is benign, "tension" is not "body"
+        violations = check_safety(
+            "Let the tension float away with each exhale."
+        )
+        self.assertEqual(violations, [])
+
 
 class TestCombinedCheck(unittest.TestCase):
     def test_duration_below_window_is_advisory(self):
