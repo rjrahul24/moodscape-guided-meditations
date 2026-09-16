@@ -156,3 +156,157 @@ def check_format(script: str) -> list[Violation]:
             )
 
     return violations
+
+
+# --- Safety hard-blocks -------------------------------------------------
+#
+# These are the mental-health guardrails. Each entry is
+# (code, compiled pattern, message). Patterns are matched case-insensitively
+# against the tag-stripped prose.
+
+MAX_BREATH_HOLD_SEC = 7
+
+_SAFETY_RULES: list[tuple[str, re.Pattern, str]] = [
+    (
+        "CLINICAL_CLAIM",
+        re.compile(
+            r"\b(cure[sd]?|heal[s]?|treat[s]?|diagnos\w+)\b[^.?!]{0,40}"
+            r"\b(anxiety|depression|trauma|ptsd|insomnia|illness|condition)\b"
+            r"|\breplaces?\s+(therapy|medication|treatment)\b",
+            re.IGNORECASE,
+        ),
+        "Clinical claim. This is not treatment and must not present itself as "
+        "therapy or a cure. Describe the practice, never a medical outcome.",
+    ),
+    (
+        "OUTCOME_PROMISE",
+        re.compile(
+            r"\byou\s+will\s+(be|feel)\s+(completely|totally|entirely|fully)\b"
+            r"|\bthis\s+will\s+(eliminate|remove|erase|banish)\b"
+            r"|\bguarantee[sd]?\b",
+            re.IGNORECASE,
+        ),
+        "Promises an outcome. A listener who does not feel that way will read "
+        "it as their own failure. Use invitational phrasing instead.",
+    ),
+    (
+        "INVALIDATING",
+        re.compile(
+            r"\b(don'?t|do not|stop)\s+feel\w*\b"
+            r"|\bthere'?s\s+nothing\s+wrong\s+with\s+you\b"
+            r"|\byou\s+shouldn'?t\s+(feel|be)\b",
+            re.IGNORECASE,
+        ),
+        "Invalidating instruction. Telling a distressed listener not to feel "
+        "something dismisses their experience. Acknowledge, do not override.",
+    ),
+    (
+        "DISSOCIATION",
+        re.compile(
+            r"\bleave\s+your\s+body\b"
+            r"|\bfloat\s+away\s+from\s+your\s*self\b"
+            r"|\byou\s+are\s+not\s+your\s+body\b"
+            r"|\bdetach\s+from\s+your\s+body\b",
+            re.IGNORECASE,
+        ),
+        "Dissociation-adjacent imagery, which is contraindicated for trauma "
+        "survivors. Keep the listener grounded in the body and the room.",
+    ),
+]
+
+_BREATH_HOLD = re.compile(
+    r"\bhold\s+(?:your\s+)?breath\b[^.?!]{0,30}?(\d+)", re.IGNORECASE
+)
+
+
+def _normalize_apostrophes(text: str) -> str:
+    """Fold typographic apostrophes to ASCII before pattern matching.
+
+    LLMs routinely emit U+2019 (') rather than "'". Without this, "Don't
+    feel anxious" slips past the INVALIDATING pattern — a safety hard-block
+    silently defeated by a curly quote.
+    """
+    return text.replace("'", "'").replace("ʼ", "'")
+
+
+def check_safety(script: str) -> list[Violation]:
+    """Apply mental-health content hard-blocks. All findings are FATAL."""
+    prose = _normalize_apostrophes(_strip_tags(script))
+    violations: list[Violation] = []
+
+    for code, pattern, message in _SAFETY_RULES:
+        for match in pattern.finditer(prose):
+            violations.append(
+                Violation(
+                    code=code,
+                    severity=FATAL,
+                    message=f"{message} Found: {match.group(0)!r}.",
+                    span=(match.start(), match.end()),
+                )
+            )
+
+    for match in _BREATH_HOLD.finditer(prose):
+        seconds = int(match.group(1))
+        if seconds > MAX_BREATH_HOLD_SEC:
+            violations.append(
+                Violation(
+                    code="BREATH_HOLD",
+                    severity=FATAL,
+                    message=(
+                        f"Instructs a {seconds}-second breath hold. Holds over "
+                        f"{MAX_BREATH_HOLD_SEC}s are a real risk for listeners "
+                        "with panic disorder or asthma. Shorten it or remove it."
+                    ),
+                    span=(match.start(), match.end()),
+                )
+            )
+
+    return violations
+
+
+def check(
+    script: str,
+    *,
+    estimated_sec: float | None = None,
+    target_min_sec: float = 300.0,
+    target_max_sec: float = 420.0,
+) -> list[Violation]:
+    """Run every check family. Duration is skipped when no estimate is given."""
+    violations = check_format(script) + check_safety(script)
+
+    if estimated_sec is not None and not (
+        target_min_sec <= estimated_sec <= target_max_sec
+    ):
+        violations.append(
+            Violation(
+                code="DURATION_OUT_OF_WINDOW",
+                severity=ADVISORY,
+                message=(
+                    f"Estimated runtime is {estimated_sec:.0f}s, outside the "
+                    f"target {target_min_sec:.0f}-{target_max_sec:.0f}s. "
+                    "Add or remove content and pauses to land in the window."
+                ),
+            )
+        )
+
+    return violations
+
+
+def fatal_violations(violations: list[Violation]) -> list[Violation]:
+    """Return only the violations that must block a render."""
+    return [v for v in violations if v.severity == FATAL]
+
+
+def format_for_repair(violations: list[Violation]) -> str:
+    """Render violations as a numbered instruction block for the judge.
+
+    Targeted repair beats a vague "try again" — the judge is told exactly what
+    is wrong and why.
+    """
+    if not violations:
+        return ""
+    lines = [
+        f"{i}. [{v.code}/{v.severity}] {v.message}"
+        for i, v in enumerate(violations, start=1)
+    ]
+    return "\n".join(lines)

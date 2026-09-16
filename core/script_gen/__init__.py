@@ -8,12 +8,20 @@ from core.script_gen.linter import (
     ADVISORY,
     FATAL,
     Violation,
+    check,
     check_format,
+    check_safety,
+    fatal_violations,
+    format_for_repair,
 )
 
 __all__ = [
     "ADVISORY",
     "FATAL",
     "Violation",
+    "check",
     "check_format",
+    "check_safety",
+    "fatal_violations",
+    "format_for_repair",
 ]
