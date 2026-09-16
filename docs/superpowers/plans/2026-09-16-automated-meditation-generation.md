@@ -390,6 +390,12 @@ class TestSafetyChecks(unittest.TestCase):
         violations = check_safety("Don't feel anxious about it.")
         self.assertIn("INVALIDATING", codes(violations))
 
+    def test_curly_apostrophe_does_not_evade_the_block(self):
+        # LLMs emit U+2019 constantly; a safety block must not be defeated
+        # by a typographic quote.
+        violations = check_safety("Don’t feel anxious about it.")
+        self.assertIn("INVALIDATING", codes(violations))
+
     def test_extended_breath_hold_is_fatal(self):
         violations = check_safety("Hold your breath for 20 seconds.")
         self.assertIn("BREATH_HOLD", codes(violations))
@@ -519,9 +525,19 @@ _BREATH_HOLD = re.compile(
 )
 
 
+def _normalize_apostrophes(text: str) -> str:
+    """Fold typographic apostrophes to ASCII before pattern matching.
+
+    LLMs routinely emit U+2019 (') rather than "'". Without this, "Don't
+    feel anxious" slips past the INVALIDATING pattern — a safety hard-block
+    silently defeated by a curly quote.
+    """
+    return text.replace("’", "'").replace("ʼ", "'")
+
+
 def check_safety(script: str) -> list[Violation]:
     """Apply mental-health content hard-blocks. All findings are FATAL."""
-    prose = _strip_tags(script)
+    prose = _normalize_apostrophes(_strip_tags(script))
     violations: list[Violation] = []
 
     for code, pattern, message in _SAFETY_RULES:
@@ -681,11 +697,19 @@ from core.script_gen.duration import (
 
 
 class TestDurationEstimate(unittest.TestCase):
-    def test_pure_pause_script_sums_exactly(self):
-        # Two explicit pauses, no words at all.
-        script = "[pause:10s]\n\n[pause:20s]"
+    def test_explicit_pauses_are_summed(self):
+        # Speech between the pauses is required: the preprocessor MERGES
+        # adjacent pauses and keeps only the longest, so "[pause:10s]
+        # [pause:20s]" back-to-back yields 20s, not 30s.
+        script = "One.\n\n[pause:10s]\n\nTwo.\n\n[pause:20s]\n\nThree."
         estimate = estimate_duration_sec(script, engine="f5")
         self.assertGreaterEqual(estimate, 30.0)
+
+    def test_adjacent_pauses_merge_to_the_longest(self):
+        # Guards the merge behaviour itself, so the estimator can never drift
+        # into naive addition.
+        merged = estimate_duration_sec("[pause:10s]\n\n[pause:20s]", engine="f5")
+        self.assertLess(merged, 30.0)
 
     def test_speech_scales_with_word_count(self):
         short = estimate_duration_sec("one two three four five.", engine="f5")
@@ -707,11 +731,14 @@ class TestDurationEstimate(unittest.TestCase):
         self.assertAlmostEqual(estimate, 60.0, delta=1.0)
 
     def test_inter_sentence_gaps_are_counted(self):
-        one = estimate_duration_sec("word word word word.", engine="f5", wpm=100.0)
+        # Both are exactly 8 words; only the sentence count differs, so the
+        # delta is purely the three inter-sentence gaps (3 x 0.8s).
+        one = estimate_duration_sec(
+            "word word word word word word word word.", engine="f5", wpm=100.0
+        )
         four = estimate_duration_sec(
             "word word. word word. word word. word word.", engine="f5", wpm=100.0
         )
-        # Same word count, but three extra inter-sentence gaps.
         self.assertGreater(four, one + 1.5)
 
     def test_both_engines_supported(self):
