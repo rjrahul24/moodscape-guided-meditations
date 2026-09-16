@@ -163,6 +163,47 @@ class TestSafetyChecks(unittest.TestCase):
         )
         self.assertEqual(violations, [])
 
+    # FIX A: Regression guards for bare verbs (Critical)
+    def test_clinical_claim_catches_bare_treat_verb(self):
+        # Regression: "treat" without inflection must be caught
+        violations = check_safety("This will treat your anxiety.")
+        self.assertIn("CLINICAL_CLAIM", codes(violations))
+
+    def test_clinical_claim_catches_bare_heal_verb(self):
+        # Regression: "heal" without inflection must be caught
+        violations = check_safety("This will heal your anxiety.")
+        self.assertIn("CLINICAL_CLAIM", codes(violations))
+
+    def test_clinical_claim_catches_treat_without_auxiliary(self):
+        # Regression: "treats" (3rd person) must be caught
+        violations = check_safety("This treats anxiety.")
+        self.assertIn("CLINICAL_CLAIM", codes(violations))
+
+    # FIX B: Revert grief/stress/the additions
+    def test_clinical_claim_guard_grief_observation(self):
+        # Grief is a content type; don't block observations about it
+        violations = check_safety(
+            "Healing the deep grief that you carry is part of being human."
+        )
+        self.assertEqual(violations, [])
+
+    # FIX D: Narrow dissociation verbs
+    def test_dissociation_guard_rise_tension_release(self):
+        # "Rise" in tension-release context is benign, not dissociation
+        violations = check_safety(
+            "Let the warmth rise up out of your body as you relax."
+        )
+        self.assertEqual(violations, [])
+
+    # FIX C: Restore bounded breath-hold budget
+    def test_breath_hold_guard_unrelated_number_in_runon(self):
+        # Unbounded pattern would match "20" from unrelated context
+        violations = check_safety(
+            "Hold your breath, and think about how, at 7 years old, you used to "
+            "play in the yard until sunset, then count 20 seconds of pure stillness."
+        )
+        self.assertEqual(violations, [])
+
     # FIX 2: OUTCOME_PROMISE guard for grounding language
     def test_outcome_promise_guard_fully_present(self):
         # "Fully present" is grounding language, not an outcome guarantee

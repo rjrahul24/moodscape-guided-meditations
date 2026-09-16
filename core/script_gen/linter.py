@@ -191,8 +191,8 @@ _SAFETY_RULES: list[tuple[str, re.Pattern, str]] = [
     (
         "CLINICAL_CLAIM",
         re.compile(
-            r"\b(?:cur\w+|heal\w+|treat\w+|diagnos\w+)\s+(?:your|the|my|his|her|their)\b\s+(?:\w+\s+){0,2}?\b(?:anxiety|depression|trauma|ptsd|insomnia|illness|condition|stress|grief)\b"
-            r"|\b(?:cur\w+|heal\w+|treat\w+)\s+\b(?:anxiety|depression|trauma|ptsd|insomnia|illness|condition|stress|grief)\b"
+            r"\b(?:cure[sd]?|curing|heal(?:s|ed|ing)?|treat(?:s|ed|ing)?|diagnos\w+)\s+(?:your|my|his|her|their)\b\s+(?:\w+\s+){0,2}?\b(?:anxiety|depression|trauma|ptsd|insomnia|illness|condition)\b"
+            r"|\b(?:cure[sd]?|curing|heal(?:s|ed|ing)?|treat(?:s|ed|ing)?)\s+\b(?:anxiety|depression|trauma|ptsd|insomnia|illness|condition)\b"
             r"|\breplaces?\s+(?:therapy|medication|treatment)\b",
             re.IGNORECASE,
         ),
@@ -228,7 +228,7 @@ _SAFETY_RULES: list[tuple[str, re.Pattern, str]] = [
             r"|\bfloat\s+away\s+from\s+your\s*self\b"
             r"|\byou\s+are\s+not\s+your\s+body\b"
             r"|\bdetach\s+from\s+your\s+body\b"
-            r"|\b(?:drift|float|rise|step)\s+(?:up\s+)?(?:out(?:side)?(?:\s+of)?|away\s+from)\s+your\s+body\b",
+            r"|\b(?:drift|float)\s+(?:up\s+)?(?:out(?:side)?(?:\s+of)?|away\s+from)\s+your\s+body\b",
             re.IGNORECASE,
         ),
         "Dissociation-adjacent imagery, which is contraindicated for trauma "
@@ -237,7 +237,7 @@ _SAFETY_RULES: list[tuple[str, re.Pattern, str]] = [
 ]
 
 _BREATH_HOLD = re.compile(
-    r"\bhold\s+(?:your\s+)?breath\b[^.!?]*?(?:(\d+)|(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty))\s+seconds?",
+    r"\bhold\s+(?:your\s+)?breath\b[^.?!]{0,80}?(?:(\d+)|(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty))\s+seconds?",
     re.IGNORECASE
 )
 
