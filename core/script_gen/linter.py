@@ -27,9 +27,9 @@ KNOWN_BARE_TAGS = {"breath", "inhale", "exhale"}
 
 _PAUSE_TAG = re.compile(r"\[pause:(\d+(?:\.\d+)?)s\]")
 _ANY_TAG = re.compile(r"\[([^\]]*)\]")
-_MARKDOWN = re.compile(r"(^\s{0,3}#{1,6}\s)|(\*\*)|(^\s*[-*+]\s+)", re.MULTILINE)
+_MARKDOWN = re.compile(r"(^\s{0,3}#{1,6}\s)|(\*\*)|(^\s*[-*+]\s+)|(^\s*\d+[.)]\s+)", re.MULTILINE)
 _EMOJI = re.compile(
-    "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF]"
+    "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF\U00002B00-\U00002BFF]"
 )
 _ALL_CAPS = re.compile(r"\b[A-Z]{4,}\b")
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")

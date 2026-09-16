@@ -75,6 +75,22 @@ class TestFormatChecks(unittest.TestCase):
         with self.assertRaises(Exception):
             v.code = "Y"
 
+    def test_numbered_list_is_fatal(self):
+        violations = check_format("Now follow these steps:\n1. Breathe in.\n2. Breathe out.")
+        self.assertIn("MARKDOWN_PRESENT", codes(violations))
+
+    def test_numbered_list_with_paren_is_fatal(self):
+        violations = check_format("1) First breathe\n2) Then relax")
+        self.assertIn("MARKDOWN_PRESENT", codes(violations))
+
+    def test_star_emoji_is_fatal(self):
+        violations = check_format("You are doing great ⭐")
+        self.assertIn("EMOJI_PRESENT", codes(violations))
+
+    def test_number_word_at_line_start_is_not_list(self):
+        script = "5 minutes from now, you will feel the floor beneath you."
+        self.assertEqual(check_format(script), [])
+
 
 if __name__ == "__main__":
     unittest.main()
