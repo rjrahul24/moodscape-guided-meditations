@@ -14,6 +14,11 @@ from core.script_gen.linter import (
     fatal_violations,
     format_for_repair,
 )
+from core.script_gen.duration import (
+    DEFAULT_WPM,
+    estimate_duration_sec,
+    log_estimate_accuracy,
+)
 
 __all__ = [
     "ADVISORY",
@@ -24,4 +29,7 @@ __all__ = [
     "check_safety",
     "fatal_violations",
     "format_for_repair",
+    "DEFAULT_WPM",
+    "estimate_duration_sec",
+    "log_estimate_accuracy",
 ]
