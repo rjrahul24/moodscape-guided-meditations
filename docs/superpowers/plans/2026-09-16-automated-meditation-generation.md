@@ -31,9 +31,12 @@
 |---|---|---|
 | **1 — Deterministic core** | 1–5 | Linter, duration estimator, background picker, rules loader. No LLM anywhere. Fully tested offline. |
 | **2 — Model interface** | 6–9 | `ScriptEngine` ABC, adapters, generator + judge + repair loop. Tested against a fake engine. |
-| **3 — Orchestration** | 10–12 | Orchestrator, Gradio tab, benchmark harness. |
+| **3 — Orchestration** | 10–12 | Orchestrator, streaming runner, Gradio tab, benchmark harness. |
+| **4 — Delivery** | 13–15 | End-to-end integration tests, full documentation, review and push. |
 
 Phase 1 is independently valuable: the linter and estimator are usable on hand-written scripts the moment they exist.
+
+**Sequencing note.** A separate branch is correcting the "36 GB" RAM figure to 32 GB in `CLAUDE.md` and `docs/ARCHITECTURE.md` — the same two files Task 14 edits. Task 14 Step 2 and Task 15 Step 4 both check whether that fix has landed and rebase if so. Do not fix the RAM number in this branch.
 
 ---
 
@@ -3065,31 +3068,223 @@ git commit -m "feat(auto): add prompt-to-meditation orchestrator"
 ### Task 11: Gradio Auto-Generate tab
 
 **Files:**
+- Create: `core/streaming_run.py`
 - Modify: `app.py` (add a tab; do not alter the existing manual tab)
-- Test: manual verification (Gradio UI wiring is not unit-tested in this repo)
+- Test: `tests/unit/test_streaming_run.py`
 
 **Interfaces:**
-- Consumes: `run`, `AutoConfig`, `ScriptGenerationError` from Task 10.
-- Produces: no new public API.
+- Consumes: `run`, `AutoConfig`, `ScriptGenerationError`, `AutoResult` from Task 10.
+- Produces: `ProgressUpdate` dataclass (`fraction: float`, `message: str`); `StreamingRun(prompt, *, config=None, runner=None, **kwargs)` — iterating it yields `ProgressUpdate`s while work happens on a background thread, after which `.result` holds an `AutoResult` or `.error` holds a message string.
 
-Locate the existing `gr.Blocks` layout and the manual generate handler first — the progress pattern at `app.py:278` (a `queue.Queue` fed by a background thread) is reused verbatim.
+**Why the extra module:** `app.py` cannot be imported in a test — it pulls in torch and Gradio and registers `atexit.register(lambda: os._exit(0))`, which would hijack pytest's exit. Keeping the thread-and-queue logic in `core/` puts it under test and leaves the Gradio handler a thin formatting shim. The pattern itself is copied from the manual handler at `app.py:278`.
 
-- [ ] **Step 1: Read the existing tab structure**
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/unit/test_streaming_run.py`:
+
+```python
+"""Tests for UI-independent streaming orchestration.
+
+Never imports app.py: that module loads torch and Gradio and registers an
+atexit hard-exit hook.
+"""
+
+import unittest
+
+from core.auto_generate import AutoResult, ScriptGenerationError
+from core.streaming_run import ProgressUpdate, StreamingRun
+
+
+def make_result():
+    return AutoResult(
+        audio_path="/out/m.wav",
+        script_path="/out/m.script.txt",
+        meta_path="/out/m.meta.json",
+        script="Breathe in.",
+        changelog="- none",
+        background="Healing Forest — 23:12",
+        violations=[],
+        estimated_sec=330.0,
+    )
+
+
+class TestStreamingRun(unittest.TestCase):
+    def test_yields_progress_updates(self):
+        def runner(prompt, *, config=None, progress_cb=None, **kwargs):
+            progress_cb(0.5, "halfway")
+            return make_result()
+
+        run = StreamingRun("p", runner=runner)
+        updates = list(run)
+        self.assertTrue(any(isinstance(u, ProgressUpdate) for u in updates))
+        self.assertIn("halfway", [u.message for u in updates])
+
+    def test_result_is_available_after_iteration(self):
+        def runner(prompt, *, config=None, progress_cb=None, **kwargs):
+            return make_result()
+
+        run = StreamingRun("p", runner=runner)
+        list(run)
+        self.assertEqual(run.result.audio_path, "/out/m.wav")
+        self.assertIsNone(run.error)
+
+    def test_script_generation_error_is_captured_not_raised(self):
+        def runner(prompt, *, config=None, progress_cb=None, **kwargs):
+            raise ScriptGenerationError("CLINICAL_CLAIM survived repairs")
+
+        run = StreamingRun("p", runner=runner)
+        list(run)
+        self.assertIsNone(run.result)
+        self.assertIn("CLINICAL_CLAIM", run.error)
+
+    def test_unexpected_error_is_captured_with_its_type(self):
+        def runner(prompt, *, config=None, progress_cb=None, **kwargs):
+            raise ValueError("bad thing")
+
+        run = StreamingRun("p", runner=runner)
+        list(run)
+        self.assertIn("ValueError", run.error)
+        self.assertIn("bad thing", run.error)
+
+    def test_prompt_is_forwarded(self):
+        seen = {}
+
+        def runner(prompt, *, config=None, progress_cb=None, **kwargs):
+            seen["prompt"] = prompt
+            return make_result()
+
+        list(StreamingRun("I feel anxious", runner=runner))
+        self.assertEqual(seen["prompt"], "I feel anxious")
+
+    def test_blank_prompt_errors_without_running(self):
+        called = []
+
+        def runner(prompt, *, config=None, progress_cb=None, **kwargs):
+            called.append(True)
+            return make_result()
+
+        run = StreamingRun("   ", runner=runner)
+        list(run)
+        self.assertEqual(called, [])
+        self.assertIn("prompt", run.error.lower())
+
+    def test_iteration_terminates_even_with_no_progress_calls(self):
+        def runner(prompt, *, config=None, progress_cb=None, **kwargs):
+            return make_result()
+
+        self.assertIsInstance(list(StreamingRun("p", runner=runner)), list)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `.venv/bin/python -m pytest tests/unit/test_streaming_run.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'core.streaming_run'`
+
+- [ ] **Step 3: Write minimal implementation**
+
+Create `core/streaming_run.py`:
+
+```python
+"""Run an auto-generation on a background thread, streaming progress.
+
+Lives in core/ rather than app.py so it can be unit-tested: app.py loads
+torch and Gradio and registers an atexit hard-exit hook, so importing it from
+a test is not viable.
+
+The thread-and-queue pattern mirrors the manual handler in app.py.
+"""
+
+import queue
+import threading
+from dataclasses import dataclass
+
+from core.auto_generate import AutoResult, ScriptGenerationError
+from core.auto_generate import run as default_run
+
+
+@dataclass(frozen=True)
+class ProgressUpdate:
+    """One progress tick from the pipeline."""
+
+    fraction: float
+    message: str
+
+
+class StreamingRun:
+    """Iterate for progress; read .result or .error when iteration ends."""
+
+    def __init__(self, prompt: str, *, config=None, runner=None, **kwargs):
+        self._prompt = prompt
+        self._config = config
+        self._runner = runner if runner is not None else default_run
+        self._kwargs = kwargs
+        self.result: AutoResult | None = None
+        self.error: str | None = None
+
+    def __iter__(self):
+        if not self._prompt or not self._prompt.strip():
+            self.error = "Enter a prompt first."
+            return
+
+        updates: queue.Queue = queue.Queue()
+
+        def progress_cb(fraction, message):
+            updates.put(ProgressUpdate(fraction=fraction, message=message))
+
+        def worker():
+            try:
+                self.result = self._runner(
+                    self._prompt,
+                    config=self._config,
+                    progress_cb=progress_cb,
+                    **self._kwargs,
+                )
+            except ScriptGenerationError as exc:
+                self.error = str(exc)
+            except Exception as exc:  # adapter or pipeline failure
+                self.error = f"{type(exc).__name__}: {exc}"
+            finally:
+                updates.put(None)
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+
+        while True:
+            item = updates.get()
+            if item is None:
+                break
+            yield item
+
+        thread.join()
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `.venv/bin/python -m pytest tests/unit/test_streaming_run.py -v`
+Expected: PASS — 7 tests
+
+- [ ] **Step 5: Read the existing tab structure**
 
 Run: `grep -n "gr.Tab\|with gr.Blocks\|def run_pipeline\|update_queue" app.py`
 Read the surrounding 40 lines of each hit. The new tab must follow the same construction and the same progress-streaming generator pattern.
 
-- [ ] **Step 2: Add the imports**
+- [ ] **Step 6: Add the imports**
 
 Near the other `core` imports in `app.py`:
 
 ```python
-from core.auto_generate import AutoConfig, ScriptGenerationError, run as auto_run
+from core.auto_generate import AutoConfig
+from core.streaming_run import StreamingRun
 ```
 
-- [ ] **Step 3: Add the handler**
+- [ ] **Step 7: Add the handler**
 
-Add this function next to the existing generate handler in `app.py`:
+A thin shim: build the config, iterate for progress, format the outcome. All
+the real logic is in `core/streaming_run.py`, under test.
 
 ```python
 def auto_generate_handler(
@@ -3101,19 +3296,7 @@ def auto_generate_handler(
     generator_spec,
     judge_spec,
 ):
-    """Prompt -> finished meditation, streaming progress to the UI.
-
-    Mirrors the manual handler's queue-and-thread pattern so the progress bar
-    behaves identically.
-    """
-    import os
-    import queue
-    import threading
-
-    if not prompt or not prompt.strip():
-        yield None, "", "", "Enter a prompt first."
-        return
-
+    """Prompt -> finished meditation, streaming progress to the UI."""
     os.environ["MOODSCAPE_SCRIPT_GENERATOR"] = generator_spec
     os.environ["MOODSCAPE_SCRIPT_JUDGE"] = judge_spec
 
@@ -3124,58 +3307,27 @@ def auto_generate_handler(
         target_max_sec=float(target_max_min) * 60.0,
     )
 
-    update_queue = queue.Queue()
-    holder = {}
+    run = StreamingRun(prompt, config=config)
+    for update in run:
+        yield None, "", "", update.message
 
-    def progress_cb(fraction, message):
-        update_queue.put((fraction, message))
-
-    def worker():
-        try:
-            holder["result"] = auto_run(
-                prompt, config=config, progress_cb=progress_cb
-            )
-        except ScriptGenerationError as exc:
-            holder["error"] = str(exc)
-        except Exception as exc:  # surface adapter/pipeline failures in the UI
-            holder["error"] = f"{type(exc).__name__}: {exc}"
-        finally:
-            update_queue.put(None)
-
-    thread = threading.Thread(target=worker, daemon=True)
-    thread.start()
-
-    while True:
-        try:
-            item = update_queue.get(timeout=0.25)
-        except queue.Empty:
-            continue
-        if item is None:
-            break
-        _fraction, message = item
-        yield None, "", "", message
-
-    thread.join()
-
-    if "error" in holder:
-        yield None, "", "", f"Failed: {holder['error']}"
+    if run.error:
+        yield None, "", "", f"Failed: {run.error}"
         return
 
-    result = holder["result"]
-    advisories = "\n".join(
-        f"- [{v.code}] {v.message}" for v in result.violations
-    )
+    result = run.result
     status = (
         f"Done. Background: {result.background}. "
         f"Estimated {result.estimated_sec / 60:.1f} min."
     )
+    advisories = "\n".join(f"- [{v.code}] {v.message}" for v in result.violations)
     if advisories:
         status = f"{status}\n\nAdvisories:\n{advisories}"
 
     yield result.audio_path, result.script, result.changelog, status
 ```
 
-- [ ] **Step 4: Add the tab**
+- [ ] **Step 8: Add the tab**
 
 Inside the existing `gr.Blocks` context, after the current tab:
 
@@ -3235,28 +3387,28 @@ Inside the existing `gr.Blocks` context, after the current tab:
         )
 ```
 
-- [ ] **Step 5: Verify the app still starts**
+- [ ] **Step 9: Verify the app still starts**
 
 Run: `.venv/bin/python -c "import app"`
 Expected: no exception. (Do not launch the server in this step — importing proves the layout is syntactically valid and the handler resolves.)
 
-- [ ] **Step 6: Run the full unit suite**
+- [ ] **Step 10: Run the full unit suite**
 
 Run: `.venv/bin/python -m pytest tests/unit/ -v`
 Expected: PASS
 
-- [ ] **Step 7: Manual smoke test**
+- [ ] **Step 11: Manual smoke test**
 
 Run: `ollama pull llama3.2:3b` (if not already present), then `.venv/bin/python app.py`
 Open http://localhost:7860, select the Auto-Generate tab, enter "I'm feeling anxious and need to unwind", and click Generate.
 
 Expected: progress messages stream; either a rendered WAV appears with the script and changelog populated, or a clear failure message naming the violation codes. `llama3.2:3b` is small enough that the script may well fail the linter — that is a *successful* test of the repair-and-fail path, not a bug.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
-git add app.py
-git commit -m "feat(ui): add Auto-Generate tab for prompt-to-meditation flow"
+git add core/streaming_run.py tests/unit/test_streaming_run.py app.py
+git commit -m "feat(ui): add Auto-Generate tab and testable streaming runner"
 ```
 
 ---
@@ -3666,6 +3818,369 @@ Expected: PASS, including every pre-existing test.
 git add core/script_gen/bench.py scripts/bench_script_models.py core/script_gen/__init__.py tests/unit/test_script_bench.py tests/integration/test_script_gen_live.py
 git commit -m "feat(script_gen): add model benchmark harness and live integration test"
 ```
+
+---
+
+---
+
+# Phase 4 — Integration, documentation, delivery
+
+### Task 13: End-to-end integration tests
+
+**Files:**
+- Create: `tests/integration/test_auto_generate_e2e.py`
+- Test: itself
+
+**Interfaces:**
+- Consumes: `run`, `AutoConfig` (Task 10); `FakeScriptEngine` (Task 6); the real `MeditationPipeline`.
+- Produces: nothing importable.
+
+These are **slow** — they run a real render through the real pipeline, which takes minutes on an M1 Max. That is the point: every other test stubs the pipeline, so nothing yet proves the orchestrator's kwargs actually satisfy `MeditationPipeline.generate()`. A signature drift would otherwise only surface in the UI.
+
+Script generation is faked so the test is deterministic and needs no model; the audio path is real.
+
+- [ ] **Step 1: Check how existing integration tests are gated**
+
+Run: `sed -n '1,40p' tests/integration/test_integration_modes.py`
+Match whatever skip/marker convention is already there. If none exists, use the env-var gate below.
+
+- [ ] **Step 2: Write the test**
+
+Create `tests/integration/test_auto_generate_e2e.py`:
+
+```python
+"""End-to-end: fake script models, real audio pipeline.
+
+Slow — renders actual audio. Run with:
+    MOODSCAPE_E2E=1 .venv/bin/python -m pytest \
+        tests/integration/test_auto_generate_e2e.py -v
+
+Everything else stubs the pipeline, so this is the only test that proves the
+orchestrator's kwargs actually satisfy MeditationPipeline.generate().
+"""
+
+import json
+import os
+import unittest
+from pathlib import Path
+
+import soundfile as sf
+
+from core.auto_generate import AutoConfig, run
+from core.script_gen.engine import FakeScriptEngine
+
+E2E = os.environ.get("MOODSCAPE_E2E") == "1"
+
+# Short on purpose: a full 5-7 minute render would make this unusable.
+SHORT_SCRIPT = (
+    "Settle in and let your shoulders drop.\n\n"
+    "[pause:3s]\n\n"
+    "Notice the weight of your hands.\n\n"
+    "[pause:3s]\n\n"
+    "And when you are ready, let your eyes open."
+)
+
+
+def judged(script):
+    return f"<script>\n{script}\n</script>\n<changelog>\n- none\n</changelog>"
+
+
+@unittest.skipUnless(E2E, "set MOODSCAPE_E2E=1 to run (renders real audio)")
+class TestAutoGenerateEndToEnd(unittest.TestCase):
+    def setUp(self):
+        # Wide window: this deliberately short script is nowhere near 5 minutes.
+        self.config = AutoConfig(target_min_sec=1.0, target_max_sec=100000.0)
+
+    def test_produces_a_playable_wav_and_its_siblings(self):
+        result = run(
+            "I feel anxious and need to unwind.",
+            config=self.config,
+            generator_engine=FakeScriptEngine([SHORT_SCRIPT]),
+            judge_engine=FakeScriptEngine([judged(SHORT_SCRIPT)]),
+        )
+
+        audio = Path(result.audio_path)
+        self.assertTrue(audio.is_file())
+        self.assertGreater(audio.stat().st_size, 1000)
+
+        info = sf.info(str(audio))
+        self.assertGreater(info.duration, 5.0)
+
+        self.assertTrue(Path(result.script_path).is_file())
+        self.assertTrue(Path(result.meta_path).is_file())
+
+    def test_metadata_records_the_real_run(self):
+        result = run(
+            "I feel anxious and need to unwind.",
+            config=self.config,
+            generator_engine=FakeScriptEngine([SHORT_SCRIPT]),
+            judge_engine=FakeScriptEngine([judged(SHORT_SCRIPT)]),
+        )
+        meta = json.loads(Path(result.meta_path).read_text())
+        self.assertEqual(meta["tts_engine"], "f5")
+        self.assertTrue(meta["background"])
+        self.assertTrue(Path(meta["background_path"]).is_file())
+
+    def test_duration_estimate_is_within_thirty_percent_of_actual(self):
+        """Guards DEFAULT_WPM against drift.
+
+        Loose on purpose: F5 renders are not deterministic, and this exists to
+        catch a badly wrong constant, not to pin an exact number.
+        """
+        result = run(
+            "I feel anxious and need to unwind.",
+            config=self.config,
+            generator_engine=FakeScriptEngine([SHORT_SCRIPT]),
+            judge_engine=FakeScriptEngine([judged(SHORT_SCRIPT)]),
+        )
+        actual = sf.info(result.audio_path).duration
+        ratio = actual / result.estimated_sec
+        self.assertGreater(ratio, 0.7, f"estimate far too long: {ratio:.2f}")
+        self.assertLess(ratio, 1.3, f"estimate far too short: {ratio:.2f}")
+
+    def test_kokoro_path_also_renders(self):
+        config = AutoConfig(
+            target_min_sec=1.0, target_max_sec=100000.0, tts_engine="kokoro"
+        )
+        result = run(
+            "I feel anxious and need to unwind.",
+            config=config,
+            generator_engine=FakeScriptEngine([SHORT_SCRIPT]),
+            judge_engine=FakeScriptEngine([judged(SHORT_SCRIPT)]),
+        )
+        self.assertTrue(Path(result.audio_path).is_file())
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+- [ ] **Step 3: Verify it skips by default**
+
+Run: `.venv/bin/python -m pytest tests/integration/test_auto_generate_e2e.py -v`
+Expected: SKIPPED — 4 tests.
+
+- [ ] **Step 4: Run it for real, once**
+
+Run: `MOODSCAPE_E2E=1 .venv/bin/python -m pytest tests/integration/test_auto_generate_e2e.py -v`
+Expected: PASS. Takes several minutes — it renders four meditations.
+
+If `test_duration_estimate_is_within_thirty_percent_of_actual` fails, that is a **real finding**, not a flaky test: it means `DEFAULT_WPM` in `core/script_gen/duration.py` is wrong. Record the ratio from the failure, adjust the constant, and re-run.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add tests/integration/test_auto_generate_e2e.py
+git commit -m "test(auto): add end-to-end integration tests through the real pipeline"
+```
+
+---
+
+### Task 14: Documentation
+
+**Files:**
+- Create: `docs/auto_generation/README.md`
+- Modify: `CLAUDE.md`
+- Modify: `docs/ARCHITECTURE.md`
+- Modify: `docs/COMPONENT_REGISTRY.md`
+- Modify: `docs/TASK_ROUTING.md`
+- Modify: `docs/GOTCHAS.md`
+- Modify: `README.md`
+
+**Interfaces:**
+- Consumes: the finished implementation.
+- Produces: no code.
+
+**Merge-conflict warning — read before starting.** A separate branch is correcting the "36 GB" figure to 32 GB in `CLAUDE.md` (lines 3 and 61) and `docs/ARCHITECTURE.md` (line 318). **Before editing either file, run `git fetch origin && git log --oneline origin/dev -5` to see whether that fix has landed.** If it has, rebase `dev-automate` onto `origin/dev` first. If it has not, do not touch those specific lines, and do not "helpfully" fix the RAM number here — leave it to the other branch so the two changes stay separable.
+
+- [ ] **Step 1: Write the subsystem guide**
+
+Create `docs/auto_generation/README.md` covering, with real content and no placeholders:
+
+- **What it does** — prompt in, finished meditation out, no human step.
+- **The four layers** — prose rules (LLM-enforced) vs linter (code-enforced), generator, judge, validation. Explain *why* the split exists: format rules should never cost a token, and a deterministic backstop is what makes a weaker or cheaper model viable.
+- **Configuration table** — every env var with its default:
+  `MOODSCAPE_SCRIPT_GENERATOR`, `MOODSCAPE_SCRIPT_JUDGE`,
+  `MOODSCAPE_SCRIPT_MAX_REPAIRS`, `MOODSCAPE_TARGET_MIN_SEC`,
+  `MOODSCAPE_TARGET_MAX_SEC`, plus the per-provider key vars from
+  `PROVIDER_KEY_ENV`.
+- **Model spec format** — `provider:model`, the five OpenAI-compatible providers plus `anthropic`, and the first-colon-only parsing rule with `ollama:qwen3:30b` as the worked example.
+- **The failure severity table** — copied from the spec, since this is the load-bearing design decision. Fatal blocks the render; advisory warns and proceeds.
+- **Violation code reference** — every code the linter can emit, what triggers it, and its severity.
+- **How to choose a model** — the `scripts/bench_script_models.py` workflow with a runnable command.
+- **Calibrating `DEFAULT_WPM`** — what `log_estimate_accuracy` writes and how to act on it.
+
+- [ ] **Step 2: Update CLAUDE.md**
+
+Add to the Folder Map (respecting the RAM-fix warning above):
+
+```
+│   ├── script_gen/                    # prompt → validated script (generator + judge + linter)
+│   ├── auto_generate.py               # orchestrator: script → music → pipeline
+│   ├── background_picker.py           # random pick from assets/backgrounds/
+│   └── streaming_run.py               # threaded progress streaming for the UI
+```
+
+Add a new section after "Pipeline Flow":
+
+```markdown
+## Auto-Generation Flow (`core/auto_generate.py :: run()`)
+
+Prompt in, finished meditation out, with no human step.
+
+1. **Assemble prompts** → `script_gen/rules.py` reads the engine- and
+   content-type-specific guide from `docs/prompting_guides/` at call time,
+   plus `content_safety_rules.md`
+2. **Draft** → generator model (`MOODSCAPE_SCRIPT_GENERATOR`)
+3. **Review** → an *independent* judge model (`MOODSCAPE_SCRIPT_JUDGE`)
+   returns a revised script plus a changelog — it revises, it does not score
+4. **Validate** → `script_gen/linter.py` (format + mental-health safety) and
+   `script_gen/duration.py` (runtime estimate, no rendering)
+5. **Repair** → fatal violations go back to the judge as targeted
+   instructions, bounded by `MOODSCAPE_SCRIPT_MAX_REPAIRS` (default 2)
+6. **Pick music** → `background_picker.pick_background()` reuses
+   `upload_music.scan_backgrounds()`, excluding recently used tracks
+7. **Render** → `MeditationPipeline.generate()`, unchanged, on the golden path
+   (F5 + uploaded background)
+8. **Persist** → `<name>.wav`, `<name>.script.txt`, `<name>.meta.json` as siblings
+
+Full detail: [docs/auto_generation/README.md](docs/auto_generation/README.md).
+```
+
+Add to Top Gotchas:
+
+```markdown
+- **Fatal vs advisory violations** → `script_gen/linter.py` fails the job for
+  safety hard-blocks and malformed markers, but renders anyway (with a warning)
+  for duration drift and style issues. Treating every violation as fatal makes
+  a weaker local model unusable; treating none as fatal lets a safety failure
+  reach audio. Do not flatten this distinction.
+```
+
+- [ ] **Step 3: Update docs/ARCHITECTURE.md**
+
+Add an "Auto-Generation Subsystem" section with the data-flow diagram from the
+spec, the module table, the failure-severity table, and a note that
+`MeditationPipeline` is called and never modified. Respect the RAM-fix warning.
+
+- [ ] **Step 4: Update docs/COMPONENT_REGISTRY.md**
+
+One row per new module: `script_gen/{engine,rules,generator,judge,linter,duration,bench}.py`, `script_gen/adapters/{openai_compat,anthropic_api}.py`, `auto_generate.py`, `background_picker.py`, `streaming_run.py` — each with its public API and one-line responsibility.
+
+- [ ] **Step 5: Update docs/TASK_ROUTING.md**
+
+Add rows: "Change how scripts are written" → `docs/prompting_guides/` + `script_gen/rules.py`. "Add a safety rule" → `content_safety_rules.md` **and** `script_gen/linter.py` **and** a case in `tests/unit/test_script_linter.py`. "Add a model provider" → `script_gen/engine.py` registry + an adapter. "Tune duration accuracy" → `script_gen/duration.py::DEFAULT_WPM`.
+
+- [ ] **Step 6: Update docs/GOTCHAS.md**
+
+Add: the fatal/advisory split; first-colon-only spec parsing (`ollama:qwen3:30b`); guides read at call time so edits apply without restart; `app.py` cannot be imported in tests because of the `atexit` hard-exit hook, which is why `core/streaming_run.py` exists; fades are excluded from duration estimates because `apply_fades` does not extend runtime.
+
+- [ ] **Step 7: Update README.md**
+
+A short "Auto-Generate" section: what it does, the minimum `.env` needed, and a pointer to `docs/auto_generation/README.md`.
+
+- [ ] **Step 8: Verify every referenced path exists**
+
+```bash
+grep -oE '\[[^]]+\]\(([^)]+)\)' docs/auto_generation/README.md CLAUDE.md \
+  | grep -oE '\(([^)]+)\)' | tr -d '()' | grep -v '^http' \
+  | while read -r p; do [ -e "$p" ] || echo "BROKEN: $p"; done
+```
+
+Expected: no output.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add docs/auto_generation/README.md CLAUDE.md docs/ARCHITECTURE.md docs/COMPONENT_REGISTRY.md docs/TASK_ROUTING.md docs/GOTCHAS.md README.md
+git commit -m "docs: document the auto-generation subsystem"
+```
+
+---
+
+### Task 15: Review history and push
+
+**Files:** none — this task only inspects and publishes.
+
+**Interfaces:** none.
+
+The per-task commits already form a logical sequence. This task verifies that, then publishes the branch.
+
+- [ ] **Step 1: Confirm the working tree is clean**
+
+Run: `git status --short`
+
+Expected: only the pre-existing sleep-story changes (`CLAUDE.md`, `app.py`, `core/mixer.py`, `core/pipeline.py`, the preprocessors, `requirements.txt`, `scripts/generate.py`, `core/content_profiles.py`, the sleep-story guides, `tests/unit/test_content_profiles.py`). **Those are not ours — do not commit them.** If anything from this plan is uncommitted, commit it to its own task's commit first.
+
+- [ ] **Step 2: Review the commit sequence**
+
+Run: `git log --oneline dev..dev-automate`
+
+Expected: roughly seventeen commits, each a conventional commit naming one deliverable. Read them as a story: does each message say what changed and why? If any is vague ("fix stuff", "wip"), reword it with `git rebase -i dev` before pushing. Nothing has been published yet, so history is still safe to edit.
+
+- [ ] **Step 3: Confirm the full suite is green**
+
+Run: `.venv/bin/python -m pytest tests/unit/ -v`
+Expected: PASS, including every pre-existing test.
+
+- [ ] **Step 4: Check whether the RAM fix has landed**
+
+Run: `git fetch origin && git log --oneline origin/dev -5`
+
+If the 32 GB correction is on `origin/dev`, rebase before pushing:
+`git rebase origin/dev` and resolve any `CLAUDE.md` / `ARCHITECTURE.md` conflicts by keeping **both** changes — the RAM number from their commit, the auto-generation sections from ours.
+
+- [ ] **Step 5: Push the branch**
+
+```bash
+git push -u origin dev-automate
+```
+
+This creates `dev-automate` on the remote; it does not exist upstream yet.
+
+- [ ] **Step 6: Open a pull request into `dev`**
+
+```bash
+gh pr create --base dev --head dev-automate \
+  --title "feat: automated end-to-end meditation generation" \
+  --body "$(cat <<'BODY'
+Turns a natural-language prompt into a finished meditation with no human step.
+
+## What this adds
+- `core/script_gen/` — two-pass generation (generator, then an independent judge that revises) bounded by a deterministic linter and duration estimator
+- Pluggable `ScriptEngine` ABC — local (Ollama), hosted open-weight (OpenRouter/Together/Fireworks/Groq) and Claude behind one interface; the model is a config string
+- `core/auto_generate.py` — orchestrator: script -> random background -> existing pipeline
+- Auto-Generate tab in the Gradio UI
+- `scripts/bench_script_models.py` — benchmark harness to choose models with evidence
+
+## What this does not change
+`core/pipeline.py`, `core/mixer.py` and the audio path are untouched. The auto
+path calls `MeditationPipeline.generate()` exactly as the manual tab does.
+
+## Design decisions
+- **Fatal vs advisory violations.** Safety hard-blocks and malformed markers
+  fail the job; duration drift and style issues render with a warning. This is
+  what makes a weaker local model usable without letting a safety failure reach
+  audio.
+- **Model choice is deferred to measurement.** The bench harness answers it
+  with data rather than an assertion in a design doc.
+
+## Testing
+Unit tests run with no model and no network. Integration tests are opt-in:
+`MOODSCAPE_E2E=1` renders real audio, `MOODSCAPE_LIVE_SCRIPT_TEST=1` hits a
+real model.
+
+Spec: `docs/superpowers/specs/2026-09-16-automated-meditation-generation-design.md`
+Plan: `docs/superpowers/plans/2026-09-16-automated-meditation-generation.md`
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+BODY
+)"
+```
+
+- [ ] **Step 7: Report the PR URL**
+
+Print the URL `gh pr create` returned. Do **not** merge it and do **not** enable auto-merge — review is the user's call.
 
 ---
 
