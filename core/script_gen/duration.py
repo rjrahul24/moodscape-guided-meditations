@@ -3,7 +3,9 @@
 Pauses are summed exactly from the engine's own parse. Speech is estimated as
 word_count / wpm * 60 — the same formula core/f5_tts/engine.py:463 uses when
 fixed pacing is enabled. Inter-sentence room-tone gaps are added because the
-engines insert them.
+engines insert them. Breath/inhale/exhale cues add their measured sample
+duration (BREATH_SEC) since both preprocessors emit a distinct "breath"
+segment type for these markers rather than a "pause".
 
 Fades are deliberately NOT added: apply_fades shapes amplitude over audio that
 already exists, so they do not extend runtime.
@@ -23,6 +25,14 @@ logger = logging.getLogger(__name__)
 DEFAULT_WPM: dict[str, float] = {
     "f5": 97.0,
     "kokoro": 105.0,
+}
+
+# Measured from assets/breath_sounds/ (breath.wav 1.200s, inhale.wav 1.500s,
+# exhale.wav 1.800s). Calibrate alongside DEFAULT_WPM if those samples change.
+BREATH_SEC: dict[str, float] = {
+    "breath": 1.2,
+    "inhale": 1.5,
+    "exhale": 1.8,
 }
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
@@ -95,6 +105,10 @@ def estimate_duration_sec(
             total += float(segment["duration_sec"])
         elif segment["type"] == "speech":
             total += _speech_seconds(segment["text"], rate)
+        elif segment["type"] == "breath":
+            # Unrecognised subtypes degrade to the plain "breath" duration
+            # rather than raising — a bad tag shouldn't crash a generation run.
+            total += BREATH_SEC.get(segment.get("subtype"), BREATH_SEC["breath"])
 
     return total
 

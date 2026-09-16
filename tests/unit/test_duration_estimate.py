@@ -73,6 +73,30 @@ class TestDurationEstimate(unittest.TestCase):
         self.assertIn("f5", DEFAULT_WPM)
         self.assertIn("kokoro", DEFAULT_WPM)
 
+    def test_breath_cues_add_their_measured_sample_durations(self):
+        # Breath markers must not be zero-cost: [breath]/[inhale]/[exhale] are
+        # each placed after an identical sentence run (not interleaved with
+        # the sentences) so removing them changes nothing about how the
+        # speech text is split into segments/sentences — the only difference
+        # is the three breath cues themselves. Assert the delta, not an
+        # absolute total, so this stays robust if WPM changes.
+        with_breaths = (
+            "Breathe in. Hold. Release. Rest. [breath] [inhale] [exhale]"
+        )
+        without_breaths = "Breathe in. Hold. Release. Rest."
+        with_estimate = estimate_duration_sec(with_breaths, engine="f5")
+        without_estimate = estimate_duration_sec(without_breaths, engine="f5")
+        self.assertGreaterEqual(
+            with_estimate - without_estimate, 1.2 + 1.5 + 1.8
+        )
+
+    def test_breath_marker_is_not_zero_cost(self):
+        # Regression guard for the bug where "breath" segments were silently
+        # ignored (only "pause" and "speech" were handled).
+        with_breath = estimate_duration_sec("Breathe deeply. [breath]", engine="f5")
+        without_breath = estimate_duration_sec("Breathe deeply.", engine="f5")
+        self.assertGreater(with_breath, without_breath)
+
     def test_sleep_story_uses_shorter_paragraph_pauses(self):
         script = "Once there was a lantern.\n\nIt glowed softly."
         meditation = estimate_duration_sec(
