@@ -20,6 +20,12 @@ from core.script_gen.duration import (
     estimate_duration_sec,
     log_estimate_accuracy,
 )
+from core.script_gen.rules import (
+    build_generator_system_prompt,
+    build_judge_system_prompt,
+    load_guide,
+    load_safety_rules,
+)
 
 __all__ = [
     "ADVISORY",
@@ -34,4 +40,8 @@ __all__ = [
     "DEFAULT_WPM",
     "estimate_duration_sec",
     "log_estimate_accuracy",
+    "build_generator_system_prompt",
+    "build_judge_system_prompt",
+    "load_guide",
+    "load_safety_rules",
 ]
