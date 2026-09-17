@@ -236,10 +236,11 @@ Notes for a future reader:
 - `qwen3.5:9b` and every other current ~9B model have **no published
   creative-writing data at all**. That is why there is no separate small
   planner: the choice would be a guess.
-- **Gemma's licence is open-weight, not OSI open source.** If strict
-  open-source status becomes a requirement, set the judge to
-  `ollama:qwen3.8:27b` (Judgemark 67.44) for an all-Apache-2.0 stack that also
-  saves 19 GB and one model load.
+- **Gemma is open-weight, not OSI open source**, unlike Qwen (Apache-2.0).
+  This does not affect output ownership or commercial use — see §13.1 for what
+  it does and does not mean. The fallback is one env var:
+  `MOODSCAPE_SCRIPT_JUDGE=ollama:qwen3.8:27b` gives an all-Apache-2.0 stack at
+  Judgemark 67.44, saving 19 GB and one model load.
 - Nemotron-3.5-Lightning has the lowest repetition of any local model, which is
   interesting given the originality goal. Harness candidate, not a default.
 
@@ -513,11 +514,74 @@ configuration — is correct and is adopted here.
 |---|---|---|
 | 1 | **No energetic music.** All 20 tracks are ambient drones; Workout / Running / Energy Boost have nowhere to land. | Falls back to calm beds. Fixed by dropping files in — tags apply themselves. Data change, not code. |
 | 2 | **46 packs is real authoring work**, and pack quality caps output quality. | Drafted up front, plain TOML, read at call time, editable without restart. |
-| 3 | **Gemma's licence** is open-weight, not OSI open source. | One env var to an all-Apache-2.0 stack; documented in §6. |
+| 3 | **Gemma's terms are mutable** in a way Apache-2.0's are not, and distribution obligations attach if this is ever bundled and shipped. | Low impact today; reversible with one env var. Full analysis and revisit triggers in §13.1. |
 | 4 | **37 GB of models** on a volume at 91% capacity. | Preflight names what is missing; config C saves 19 GB. |
 | 5 | **Originality thresholds are provisional.** | Every run logs its score; calibrate as `DEFAULT_WPM` was. |
 | 6 | **The judge is the sloppiest local writer** (slop 4.1) and holds the pen last. | The judge prompt already says "preserve what works"; the banned-phrase and slop checks catch injected slop regardless of source. |
 | 7 | **~5.3 min of LLM time per run** may frustrate iteration. | Per-stage hosted override drops it to ~15 s without a code change. |
+
+### 13.1 On Gemma's licence
+
+Gemma ships under Google's Gemma Terms of Use, not an OSI-approved licence.
+That phrase overstates the exposure on its own, so this records what it
+actually means for this project. Clause references are to the terms as read
+2026-09-17.
+
+**What it does not mean**
+
+- **Output ownership is not affected.** §3.3: "Google claims no rights in
+  Outputs you generate using Gemma." Generated scripts and audio are
+  unencumbered.
+- **Commercial use is permitted.** Nothing in the terms prevents selling what
+  this produces.
+- **The distribution obligations in §3.1** — pass the terms through, include a
+  notice file, bind downstream recipients, mark modified files — attach *when
+  distributing the model or a derivative*. This project distributes neither. It
+  ships code that instructs Ollama to pull weights from Google, so the user
+  accepts Google's terms directly.
+
+**What is real**
+
+1. **The terms are mutable; Apache-2.0 is not.** §4.1 lets Google update Gemma,
+   and §3.2 incorporates a Prohibited Use Policy Google can revise. Apache-2.0
+   is irrevocable, so nothing can be added to Qwen's terms retroactively. This
+   is the one structural difference, and it concerns the future rather than the
+   present.
+2. **Distribution is a cliff, not a slope.** Bundling this as a Docker image,
+   a packaged desktop app, or a Gemma fine-tune makes §3.1 apply at once,
+   binding downstream users to a policy Google controls.
+3. **Enterprise friction.** Apache-2.0 clears legal review unread; Gemma's
+   terms require reading, and some organisations refuse non-OSI licences
+   outright. Relevant only if someone other than the author adopts this.
+4. **§3.2's remote-restriction reservation has little force over local
+   weights.** There is no mechanism reaching a local GGUF. It matters for
+   hosted Gemma.
+
+**Where it brushes this project**
+
+The Prohibited Use Policy covers harmful content including unqualified medical
+and health advice, and meditations addressing grief, anxiety and burnout sit
+adjacent to that. This is already mitigated for reasons that predate the
+licence question: `content_safety_rules.md` and the linter's safety
+**hard-blocks** exist to stop clinical claims reaching audio. Those checks must
+not be weakened.
+
+**Why this is not a blocking risk**
+
+The cost of being wrong is one environment variable. Switching the judge to
+`ollama:qwen3.8:27b` yields an all-Apache-2.0 stack the same day, trading 5
+Judgemark points (72.31 -> 67.44) for 19 GB of disk and one fewer model load.
+This is a future-optionality concern, not a licence hazard.
+
+**Revisit if any of these becomes true**
+
+- The project is packaged for distribution with weights included, or a Gemma
+  derivative is fine-tuned and shared.
+- Anyone outside the author adopts it, particularly inside an organisation.
+- Google revises the Prohibited Use Policy in a way that touches wellbeing or
+  mental-health content.
+- The judge's measured advantage narrows — the §12 harness may show Qwen close
+  enough that the licence question settles itself.
 
 ---
 
