@@ -220,11 +220,10 @@ same script too. So `SENTENCE_TOO_LONG` is the stricter gate in every case
 this check can reach; `CHUNK_TOO_LONG` exists as a backstop for a script
 that would somehow slip past it, not as an independent detector.
 
-**Not currently wired into `auto_generate.run()`.** `run()` calls `check()`
-without an `engine` argument, so this backstop is exercised today only via
-direct calls to `check_format()`/`check(..., engine="kokoro")` — e.g. in
-`tests/unit/test_script_linter.py`. Passing `config.tts_engine` through to
-`check()` in `run()` would be a follow-up, not something this branch does.
+**Wired into `auto_generate.generate_script()`.** It calls `check(..., engine=config.tts_engine)`, so this backstop is live in the production auto-generate flow — it fires for `AutoConfig(tts_engine="kokoro", ...)` and is a no-op for `tts_engine="f5"`, exactly as `check_format()`'s `engine` parameter intends. See
+`tests/unit/test_auto_generate.py :: test_chunk_too_long_fires_for_kokoro_but_not_f5`
+for an end-to-end check of both branches (also covered directly in
+`tests/unit/test_script_linter.py`).
 
 The safety patterns are matched case-insensitively against tag-stripped
 prose, with typographic apostrophes (U+2019, U+2018, U+02BC, U+00B4, U+0060)
