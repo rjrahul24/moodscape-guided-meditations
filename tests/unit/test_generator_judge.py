@@ -64,6 +64,23 @@ class TestJudgeParsing(unittest.TestCase):
         self.assertEqual(script, "Breathe deeply.")
         self.assertIn("fixed pacing", changelog)
 
+    def test_matched_script_keeps_a_literal_changelog_word_intact(self):
+        # When <script> is located structurally, the returned script must be
+        # exactly match.group(1) -- NOT run through the fallback path's
+        # _STRAY_TAG/_CHANGELOG_BLOCK cleanup, which exists only to sanitize
+        # the no-match case. A regression that applied that cleanup
+        # unconditionally would mangle a script whose body legitimately uses
+        # the word "changelog" in ordinary prose.
+        raw = (
+            "<script>\nKeep a mental changelog of small moments today.\n</script>\n"
+            "<changelog>\n- tightened pacing\n</changelog>"
+        )
+        script, changelog = parse_judge_response(raw)
+        self.assertEqual(
+            script, "Keep a mental changelog of small moments today."
+        )
+        self.assertIn("tightened pacing", changelog)
+
     def test_unmatchable_script_tag_does_not_leak_the_changelog(self):
         # The opening tag never closes, so <script> can't be located
         # structurally. The fallback must not let the changelog block (or

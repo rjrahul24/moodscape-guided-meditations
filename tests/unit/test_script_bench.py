@@ -1,6 +1,8 @@
 """Tests for the model benchmark harness, using fake engines."""
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from core.auto_generate import AutoConfig
 from core.bench import (
@@ -25,7 +27,18 @@ def judged(script):
 
 class TestBench(unittest.TestCase):
     def setUp(self):
-        self.config = AutoConfig(target_min_sec=1.0, target_max_sec=100000.0)
+        # Per-test failure_dir: without an override, a failing row (this
+        # suite has several) writes into the shared
+        # <tempdir>/moodscape_failures every test/run uses by default.
+        self._tmp = tempfile.TemporaryDirectory()
+        self.config = AutoConfig(
+            target_min_sec=1.0,
+            target_max_sec=100000.0,
+            failure_dir=Path(self._tmp.name) / "failures",
+        )
+
+    def tearDown(self):
+        self._tmp.cleanup()
 
     def test_prompt_set_covers_several_moods(self):
         self.assertGreaterEqual(len(BENCH_PROMPTS), 5)
@@ -78,7 +91,14 @@ class TestBench(unittest.TestCase):
             config=self.config,
             engine_factory=factory,
         )
-        self.assertGreaterEqual(rows[0].elapsed_sec, 0.0)
+        # elapsed_sec is a monotonic-clock delta around a fast in-process
+        # fake call — it can be 0.0 on a fast machine, so >= 0.0 can never
+        # fail and proves nothing. Assert the fields that a real bug (e.g.
+        # forgetting to populate the row) could actually break.
+        self.assertEqual(rows[0].generator, "a:1")
+        self.assertEqual(rows[0].judge, "b:1")
+        self.assertEqual(rows[0].prompt, "p")
+        self.assertIsInstance(rows[0].elapsed_sec, float)
         self.assertGreater(rows[0].estimated_sec, 0.0)
 
     def test_table_has_a_header_and_a_row_per_result(self):
