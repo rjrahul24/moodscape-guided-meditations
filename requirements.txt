@@ -1,7 +1,7 @@
 torch>=2.1.0
 torchaudio>=2.1.0
 kokoro>=0.9.4
-huggingface-hub>=0.23.2,<1.0
+huggingface-hub>=1.0  # mlx-audio 0.5.4+ requires >=1.0; old <1.0 cap dropped
 tokenizers>=0.20
 demucs>=4.0.0
 gradio>=4.0
