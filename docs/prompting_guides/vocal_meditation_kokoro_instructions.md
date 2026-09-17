@@ -1,7 +1,7 @@
 <!-- QUICK-REF ──────────────────────────────────────────────────────── -->
 **Engine files:** `core/kokoro_tts/preprocessor.py` · `core/kokoro_tts/engine.py`
 **Script tags:** `[pause:Xs]` · `[breath]` (1.2s) · `\n\n` paragraph break (6.5s) · speed range 0.65–1.0
-**Chunk limit:** 150 tokens (auto-split at sentence boundaries)
+**Synthesis unit:** per sentence (`split_into_sentences()`) — `merge_sentences_to_chunks()` exists in the preprocessor but is not on the synthesis path
 **Speed floor:** 0.65 — below this Kokoro produces distorted output
 **Prosody auto-applied:** comma injection at breath boundaries, sensory ellipses, IPA for Sanskrit/yoga terms
 **Voice selection:** 6 presets or custom blend — see `voice_manager.py :: MEDITATION_PRESETS`

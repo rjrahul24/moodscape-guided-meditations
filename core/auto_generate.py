@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from core.background_picker import pick_background
-from core.script_gen.duration import estimate_duration_sec
+from core.script_gen.duration import estimate_duration_sec, log_estimate_accuracy
 from core.script_gen.engine import ScriptEngine, build_engine
 from core.script_gen.generator import draft
 from core.script_gen.judge import repair, review
@@ -278,6 +278,31 @@ def generate_script(
         changelog = f"{changelog}\n{repair_log}".strip()
 
 
+def _measure_actual_duration_sec(audio_path: str) -> float | None:
+    """Read the rendered file's actual duration in seconds, or None.
+
+    Used to close the calibration loop: log_estimate_accuracy() compares
+    this against the pre-render estimate so DEFAULT_WPM can eventually be
+    tuned from real data instead of guesswork (see docs/auto_generation/
+    README.md :: "Calibrating DEFAULT_WPM").
+
+    A calibration nicety must never fail a job that already produced audio
+    -- the render succeeded, and that is what the user cares about -- so any
+    read failure (unreadable file, or in tests a stub pipeline that writes a
+    non-audio placeholder) is logged at DEBUG and swallowed rather than
+    raised.
+    """
+    try:
+        import soundfile as sf
+
+        return float(sf.info(audio_path).duration)
+    except Exception:
+        logger.debug(
+            "could not read actual duration from %s", audio_path, exc_info=True
+        )
+        return None
+
+
 def run(
     prompt: str,
     *,
@@ -356,6 +381,13 @@ def run(
     config.recent_backgrounds.append(background_path)
     del config.recent_backgrounds[:-RECENT_BACKGROUNDS_LIMIT]
 
+    actual_sec = _measure_actual_duration_sec(audio_path)
+    estimate_ratio = None
+    if actual_sec is not None:
+        log_estimate_accuracy(outcome.estimated_sec, actual_sec, config.tts_engine)
+        if outcome.estimated_sec:
+            estimate_ratio = actual_sec / outcome.estimated_sec
+
     audio = Path(audio_path)
     script_path = audio.with_suffix(".script.txt")
     meta_path = audio.with_suffix(".meta.json")
@@ -374,6 +406,8 @@ def run(
                 "changelog": outcome.changelog,
                 "violations": _violation_dicts(outcome.violations),
                 "estimated_sec": outcome.estimated_sec,
+                "actual_sec": actual_sec,
+                "estimate_ratio": estimate_ratio,
                 "repairs_used": outcome.repairs_used,
             },
             indent=2,

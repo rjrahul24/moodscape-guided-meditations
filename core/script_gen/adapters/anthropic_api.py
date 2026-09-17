@@ -6,11 +6,39 @@ official anthropic SDK.
 Current-model notes: adaptive thinking is the default and budget_tokens is
 rejected with a 400, so it is never sent. Streaming is used because large
 max_tokens values risk an HTTP timeout on a non-streaming request.
+
+Retry note: unlike openai_compat.py (raw httpx, no built-in retry -- see
+that module for the hand-rolled loop), the `anthropic` SDK already retries
+connection errors, 408, 409, 429 and 5xx with exponential backoff
+internally, governed by the client's `max_retries` (SDK default: 2). We do
+NOT wrap another retry loop around it -- that would multiply attempts
+(max_retries^2) and double the backoff for no benefit. Instead we pass
+`max_retries` explicitly when constructing the client, so the retry budget
+is an intentional, visible choice rather than an unexamined SDK default,
+and stays consistent (in attempt count) with the openai_compat adapter.
 """
 
 import os
 
 from core.script_gen.engine import ScriptEngine
+
+# Total attempts (1 initial + retries) the SDK will make on a retryable
+# error. Overridable with the same env var openai_compat.py uses, so the
+# two adapters' retry budgets can be tuned in one place. The anthropic SDK's
+# `max_retries` counts *retries*, not total attempts, hence the "- 1".
+DEFAULT_MAX_RETRIES = 3
+
+
+def _sdk_max_retries() -> int:
+    raw = os.environ.get("MOODSCAPE_SCRIPT_MAX_RETRIES")
+    if not raw:
+        total_attempts = DEFAULT_MAX_RETRIES
+    else:
+        try:
+            total_attempts = max(1, int(raw))
+        except ValueError:
+            total_attempts = DEFAULT_MAX_RETRIES
+    return max(0, total_attempts - 1)
 
 
 class AnthropicEngine(ScriptEngine):
@@ -50,7 +78,9 @@ class AnthropicEngine(ScriptEngine):
 
         api_key = os.environ.get(self._api_key_env)
         try:
-            self._client = anthropic.Anthropic(api_key=api_key)
+            self._client = anthropic.Anthropic(
+                api_key=api_key, max_retries=_sdk_max_retries()
+            )
         except Exception as exc:
             raise RuntimeError(
                 f"Failed to construct the Anthropic client for model "
@@ -79,16 +109,17 @@ class AnthropicEngine(ScriptEngine):
                 messages=[{"role": "user", "content": user}],
             ) as stream:
                 message = stream.get_final_message()
+
+            text = "".join(
+                block.text
+                for block in message.content
+                if getattr(block, "type", None) == "text"
+            )
         except Exception as exc:
             raise RuntimeError(
                 f"Anthropic request failed for model {self._model!r}: {exc}"
             ) from exc
 
-        text = "".join(
-            block.text
-            for block in message.content
-            if getattr(block, "type", None) == "text"
-        )
         if not text:
             raise RuntimeError(
                 f"Anthropic returned no text content for model {self._model!r}."
