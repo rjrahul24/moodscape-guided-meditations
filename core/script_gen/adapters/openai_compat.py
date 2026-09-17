@@ -95,10 +95,32 @@ class OpenAICompatEngine(ScriptEngine):
                 f"{self._provider} timed out after {self._timeout:.0f}s at {url}. "
                 "A large local model may need a longer timeout."
             ) from exc
+        except httpx.RequestError as exc:
+            # Catch-all for every other transport failure (ReadError,
+            # WriteError, ProtocolError, RemoteProtocolError, ProxyError,
+            # ...). ConnectError and TimeoutException are also RequestError
+            # subclasses but are caught above with better messages, so
+            # Python's first-match rule keeps those. A mid-response
+            # connection reset from a local model server is ordinary, not
+            # exceptional, so it must not escape as a bare httpx exception.
+            raise RuntimeError(
+                f"{self._provider} request failed at {url}: {exc}"
+            ) from exc
         except httpx.HTTPStatusError as exc:
             raise RuntimeError(
                 f"{self._provider} returned HTTP {exc.response.status_code} "
                 f"for model {self._model!r}: {exc.response.text[:400]}"
+            ) from exc
+        except ValueError as exc:
+            # response.json() raises json.JSONDecodeError (a ValueError
+            # subclass) on a non-JSON 200 body -- e.g. a proxy or load
+            # balancer returning an HTML error page with status 200, or a
+            # truncated response. Catching ValueError (not JSONDecodeError)
+            # also covers alternative JSON backends that raise other
+            # ValueError subclasses.
+            raise RuntimeError(
+                f"{self._provider} returned a non-JSON response body from "
+                f"{url}: {response.text[:400]}"
             ) from exc
 
         try:

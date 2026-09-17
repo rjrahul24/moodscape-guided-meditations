@@ -5,7 +5,9 @@ paths run with no network.
 """
 
 import json
+import os
 import unittest
+from unittest.mock import patch
 
 import httpx
 
@@ -111,6 +113,33 @@ class TestOpenAICompatEngine(unittest.TestCase):
         )
         with self.assertRaises(RuntimeError):
             self.build(transport).complete("sys", "usr")
+
+    def test_non_json_response_raises_runtime_error(self):
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(200, text="not json{{")
+        )
+        with self.assertRaises(RuntimeError):
+            self.build(transport).complete("sys", "usr")
+
+    def test_read_error_raises_runtime_error(self):
+        def reset(request):
+            raise httpx.ReadError("connection reset", request=request)
+
+        engine = self.build(httpx.MockTransport(reset))
+        with self.assertRaises(RuntimeError):
+            engine.complete("sys", "usr")
+
+    def test_authorization_header_sent_when_key_present(self):
+        captured = []
+        with patch.dict(os.environ, {"MOODSCAPE_TEST_PRESENT_KEY": "secret123"}):
+            OpenAICompatEngine(
+                provider="openrouter",
+                model="some/model",
+                base_url="https://openrouter.ai/api/v1",
+                api_key_env="MOODSCAPE_TEST_PRESENT_KEY",
+                transport=ok_transport(captured),
+            ).complete("sys", "usr")
+        self.assertEqual(captured[0].headers["authorization"], "Bearer secret123")
 
 
 if __name__ == "__main__":
