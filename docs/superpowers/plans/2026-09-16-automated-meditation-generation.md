@@ -32,7 +32,7 @@
 | **1 — Deterministic core** | 1–5 | Linter, duration estimator, background picker, rules loader. No LLM anywhere. Fully tested offline. |
 | **2 — Model interface** | 6–9 | `ScriptEngine` ABC, adapters, generator + judge + repair loop. Tested against a fake engine. |
 | **3 — Orchestration** | 10–12 | Orchestrator, streaming runner, Gradio tab, benchmark harness. |
-| **4 — Delivery** | 13–15 | End-to-end integration tests, full documentation, review and push. |
+| **4 — Delivery** | 13–16 | End-to-end integration tests, full documentation, review and push, visual verification. |
 
 Phase 1 is independently valuable: the linter and estimator are usable on hand-written scripts the moment they exist.
 
@@ -4331,6 +4331,48 @@ BODY
 - [ ] **Step 7: Report the PR URL**
 
 Print the URL `gh pr create` returned. Do **not** merge it and do **not** enable auto-merge — review is the user's call.
+
+---
+
+### Task 16: Visual verification of the Auto-Generate tab
+
+**Files:**
+- Create: `scripts/preview_auto_tab.py`
+- **Do NOT modify `app.py`.**
+
+**Interfaces:** consumes `build_auto_tab` from `core/auto_tab.py`.
+
+Requested by the user: run the app and visually confirm the new UI behaves. The tab is not mounted in `app.py` (that file holds unrelated uncommitted work), so it is mounted in a standalone harness instead. The harness is a real dev tool worth keeping — it lets the tab be exercised without booting the full app and its models.
+
+- [ ] **Step 1: Write the harness**
+
+Create `scripts/preview_auto_tab.py`: a `gr.Blocks()` containing only `build_auto_tab()`, launched on a fixed port. Keep it minimal — no model loading at import time.
+
+- [ ] **Step 2: Launch and verify rendering**
+
+Start it, open it, and confirm every control renders: the prompt box, both dropdowns, both sliders, both model fields, the Generate button, the audio player, the status box, and both accordions.
+
+- [ ] **Step 3: Verify defaults match the golden path**
+
+Content Type `meditation`, Voice Engine `f5`, Min 5, Max 7, and both model fields pre-filled from the environment.
+
+- [ ] **Step 4: Verify the blank-prompt path**
+
+Click Generate with an empty prompt. Expect the status box to show `Enter a prompt first.` and no render to start. This exercises `StreamingRun`'s short-circuit through the real UI.
+
+- [ ] **Step 5: Verify the failure path surfaces readably**
+
+Set the generator model to a spec that cannot resolve (e.g. `ollama:definitely-not-a-model`), enter a real prompt, and click Generate. Expect a `Failed: ...` status naming the provider — not a hang and not a raw traceback. This is the fire-and-forget failure surface as a user would actually meet it.
+
+- [ ] **Step 6: Check the browser console and server log**
+
+Confirm no JavaScript errors and no unhandled exceptions in the server output.
+
+- [ ] **Step 7: Capture evidence and commit**
+
+Screenshot the tab. Commit the harness with a `chore(dev):` conventional commit.
+
+**Not in scope:** a full successful generation through the UI. That needs a working local model and 8-10 minutes of render; the end-to-end path is already covered by Task 13's real renders.
 
 ---
 
