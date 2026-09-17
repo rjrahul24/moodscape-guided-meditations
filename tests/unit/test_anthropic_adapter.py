@@ -1,6 +1,9 @@
 """Tests for the Anthropic adapter, using a stub client (no network)."""
 
+import os
+import sys
 import unittest
+from unittest.mock import patch
 
 from core.script_gen.adapters.anthropic_api import AnthropicEngine
 
@@ -102,6 +105,55 @@ class TestAnthropicEngine(unittest.TestCase):
         engine = AnthropicEngine("claude-opus-5", client=StubClient([]))
         with self.assertRaises(RuntimeError):
             engine.complete("sys", "usr")
+
+    def test_package_not_installed_raises(self):
+        # Forcing sys.modules["anthropic"] = None makes `import anthropic`
+        # raise the real ImportError, without needing the package absent.
+        with patch.dict(
+            os.environ, {"MOODSCAPE_TEST_KEY_NOPKG": "sk-test"}
+        ), patch.dict(sys.modules, {"anthropic": None}):
+            engine = AnthropicEngine(
+                "claude-opus-5", api_key_env="MOODSCAPE_TEST_KEY_NOPKG"
+            )
+            with self.assertRaises(RuntimeError) as ctx:
+                engine.complete("sys", "usr")
+        self.assertIn("not installed", str(ctx.exception))
+
+    def test_client_construction_failure_raises_runtime_error(self):
+        class FakeAnthropicModule:
+            class Anthropic:
+                def __init__(self, **kwargs):
+                    raise TypeError("bad proxy configuration")
+
+        with patch.dict(
+            os.environ, {"MOODSCAPE_TEST_KEY_CTORFAIL": "sk-test"}
+        ), patch.dict(sys.modules, {"anthropic": FakeAnthropicModule}):
+            engine = AnthropicEngine(
+                "claude-opus-5", api_key_env="MOODSCAPE_TEST_KEY_CTORFAIL"
+            )
+            with self.assertRaises(RuntimeError):
+                engine.complete("sys", "usr")
+
+    def test_custom_api_key_env_value_is_forwarded_to_client(self):
+        captured = {}
+
+        class FakeAnthropicModule:
+            class Anthropic:
+                def __init__(self, **kwargs):
+                    captured.update(kwargs)
+                    self.messages = StubMessages(
+                        StubMessage([StubBlock("out")]), []
+                    )
+
+        with patch.dict(
+            os.environ, {"MOODSCAPE_TEST_KEY_CUSTOM": "sk-custom-value"}
+        ), patch.dict(sys.modules, {"anthropic": FakeAnthropicModule}):
+            engine = AnthropicEngine(
+                "claude-opus-5", api_key_env="MOODSCAPE_TEST_KEY_CUSTOM"
+            )
+            engine.complete("sys", "usr")
+
+        self.assertEqual(captured.get("api_key"), "sk-custom-value")
 
 
 if __name__ == "__main__":

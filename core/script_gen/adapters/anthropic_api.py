@@ -48,7 +48,14 @@ class AnthropicEngine(ScriptEngine):
                 "Run: pip install anthropic"
             ) from exc
 
-        self._client = anthropic.Anthropic()
+        api_key = os.environ.get(self._api_key_env)
+        try:
+            self._client = anthropic.Anthropic(api_key=api_key)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to construct the Anthropic client for model "
+                f"{self._model!r}: {exc}"
+            ) from exc
         return self._client
 
     def complete(
