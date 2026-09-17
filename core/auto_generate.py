@@ -292,9 +292,9 @@ def _measure_actual_duration_sec(audio_path: str) -> float | None:
     non-audio placeholder) is logged at DEBUG and swallowed rather than
     raised.
     """
-    import soundfile as sf
-
     try:
+        import soundfile as sf
+
         return float(sf.info(audio_path).duration)
     except Exception:
         logger.debug(

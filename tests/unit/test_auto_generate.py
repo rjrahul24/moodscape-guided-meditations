@@ -394,6 +394,19 @@ class TestMeasureActualDuration(unittest.TestCase):
             _measure_actual_duration_sec(str(self.dir / "missing.wav"))
         )
 
+    def test_returns_none_when_soundfile_is_not_importable(self):
+        # Regression guard: `import soundfile as sf` used to sit outside the
+        # try/except, so an ImportError would propagate out of run() BEFORE
+        # meta.json and .script.txt are written -- losing every artifact
+        # after a successful render. The import now lives inside the same
+        # try/except that already swallows read failures.
+        import sys
+
+        with patch.dict(sys.modules, {"soundfile": None}):
+            self.assertIsNone(
+                _measure_actual_duration_sec(str(self.dir / "clip.wav"))
+            )
+
 
 class TestAutoConfigFromEnv(unittest.TestCase):
     """A malformed env var must be reported, not silently defaulted or let
