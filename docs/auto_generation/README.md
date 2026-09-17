@@ -143,9 +143,9 @@ attempts including the first) so their retry budgets stay in sync:
   `Retry-After` header — can't stall a job indefinitely, and honours a
   provider's `Retry-After` header when present.
 - **`script_gen/adapters/anthropic_api.py`** does **not** add a second loop.
-  The official `anthropic` SDK already retries connection errors, 429 and
-  5xx internally with its own exponential backoff, governed by the client's
-  `max_retries` constructor argument. The adapter just passes
+  The official `anthropic` SDK already retries connection errors, 408, 409,
+  429 and 5xx internally with its own exponential backoff, governed by the
+  client's `max_retries` constructor argument. The adapter just passes
   `max_retries` explicitly (derived from `MOODSCAPE_SCRIPT_MAX_RETRIES - 1`,
   since the SDK's `max_retries` counts retries, not total attempts) so that
   budget is an intentional, visible choice instead of an unexamined SDK
@@ -154,10 +154,18 @@ attempts including the first) so their retry budgets stay in sync:
   no benefit — see the gotcha in `docs/GOTCHAS.md`.
 
 **What counts as transient, in both adapters:** connection errors, timeouts,
-HTTP 429, and HTTP 5xx. **Never retried:** any other 4xx (a 400 fails on the
-first request), a missing API key (raised before any request is sent), or a
-malformed/empty response body (the request succeeded; the content is wrong,
-so retrying would just reproduce it).
+HTTP 408, HTTP 409, HTTP 429, and HTTP 5xx. **Never retried:** any other 4xx
+(a 400 fails on the first request), a missing API key (raised before any
+request is sent), or a malformed/empty response body (the request
+succeeded; the content is wrong, so retrying would just reproduce it).
+
+**Latency multiplier at the default budget.** A fully hung provider stalls
+roughly `DEFAULT_TIMEOUT_SEC` (300s) x 3 attempts per `openai_compat` call,
+and `600s` x 3 attempts per `anthropic` call (the anthropic SDK's own
+per-request timeout), and a single `run()` can make up to four model calls
+(draft, review, up to two repairs). Anyone raising
+`MOODSCAPE_SCRIPT_MAX_RETRIES` should weigh that multiplier against the 30s
+backoff cap above.
 
 ## The failure severity table
 
@@ -200,30 +208,12 @@ codes except the two advisory ones below are **FATAL**.
 | `EMOJI_PRESENT` | FATAL | Format | Any emoji character in the script. |
 | `ALL_CAPS` | ADVISORY | Format | A run of 4+ capital letters — capitals change engine pronunciation, but this doesn't block a render. |
 | `SENTENCE_TOO_LONG` | ADVISORY | Format | A sentence over 25 words (the guide's ideal band is 8–20). |
-| `CHUNK_TOO_LONG` | ADVISORY | Format | Kokoro-only backstop, only emitted when `check_format()`/`check()` is called with `engine="kokoro"` (default `None` skips it, unchanged for every other caller). Runs the real `merge_sentences_to_chunks()` chunker over the script's speech segments and flags a chunk above `MAX_CHUNK_TOKENS` (150 tokens, ~115 words). |
 | `CLINICAL_CLAIM` | FATAL | Safety | Language implying the practice cures, heals, treats, or diagnoses a condition, or replaces therapy/medication. |
 | `OUTCOME_PROMISE` | FATAL | Safety | A guaranteed emotional outcome ("you will be completely calm", "this will eliminate your stress"). |
 | `INVALIDATING` | FATAL | Safety | Instructions like "don't feel anxious" or "there's nothing wrong with you" that dismiss the listener's actual state. |
 | `DISSOCIATION` | FATAL | Safety | Dissociation-adjacent imagery ("leave your body", "float away from yourself") — contraindicated for trauma survivors. |
 | `BREATH_HOLD` | FATAL | Safety | An instructed breath hold longer than 7 seconds — a real risk for listeners with panic disorder or asthma. |
 | `DURATION_OUT_OF_WINDOW` | ADVISORY | Duration | The estimated runtime falls outside `target_min_sec`–`target_max_sec`. Only emitted when an estimate is supplied. |
-
-**`CHUNK_TOO_LONG` rarely fires in practice, by design.**
-`merge_sentences_to_chunks()` flushes a chunk before it would exceed
-`MAX_CHUNK_TOKENS`, so a multi-sentence chunk can never end up over the
-limit — the only way a produced chunk can trip this check is a single
-sentence already ~115+ words on its own, and any sentence that long has
-already tripped the far cheaper `SENTENCE_TOO_LONG` check (25-word
-threshold, roughly a third the size). In testing it took a 120-word single
-sentence to trigger `CHUNK_TOO_LONG`, and `SENTENCE_TOO_LONG` fires on that
-same script too. So `SENTENCE_TOO_LONG` is the stricter gate in every case
-this check can reach; `CHUNK_TOO_LONG` exists as a backstop for a script
-that would somehow slip past it, not as an independent detector.
-
-**Wired into `auto_generate.generate_script()`.** It calls `check(..., engine=config.tts_engine)`, so this backstop is live in the production auto-generate flow — it fires for `AutoConfig(tts_engine="kokoro", ...)` and is a no-op for `tts_engine="f5"`, exactly as `check_format()`'s `engine` parameter intends. See
-`tests/unit/test_auto_generate.py :: test_chunk_too_long_fires_for_kokoro_but_not_f5`
-for an end-to-end check of both branches (also covered directly in
-`tests/unit/test_script_linter.py`).
 
 The safety patterns are matched case-insensitively against tag-stripped
 prose, with typographic apostrophes (U+2019, U+2018, U+02BC, U+00B4, U+0060)
