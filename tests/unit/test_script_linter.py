@@ -95,6 +95,27 @@ class TestFormatChecks(unittest.TestCase):
         script = "5 minutes from now, you will feel the floor beneath you."
         self.assertEqual(check_format(script), [])
 
+    def test_stray_open_ssml_tag_is_fatal(self):
+        violations = check_format("Settle in. <emphasis>Breathe out.</emphasis>")
+        self.assertIn("ANGLE_TAG", codes(violations))
+        self.assertTrue(
+            all(v.severity == FATAL for v in violations if v.code == "ANGLE_TAG")
+        )
+
+    def test_self_closing_ssml_tag_is_fatal(self):
+        violations = check_format('Rest here. <break time="2s"/> Now return.')
+        self.assertIn("ANGLE_TAG", codes(violations))
+
+    def test_literal_less_than_in_prose_is_not_a_tag(self):
+        # Pins the non-match: ordinary prose using "less than" in words, and
+        # a literal "<" character not followed by a letter (so it cannot be
+        # confused with the start of a tag), must not be flagged.
+        script = (
+            "This should take less than five minutes of your day. "
+            "Aim for a rate of <10 breaths per minute."
+        )
+        self.assertNotIn("ANGLE_TAG", codes(check_format(script)))
+
 
 class TestSafetyChecks(unittest.TestCase):
     def test_clean_script_passes(self):
@@ -120,9 +141,33 @@ class TestSafetyChecks(unittest.TestCase):
 
     def test_curly_apostrophe_does_not_evade_the_block(self):
         # LLMs emit U+2019 constantly; a safety block must not be defeated
-        # by a typographic quote.
-        violations = check_safety("Don't feel anxious about it.")
-        self.assertIn("INVALIDATING", codes(violations))
+        # by a typographic quote. Every form is built from an EXPLICIT
+        # \uXXXX escape, never a literal curly character typed into this
+        # file -- a literal character is exactly what caused the original
+        # bug (it was silently normalized to ASCII on the way to disk,
+        # turning the old test byte-identical to the plain-ASCII test above
+        # it, so it passed at every commit while the safety block was off).
+        forms = [
+            ("U+2019 RIGHT SINGLE QUOTATION MARK", "’"),
+            ("U+2018 LEFT SINGLE QUOTATION MARK", "‘"),
+            ("U+02BC MODIFIER LETTER APOSTROPHE", "ʼ"),
+            ("U+00B4 ACUTE ACCENT", "´"),
+            ("U+0060 GRAVE ACCENT", "`"),
+        ]
+        for label, ch in forms:
+            with self.subTest(label):
+                violations = check_safety(f"Don{ch}t feel anxious about it.")
+                self.assertIn("INVALIDATING", codes(violations))
+
+    def test_apostrophe_widening_does_not_over_match_clean_prose(self):
+        # The widened character set must not turn ordinary prose (which may
+        # itself contain any of these characters, e.g. in a quotation or a
+        # name) into a false positive.
+        script = (
+            "She said, ‘just breathe’ and then quoted a `poem` "
+            "with an ´accent´ mark."
+        )
+        self.assertEqual(check_safety(script), [])
 
     def test_extended_breath_hold_is_fatal(self):
         violations = check_safety("Hold your breath for 20 seconds.")

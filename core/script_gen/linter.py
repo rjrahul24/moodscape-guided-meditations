@@ -33,6 +33,11 @@ _EMOJI = re.compile(
 )
 _ALL_CAPS = re.compile(r"\b[A-Z]{4,}\b")
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+# By the time check_format() runs on a judge's output, parse_judge_response()
+# has already stripped the judge's own <script>/<changelog> protocol tags, so
+# any surviving <...> is genuinely stray markup (e.g. SSML like
+# <break time="2s"/> or <emphasis>) that the TTS engine would speak aloud.
+_ANGLE_TAG = re.compile(r"</?\s*[A-Za-z][^>\n]*/?>")
 
 
 @dataclass(frozen=True)
@@ -44,6 +49,12 @@ class Violation:
         severity: FATAL (do not render) or ADVISORY (render, log a warning).
         message: Human- and model-readable description used for repair.
         span: Optional (start, end) character offsets into the script.
+            check_safety() always sets this to None: its offsets are computed
+            against tag-stripped, apostrophe-normalized prose, not the
+            original script, so they would not point at the right place in
+            the source text. Nothing currently reads span, but a future
+            reader should not be misled into treating a safety violation's
+            span as a script offset.
     """
 
     code: str
@@ -124,6 +135,21 @@ def check_format(script: str) -> list[Violation]:
                 code="EMOJI_PRESENT",
                 severity=FATAL,
                 message="Script contains emoji. Use plain text only.",
+            )
+        )
+
+    for match in _ANGLE_TAG.finditer(script):
+        violations.append(
+            Violation(
+                code="ANGLE_TAG",
+                severity=FATAL,
+                message=(
+                    f"Angle-bracket markup {match.group(0)!r} found. Only the "
+                    "square-bracket tags [pause:Xs], [breath], [inhale] and "
+                    "[exhale] are supported — SSML or HTML-style tags are not "
+                    "stripped before synthesis and would be read aloud."
+                ),
+                span=(match.start(), match.end()),
             )
         )
 
@@ -245,11 +271,27 @@ _BREATH_HOLD = re.compile(
 def _normalize_apostrophes(text: str) -> str:
     """Fold typographic apostrophes to ASCII before pattern matching.
 
-    LLMs routinely emit U+2019 (') rather than "'". Without this, "Don't
-    feel anxious" slips past the INVALIDATING pattern — a safety hard-block
-    silently defeated by a curly quote.
+    LLMs routinely emit U+2019 (RIGHT SINGLE QUOTATION MARK) rather than
+    U+0027 (APOSTROPHE). Without this, "Don’t feel anxious" slips past
+    the INVALIDATING pattern — a safety hard-block silently defeated by a
+    curly quote.
+
+    IMPORTANT: every replacement below MUST use an explicit \\uXXXX escape,
+    never a literal curly character typed into this file. A previous version
+    of this function used a literal right single quote as BOTH the search and
+    replacement character (i.e. a no-op "'" -> "'"), because an editor/tool
+    in the save path silently normalized the literal curly character to
+    ASCII on the way to disk. That turned this whole function into a no-op
+    and disabled the INVALIDATING hard-block for the common case (LLMs emit
+    U+2019 by default). Explicit escapes cannot be silently re-normalized.
     """
-    return text.replace("'", "'").replace("ʼ", "'")
+    return (
+        text.replace("’", "'")  # right single quotation mark
+        .replace("‘", "'")  # left single quotation mark
+        .replace("ʼ", "'")  # modifier letter apostrophe
+        .replace("´", "'")  # acute accent
+        .replace("`", "'")  # grave accent
+    )
 
 
 def check_safety(script: str) -> list[Violation]:
@@ -264,7 +306,9 @@ def check_safety(script: str) -> list[Violation]:
                     code=code,
                     severity=FATAL,
                     message=f"{message} Found: {match.group(0)!r}.",
-                    span=(match.start(), match.end()),
+                    # span=None: offsets here are into the stripped/normalized
+                    # `prose`, not the original script — see Violation.span.
+                    span=None,
                 )
             )
 
@@ -290,7 +334,8 @@ def check_safety(script: str) -> list[Violation]:
                         f"{MAX_BREATH_HOLD_SEC}s are a real risk for listeners "
                         "with panic disorder or asthma. Shorten it or remove it."
                     ),
-                    span=(match.start(), match.end()),
+                    # span=None: see Violation.span docstring.
+                    span=None,
                 )
             )
 
