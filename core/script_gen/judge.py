@@ -13,23 +13,41 @@ from core.script_gen.engine import ScriptEngine
 from core.script_gen.generator import strip_wrapper
 from core.script_gen.linter import Violation, format_for_repair
 
-_SCRIPT_BLOCK = re.compile(r"<script>\s*(.*?)\s*</script>", re.DOTALL | re.IGNORECASE)
-_CHANGELOG_BLOCK = re.compile(
-    r"<changelog>\s*(.*?)\s*</changelog>", re.DOTALL | re.IGNORECASE
+# \b after the tag name matters: without it, "<scriptfoo>" would match. The
+# open tag tolerates attributes (models occasionally add lang="en" etc.); the
+# closing tag tolerates whitespace ("</ script >").
+_SCRIPT_BLOCK = re.compile(
+    r"<script\b[^>]*>\s*(.*?)\s*</\s*script\s*>", re.DOTALL | re.IGNORECASE
 )
+_CHANGELOG_BLOCK = re.compile(
+    r"<changelog\b[^>]*>\s*(.*?)\s*</\s*changelog\s*>", re.DOTALL | re.IGNORECASE
+)
+# Catches a leftover script/changelog tag that didn't pair up into a full
+# block above (e.g. an opening tag with no matching close). [^>\n]* is
+# deliberately bounded to a single line so this can never swallow real script
+# prose sitting on the next line; >? tolerates a tag that never closes at all.
+_STRAY_TAG = re.compile(r"</?\s*(?:script|changelog)\b[^>\n]*>?", re.IGNORECASE)
 
 
 def parse_judge_response(raw: str) -> tuple[str, str]:
     """Split the judge's response into (script, changelog).
 
     Degrades gracefully: a model that ignores the delimiters still yields a
-    usable script rather than failing the run.
+    usable script rather than failing the run. When no <script> block can be
+    located, the fallback is the raw text with any complete <changelog> block
+    and any stray script/changelog tags removed first — otherwise a malformed
+    tag could leak the judge's changelog straight into audio that gets read
+    aloud.
     """
     script_match = _SCRIPT_BLOCK.search(raw)
     changelog_match = _CHANGELOG_BLOCK.search(raw)
-
-    script = script_match.group(1) if script_match else raw
     changelog = changelog_match.group(1).strip() if changelog_match else ""
+
+    if script_match:
+        script = script_match.group(1)
+    else:
+        script = _CHANGELOG_BLOCK.sub("", raw)
+        script = _STRAY_TAG.sub("", script)
 
     return strip_wrapper(script), changelog
 

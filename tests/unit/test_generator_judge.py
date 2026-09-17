@@ -55,6 +55,28 @@ class TestJudgeParsing(unittest.TestCase):
         script, _ = parse_judge_response(raw)
         self.assertEqual(script, "Breathe in.")
 
+    def test_tolerates_attributes_on_the_script_tag(self):
+        raw = (
+            '<script lang="en">\nBreathe deeply.\n</script>\n'
+            "<changelog>\n- fixed pacing\n</changelog>"
+        )
+        script, changelog = parse_judge_response(raw)
+        self.assertEqual(script, "Breathe deeply.")
+        self.assertIn("fixed pacing", changelog)
+
+    def test_unmatchable_script_tag_does_not_leak_the_changelog(self):
+        # The opening tag never closes, so <script> can't be located
+        # structurally. The fallback must not let the changelog block (or
+        # its own tag text) leak into what the TTS engine reads aloud.
+        raw = (
+            "<script\nBreathe deeply and relax.\n"
+            "<changelog>\n- fixed pacing\n</changelog>"
+        )
+        script, _ = parse_judge_response(raw)
+        self.assertNotIn("fixed pacing", script)
+        self.assertNotIn("changelog", script.lower())
+        self.assertNotIn("<script", script.lower())
+
 
 class TestReview(unittest.TestCase):
     def test_returns_revised_script_and_changelog(self):
