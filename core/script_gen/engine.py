@@ -137,7 +137,7 @@ def build_engine(spec: str) -> ScriptEngine:
     if provider == "anthropic":
         from core.script_gen.adapters.anthropic_api import AnthropicEngine
 
-        return AnthropicEngine(model)
+        return AnthropicEngine(model, api_key_env=PROVIDER_KEY_ENV["anthropic"])
 
     if provider in PROVIDER_BASE_URLS:
         from core.script_gen.adapters.openai_compat import OpenAICompatEngine

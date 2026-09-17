@@ -8,6 +8,7 @@ import unittest
 
 from core.script_gen.engine import (
     PROVIDER_BASE_URLS,
+    PROVIDER_KEY_ENV,
     FakeScriptEngine,
     ScriptEngine,
     build_engine,
@@ -56,6 +57,14 @@ class TestRegistry(unittest.TestCase):
     def test_every_base_url_ends_with_v1(self):
         for url in PROVIDER_BASE_URLS.values():
             self.assertTrue(url.endswith("/v1"), url)
+
+    def test_build_engine_forwards_the_anthropic_key_env(self):
+        # PROVIDER_KEY_ENV["anthropic"] must actually reach AnthropicEngine —
+        # otherwise the table is decorative and changing that entry would
+        # silently do nothing (it previously coincided with the adapter's
+        # own hardcoded default, masking the bug).
+        engine = build_engine("anthropic:claude-opus-5")
+        self.assertEqual(engine._api_key_env, PROVIDER_KEY_ENV["anthropic"])
 
 
 class TestFakeEngine(unittest.TestCase):

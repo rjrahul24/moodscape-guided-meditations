@@ -114,6 +114,30 @@ class TestOpenAICompatEngine(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.build(transport).complete("sys", "usr")
 
+    def test_null_content_raises_runtime_error(self):
+        # {"content": null} in a 200 body is standard for reasoning models
+        # on providers like OpenRouter/Groq. Left unguarded this returns
+        # None, and generator.py later does a string op on it, raising a
+        # bare TypeError that escapes every RuntimeError handler in the
+        # auto-generation pipeline.
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, json={"choices": [{"message": {"content": None}}]}
+            )
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            self.build(transport).complete("sys", "usr")
+        self.assertIn("ollama", str(ctx.exception).lower())
+
+    def test_empty_string_content_raises_runtime_error(self):
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, json={"choices": [{"message": {"content": ""}}]}
+            )
+        )
+        with self.assertRaises(RuntimeError):
+            self.build(transport).complete("sys", "usr")
+
     def test_non_json_response_raises_runtime_error(self):
         transport = httpx.MockTransport(
             lambda request: httpx.Response(200, text="not json{{")

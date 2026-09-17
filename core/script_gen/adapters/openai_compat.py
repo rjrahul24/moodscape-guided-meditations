@@ -124,9 +124,23 @@ class OpenAICompatEngine(ScriptEngine):
             ) from exc
 
         try:
-            return data["choices"][0]["message"]["content"]
+            content = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise RuntimeError(
                 f"{self._provider} returned an unexpected response shape: "
                 f"{str(data)[:400]}"
             ) from exc
+
+        if not content:
+            # A 200 body with {"content": null} is standard for reasoning
+            # models on providers like OpenRouter/Groq when the reasoning
+            # trace consumed the whole token budget. Left unguarded, this
+            # returns None, and the caller (generator.py) later does a
+            # string operation on it, raising a bare TypeError that escapes
+            # every RuntimeError handler in the auto-generation pipeline.
+            raise RuntimeError(
+                f"{self._provider} returned empty content for model "
+                f"{self._model!r}. Reasoning models may need a non-reasoning "
+                "variant or a different endpoint."
+            )
+        return content
