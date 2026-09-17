@@ -88,7 +88,7 @@ class TestFormatChecks(unittest.TestCase):
         self.assertIn("MARKDOWN_PRESENT", codes(violations))
 
     def test_star_emoji_is_fatal(self):
-        violations = check_format("You are doing great ⭐")
+        violations = check_format("You are doing great \u2b50")
         self.assertIn("EMOJI_PRESENT", codes(violations))
 
     def test_number_word_at_line_start_is_not_list(self):
@@ -148,10 +148,10 @@ class TestSafetyChecks(unittest.TestCase):
         # turning the old test byte-identical to the plain-ASCII test above
         # it, so it passed at every commit while the safety block was off).
         forms = [
-            ("U+2019 RIGHT SINGLE QUOTATION MARK", "’"),
-            ("U+2018 LEFT SINGLE QUOTATION MARK", "‘"),
-            ("U+02BC MODIFIER LETTER APOSTROPHE", "ʼ"),
-            ("U+00B4 ACUTE ACCENT", "´"),
+            ("U+2019 RIGHT SINGLE QUOTATION MARK", "\u2019"),
+            ("U+2018 LEFT SINGLE QUOTATION MARK", "\u2018"),
+            ("U+02BC MODIFIER LETTER APOSTROPHE", "\u02bc"),
+            ("U+00B4 ACUTE ACCENT", "\u00b4"),
             ("U+0060 GRAVE ACCENT", "`"),
         ]
         for label, ch in forms:
@@ -164,8 +164,8 @@ class TestSafetyChecks(unittest.TestCase):
         # itself contain any of these characters, e.g. in a quotation or a
         # name) into a false positive.
         script = (
-            "She said, ‘just breathe’ and then quoted a `poem` "
-            "with an ´accent´ mark."
+            "She said, \u2018just breathe\u2019 and then quoted a `poem` "
+            "with an \u00b4accent\u00b4 mark."
         )
         self.assertEqual(check_safety(script), [])
 

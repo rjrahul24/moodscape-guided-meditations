@@ -272,7 +272,7 @@ def _normalize_apostrophes(text: str) -> str:
     """Fold typographic apostrophes to ASCII before pattern matching.
 
     LLMs routinely emit U+2019 (RIGHT SINGLE QUOTATION MARK) rather than
-    U+0027 (APOSTROPHE). Without this, "Don’t feel anxious" slips past
+    U+0027 (APOSTROPHE). Without this, "Don\u2019t feel anxious" slips past
     the INVALIDATING pattern — a safety hard-block silently defeated by a
     curly quote.
 
@@ -286,11 +286,11 @@ def _normalize_apostrophes(text: str) -> str:
     U+2019 by default). Explicit escapes cannot be silently re-normalized.
     """
     return (
-        text.replace("’", "'")  # right single quotation mark
-        .replace("‘", "'")  # left single quotation mark
-        .replace("ʼ", "'")  # modifier letter apostrophe
-        .replace("´", "'")  # acute accent
-        .replace("`", "'")  # grave accent
+        text.replace("\u2019", "'")  # right single quotation mark
+        .replace("\u2018", "'")  # left single quotation mark
+        .replace("\u02bc", "'")  # modifier letter apostrophe
+        .replace("\u00b4", "'")  # acute accent
+        .replace("\u0060", "'")  # grave accent
     )
 
 
