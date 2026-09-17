@@ -25,3 +25,7 @@ When you need to change something, start here. Locate the row that matches your 
 | DeepFilter voice enhancement | `core/deepfilter_enhancer.py` | `core/pipeline.py` (toggle) |
 | Stereo upmix (Haas) | `core/stereo_upmix.py` | `core/pipeline.py` |
 | Breath sound loading | `core/breath_sounds.py` | `scripts/generate_breath_samples.py` |
+| Change how scripts are written | `docs/prompting_guides/` | `core/script_gen/rules.py` |
+| Add a safety rule | `docs/prompting_guides/content_safety_rules.md` | `core/script_gen/linter.py` **and** a case in `tests/unit/test_script_linter.py` |
+| Add a model provider | `core/script_gen/engine.py` (provider registry) | An adapter under `core/script_gen/adapters/` |
+| Tune duration accuracy | `core/script_gen/duration.py :: DEFAULT_WPM` | `core/script_gen/duration.py :: log_estimate_accuracy()` |

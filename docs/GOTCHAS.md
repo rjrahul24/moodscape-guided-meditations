@@ -34,3 +34,12 @@ Hard-won lessons. The most load-bearing entries are repeated in `CLAUDE.md`; the
 - **Stem separation is skipped for uploads**: guarded by `if stem_separation and not use_upload:` in `pipeline.py`. The user's file is already an instrumental; running Demucs on it is wasteful and not wanted. Don't remove the guard.
 - **Don't apply fades in the upload engine**: `fit_to_length()` returns a bare fitted array. Pre/post-roll and fades are added later by `mixer.mix()` — applying them in the engine would double-fade.
 - **Decoding uses `pedalboard.io.AudioFile`** (libsndfile/ffmpeg) so mp3/m4a/etc. work; UI validates the extension against `{.wav,.mp3,.flac,.ogg,.m4a,.aiff,.aif}` before the pipeline runs.
+
+## Auto-Generation
+
+- **Fatal vs advisory violations**: `script_gen/linter.py` fails the job (no render) for safety hard-blocks and malformed markers, but renders anyway — with a logged warning — for duration drift and style issues. Treating every violation as fatal makes a weaker local model unusable; treating none as fatal lets a safety failure reach audio. Do not flatten this distinction.
+- **Engine spec parsing splits on the first colon only**: `parse_engine_spec()` must handle Ollama model tags that themselves contain a colon — `ollama:qwen3:30b` splits into provider `ollama` and model `qwen3:30b`, not three pieces and not a truncated tag.
+- **Prompting guides are read at call time, not import time**: `script_gen/rules.py :: load_guide()` / `load_safety_rules()` read the files under `docs/prompting_guides/` on every call. Editing a guide takes effect on the next generation — no code change, no restart.
+- **`app.py` cannot be imported in a test**: it loads `torch`/Gradio and registers `atexit.register(lambda: os._exit(0))`, which would hijack pytest's exit code. This is why `core/streaming_run.py` exists as a separate, test-covered module — it runs `auto_generate.run()` on a background thread and streams progress without needing `app.py` at all; `core/auto_tab.py` only wires the two together for the real UI.
+- **No linter rule for angle-bracket tags**: `script_gen/linter.py :: _ANY_TAG` matches square brackets only (`\[([^\]]*)\]`). A stray `<break/>` or other angle-bracket markup from a model passes every check and reaches the TTS engine unmodified. Known gap, not yet fixed.
+- **Fades are excluded from duration estimates**: `script_gen/duration.py :: estimate_duration_sec()` deliberately does not add fade time — `apply_fades` shapes amplitude over audio that already exists, so fades never extend runtime.

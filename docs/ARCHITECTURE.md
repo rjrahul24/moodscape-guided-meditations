@@ -375,6 +375,100 @@ Controls: BPM (40–140), Density (0.0–1.0), Brightness (0.0–1.0), Guidance 
 
 ---
 
+## Auto-Generation Subsystem
+
+Prompt in, finished meditation out, with no human step. Full narrative
+reference (configuration, model spec format, violation codes, benchmarking,
+`DEFAULT_WPM` calibration) lives in
+[docs/auto_generation/README.md](auto_generation/README.md); this section is
+the data-flow and module summary.
+
+`MeditationPipeline` is **called, never modified**, by this subsystem — the
+orchestrator (`core/auto_generate.py :: run()`) invokes
+`MeditationPipeline.generate()` with the same arguments the manual UI tab
+uses, on the golden path (F5-TTS + uploaded background music).
+
+### Data flow
+
+```
+Natural-language prompt
+    │
+    ▼
+[Prompt assembly]   script_gen/rules.py
+    │               → reads docs/prompting_guides/vocal_{content_type}_{engine}_instructions.md
+    │                 and content_safety_rules.md at call time
+    ▼
+[Draft]             script_gen/generator.py :: draft()
+    │               → generator model (MOODSCAPE_SCRIPT_GENERATOR)
+    ▼
+[Review]            script_gen/judge.py :: review()
+    │               → independent judge model (MOODSCAPE_SCRIPT_JUDGE)
+    │                 returns (revised_script, changelog) — revises, does not score
+    ▼
+[Validate]  ┌─────► script_gen/linter.py :: check()     (format + safety, no tokens)
+            │       script_gen/duration.py :: estimate_duration_sec()  (runtime, no rendering)
+            │
+            │  fatal violations survive?
+            │       │
+            │      yes, and repairs_used < MOODSCAPE_SCRIPT_MAX_REPAIRS
+            │       │
+            │       ▼
+            │  [Repair]   script_gen/judge.py :: repair()
+            │       │     → judge model, given the exact violation list
+            └───────┘     (loops back into Validate)
+    │
+    │  no fatal violations, or repair budget exhausted
+    ▼
+[Outcome]
+    │   clean / advisory-only ──────────────┐   fatal violations remain ──────┐
+    │                                       ▼                                 ▼
+    │                          [Pick music]                    [Fail — no render]
+    │                          background_picker.pick_background()   Artifacts written anyway:
+    │                          → random pick from assets/backgrounds/,  script, draft, changelog,
+    │                            excluding recently used tracks         violations (meta.json)
+    │                                       │
+    │                                       ▼
+    │                          [Render]  MeditationPipeline.generate()
+    │                          (unchanged — same call the manual tab makes)
+    │                                       ▼
+    │                          [Persist]  <name>.wav, <name>.script.txt,
+    │                                     <name>.meta.json as siblings
+```
+
+### Module summary
+
+| Module | Responsibility |
+|---|---|
+| `core/script_gen/engine.py` | `ScriptEngine` ABC, the provider registry (`PROVIDER_BASE_URLS`, `PROVIDER_KEY_ENV`), and `build_engine()` / `parse_engine_spec()` |
+| `core/script_gen/rules.py` | Assembles generator/judge system prompts from the on-disk guides, read at call time |
+| `core/script_gen/generator.py` | Pass 1 — turns the user's prompt into a draft script |
+| `core/script_gen/judge.py` | Pass 2 — independent review (`review()`) and targeted repair (`repair()`) |
+| `core/script_gen/linter.py` | Deterministic format + mental-health safety checks; severity-tagged `Violation`s |
+| `core/script_gen/duration.py` | Estimates spoken runtime without rendering; `DEFAULT_WPM` calibration constants |
+| `core/script_gen/adapters/openai_compat.py` | One adapter for every OpenAI-compatible provider (ollama, openrouter, together, fireworks, groq) |
+| `core/script_gen/adapters/anthropic_api.py` | Adapter for the Anthropic Messages API |
+| `core/auto_generate.py` | Orchestrator: `AutoConfig`, `generate_script()` (draft → judge → lint → repair loop), `run()` (full prompt-to-audio flow) |
+| `core/background_picker.py` | Random background-track selection, reusing `upload_music.scan_backgrounds()` |
+| `core/bench.py` | Benchmark harness — runs fixed prompts through generator/judge pairings |
+| `core/streaming_run.py` | Runs `auto_generate.run()` on a background thread, streaming progress for the UI |
+| `core/auto_tab.py` | The Gradio "Auto-Generate" tab, built as a callable so it is unit-testable without importing `app.py` |
+| `scripts/bench_script_models.py` | CLI entry point for `core/bench.py` |
+
+### Failure severity
+
+| Severity | Meaning | Consequence |
+|---|---|---|
+| **FATAL** | Safety hard-block or malformed marker | Fails the job if it survives the repair budget — never rendered. Draft, revised script, changelog, and violations are still written to `config.failure_dir` for debugging. |
+| **ADVISORY** | Style issue or duration drift | Logged as a warning; the job **renders anyway**. |
+
+Every safety-rule violation (`CLINICAL_CLAIM`, `OUTCOME_PROMISE`,
+`INVALIDATING`, `DISSOCIATION`, `BREATH_HOLD`) and every format violation
+except `ALL_CAPS` and `SENTENCE_TOO_LONG` is FATAL; `DURATION_OUT_OF_WINDOW`
+is ADVISORY. The full code-by-code reference is in
+[docs/auto_generation/README.md](auto_generation/README.md#violation-code-reference).
+
+---
+
 ## Test Coverage Map
 
 | Test file | What it covers |
@@ -395,3 +489,14 @@ Controls: BPM (40–140), Density (0.0–1.0), Brightness (0.0–1.0), Guidance 
 | `tests/unit/test_f5_pacing.py` | WPM-based pacing, `fix_duration` |
 | `tests/integration/test_integration_modes.py` | Full pipeline (all mode combinations) |
 | `tests/integration/test_stress.py` | Load testing, memory management across sessions |
+| `tests/unit/test_script_linter.py` | `check_format`, `check_safety`, every `Violation` code |
+| `tests/unit/test_script_rules.py` | Prompt assembly, guide/safety-rules loading |
+| `tests/unit/test_script_engine.py` | `parse_engine_spec`, provider registry, `FakeScriptEngine` |
+| `tests/unit/test_duration_estimate.py` | `estimate_duration_sec`, `log_estimate_accuracy` |
+| `tests/unit/test_auto_generate.py` | `AutoConfig`, `generate_script()` repair loop, `run()` |
+| `tests/unit/test_script_bench.py` | `run_bench()`, `format_bench_table()` |
+| `tests/unit/test_background_picker.py` | `pick_background()` random selection + exclusion |
+| `tests/unit/test_streaming_run.py` | `StreamingRun` progress iteration and error surfacing |
+| `tests/unit/test_auto_tab.py` | `build_auto_tab()`, `auto_generate_handler()` |
+| `tests/integration/test_auto_generate_e2e.py` | Full auto-generate flow through real audio rendering (`MOODSCAPE_E2E=1`) |
+| `tests/integration/test_script_gen_live.py` | Configured generator/judge against a real reachable model (`MOODSCAPE_LIVE_SCRIPT_TEST=1`) |
