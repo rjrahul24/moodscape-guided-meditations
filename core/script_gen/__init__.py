@@ -32,6 +32,8 @@ from core.script_gen.engine import (
     build_engine,
     parse_engine_spec,
 )
+from core.script_gen.generator import draft, strip_wrapper
+from core.script_gen.judge import parse_judge_response, repair, review
 
 __all__ = [
     "ADVISORY",
@@ -54,4 +56,9 @@ __all__ = [
     "ScriptEngine",
     "build_engine",
     "parse_engine_spec",
+    "draft",
+    "strip_wrapper",
+    "parse_judge_response",
+    "repair",
+    "review",
 ]
