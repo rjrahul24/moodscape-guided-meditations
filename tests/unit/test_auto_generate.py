@@ -7,6 +7,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from core.auto_generate import (
     AutoConfig,
@@ -181,6 +182,15 @@ class TestRun(unittest.TestCase):
         self.assertEqual(call["script"], CLEAN_SCRIPT)
         self.assertEqual(call["uploaded_music_path"], "/bg/forest.mp3")
 
+    def test_result_exposes_the_exact_background_path(self):
+        # pick_background's exclusion matching is exact string comparison on
+        # the path, so a caller building up recent_backgrounds across runs
+        # needs this exact string on AutoResult, not just the human label.
+        pipeline = StubPipeline(self.dir)
+        result = self._run(pipeline)
+        call = pipeline.calls[0]
+        self.assertEqual(result.background_path, call["uploaded_music_path"])
+
     def test_pipeline_uses_the_golden_path_defaults(self):
         pipeline = StubPipeline(self.dir)
         self._run(pipeline)
@@ -203,6 +213,51 @@ class TestRun(unittest.TestCase):
         self.assertEqual(pipeline.calls, [])
         failures = list(self.config.failure_dir.glob("*.script.txt"))
         self.assertTrue(failures)
+
+        # The draft (pre-judge) must also survive — without it you can't tell
+        # what the generator produced versus what the judge mutated.
+        drafts = list(self.config.failure_dir.glob("*.draft.txt"))
+        self.assertTrue(drafts)
+        self.assertEqual(drafts[0].read_text(), UNSAFE_SCRIPT)
+
+        # The changelog of every review/repair attempt must be in meta.json —
+        # not just the surviving violations — so a reader can see what was
+        # already tried, not only the final broken state.
+        metas = list(self.config.failure_dir.glob("*.meta.json"))
+        self.assertTrue(metas)
+        meta = json.loads(metas[0].read_text())
+        self.assertIn("changelog", meta)
+        self.assertTrue(meta["changelog"].strip())
+
+
+class TestAutoConfigFromEnv(unittest.TestCase):
+    """A malformed env var must be reported, not silently defaulted or let
+    escape as a bare ValueError the caller's except ScriptGenerationError
+    would not catch."""
+
+    def test_malformed_max_repairs_raises_script_generation_error(self):
+        with patch.dict(
+            "os.environ", {"MOODSCAPE_SCRIPT_MAX_REPAIRS": "abc"}, clear=False
+        ):
+            with self.assertRaises(ScriptGenerationError) as ctx:
+                AutoConfig.from_env()
+        self.assertIn("MOODSCAPE_SCRIPT_MAX_REPAIRS", str(ctx.exception))
+
+    def test_malformed_target_min_sec_raises_script_generation_error(self):
+        with patch.dict(
+            "os.environ", {"MOODSCAPE_TARGET_MIN_SEC": "not-a-number"}, clear=False
+        ):
+            with self.assertRaises(ScriptGenerationError) as ctx:
+                AutoConfig.from_env()
+        self.assertIn("MOODSCAPE_TARGET_MIN_SEC", str(ctx.exception))
+
+    def test_malformed_target_max_sec_raises_script_generation_error(self):
+        with patch.dict(
+            "os.environ", {"MOODSCAPE_TARGET_MAX_SEC": "not-a-number"}, clear=False
+        ):
+            with self.assertRaises(ScriptGenerationError) as ctx:
+                AutoConfig.from_env()
+        self.assertIn("MOODSCAPE_TARGET_MAX_SEC", str(ctx.exception))
 
 
 if __name__ == "__main__":

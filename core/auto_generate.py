@@ -35,6 +35,32 @@ class ScriptGenerationError(RuntimeError):
     """Raised when a script cannot be made safe or well-formed in budget."""
 
 
+def _parse_env_float(name: str, default: float) -> float:
+    """Parse an env var as float, or raise ScriptGenerationError naming it."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ScriptGenerationError(
+            f"Environment variable {name}={raw!r} is not a valid number."
+        ) from exc
+
+
+def _parse_env_int(name: str, default: int) -> int:
+    """Parse an env var as int, or raise ScriptGenerationError naming it."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ScriptGenerationError(
+            f"Environment variable {name}={raw!r} is not a valid integer."
+        ) from exc
+
+
 @dataclass
 class AutoConfig:
     """Everything the auto path needs that is not the prompt itself."""
@@ -55,11 +81,21 @@ class AutoConfig:
 
     @classmethod
     def from_env(cls, **overrides) -> "AutoConfig":
-        """Build a config from environment variables, with explicit overrides."""
+        """Build a config from environment variables, with explicit overrides.
+
+        Raises:
+            ScriptGenerationError: If an environment variable is set but is
+                not parseable as the expected type. A typo'd config is
+                reported, not silently replaced with the default.
+        """
         values = {
-            "target_min_sec": float(os.environ.get("MOODSCAPE_TARGET_MIN_SEC", 300.0)),
-            "target_max_sec": float(os.environ.get("MOODSCAPE_TARGET_MAX_SEC", 420.0)),
-            "max_repairs": int(os.environ.get("MOODSCAPE_SCRIPT_MAX_REPAIRS", 2)),
+            "target_min_sec": _parse_env_float(
+                "MOODSCAPE_TARGET_MIN_SEC", 300.0
+            ),
+            "target_max_sec": _parse_env_float(
+                "MOODSCAPE_TARGET_MAX_SEC", 420.0
+            ),
+            "max_repairs": _parse_env_int("MOODSCAPE_SCRIPT_MAX_REPAIRS", 2),
         }
         values.update(overrides)
         return cls(**values)
@@ -87,6 +123,7 @@ class AutoResult:
     script: str
     changelog: str
     background: str
+    background_path: str
     violations: list[Violation]
     estimated_sec: float
 
@@ -99,16 +136,35 @@ def _violation_dicts(violations: list[Violation]) -> list[dict]:
 
 
 def _write_failure_artifacts(
-    config: AutoConfig, prompt: str, script: str, violations: list[Violation]
+    config: AutoConfig,
+    prompt: str,
+    script: str,
+    violations: list[Violation],
+    *,
+    draft_script: str,
+    changelog: str,
 ) -> Path:
-    """Persist a failed script so it can be read and debugged."""
+    """Persist a failed run's full trajectory so it can be read and debugged.
+
+    Writes the still-fatal script, the original draft (before any judge
+    revision or repair), and a meta.json carrying the changelog of every
+    review/repair attempt plus the surviving violations — the draft and the
+    changelog are what let a reader see what was tried, not just the final
+    broken state.
+    """
     config.failure_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     base = config.failure_dir / f"failed-{stamp}"
     base.with_suffix(".script.txt").write_text(script, encoding="utf-8")
+    base.with_suffix(".draft.txt").write_text(draft_script, encoding="utf-8")
     base.with_suffix(".meta.json").write_text(
         json.dumps(
-            {"prompt": prompt, "violations": _violation_dicts(violations)}, indent=2
+            {
+                "prompt": prompt,
+                "changelog": changelog,
+                "violations": _violation_dicts(violations),
+            },
+            indent=2,
         ),
         encoding="utf-8",
     )
@@ -180,7 +236,14 @@ def generate_script(
 
         if repairs_used >= config.max_repairs:
             codes = ", ".join(sorted({v.code for v in fatal}))
-            path = _write_failure_artifacts(config, prompt, script, violations)
+            path = _write_failure_artifacts(
+                config,
+                prompt,
+                script,
+                violations,
+                draft_script=draft_script,
+                changelog=changelog,
+            )
             raise ScriptGenerationError(
                 f"Script still has fatal problems after {repairs_used} repair "
                 f"attempts: {codes}. Script saved to {path}.script.txt for review."
@@ -298,6 +361,7 @@ def run(
         script=outcome.script,
         changelog=outcome.changelog,
         background=background_label,
+        background_path=background_path,
         violations=outcome.violations,
         estimated_sec=outcome.estimated_sec,
     )
