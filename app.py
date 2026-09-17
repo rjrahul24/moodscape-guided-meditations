@@ -63,6 +63,7 @@ from core.kokoro_tts.engine import KokoroEngine
 from core.pipeline import MeditationPipeline
 from core.f5_tts import voice_registry as _f5_registry
 from core.upload_music import scan_backgrounds
+from core.auto_tab import build_auto_tab
 
 # Load environment variables (like HF_TOKEN) from .env file
 load_dotenv()
@@ -1252,6 +1253,8 @@ with gr.Blocks(
         outputs=[audio_output, status_display],
         show_progress="full",
     )
+
+    build_auto_tab()
 
 if __name__ == "__main__":
     # theme, css, and js moved here from gr.Blocks() per Gradio 6.0 API change.
