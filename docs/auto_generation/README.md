@@ -234,7 +234,7 @@ without rendering anything: pauses are summed exactly from the same
 add their measured sample duration, and prose is estimated as
 `word_count / wpm * 60` plus the engine's own inter-sentence/inter-chunk
 gaps — modeled per engine, since Kokoro gaps after every sentence while F5
-only gaps between the ≤400-char chunks its preprocessor splits a paragraph
+only gaps between the ≤250-char chunks its preprocessor splits a paragraph
 into (each chunk usually holds several sentences with no gap between them).
 Fades are deliberately **not** added — `apply_fades` shapes amplitude on
 audio that already exists, so they don't extend runtime.

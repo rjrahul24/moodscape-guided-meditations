@@ -65,7 +65,7 @@ class TestDurationEstimate(unittest.TestCase):
 
     def test_f5_does_not_add_per_sentence_gaps_within_one_chunk(self):
         # F5's engine (core/f5_tts/engine.py) synthesizes every sentence
-        # within one <=400-char chunk as continuous prose with no inserted
+        # within one <=250-char chunk as continuous prose with no inserted
         # gap -- it only gaps between CHUNKS (core/f5_tts/preprocessor.py's
         # split_into_chunks). A 3-sentence paragraph and the same words as
         # one sentence stay in a single chunk here, so they must estimate

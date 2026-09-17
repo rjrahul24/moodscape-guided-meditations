@@ -4,7 +4,7 @@ Pauses are summed exactly from the engine's own parse. Speech is estimated as
 word_count / wpm * 60 — the same formula core/f5_tts/engine.py:463 uses when
 fixed pacing is enabled. Gap handling is engine-specific because the two
 engines insert silence differently: Kokoro adds a room-tone gap after every
-sentence, while F5 only gaps between ≤400-char CHUNKS (each usually several
+sentence, while F5 only gaps between ≤250-char CHUNKS (each usually several
 sentences) — see _speech_seconds and _F5_CHUNK_GAP_SEC. Breath/inhale/exhale
 cues add their measured sample duration (BREATH_SEC) since both
 preprocessors emit a distinct "breath" segment type for these markers rather
@@ -59,7 +59,7 @@ _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 # core/f5_tts/engine.py inserts a 0.4s room-tone gap plus a 300ms equal-power
 # crossfade between consecutive "speech"-type chunks (the crossfade overlaps
 # the gap, so the net silence added is GAP - FADE = 0.1s). This only happens
-# at CHUNK boundaries — the ≤400-char splits core/f5_tts/preprocessor.py's
+# at CHUNK boundaries — the ≤250-char splits core/f5_tts/preprocessor.py's
 # split_into_chunks() makes per "speech" segment, which usually span several
 # sentences. It does NOT happen between sentences within one chunk; those are
 # synthesized as continuous prose with no gap at all.
@@ -84,7 +84,7 @@ def _speech_seconds(text: str, wpm: float, *, engine: str) -> float:
 
     Kokoro (core/kokoro_tts/engine.py) inserts a room-tone gap after every
     sentence within a segment, so that model applies here. F5
-    (core/f5_tts/engine.py) does not: sentences within one ≤400-char chunk
+    (core/f5_tts/engine.py) does not: sentences within one ≤250-char chunk
     are synthesized as continuous prose with no inserted gap at all — F5
     only gaps at chunk BOUNDARIES, which estimate_duration_sec accounts for
     separately via _F5_CHUNK_GAP_SEC, between consecutive "speech" segments.
