@@ -13,9 +13,11 @@ from core.auto_generate import (
     RECENT_BACKGROUNDS_LIMIT,
     AutoConfig,
     ScriptGenerationError,
+    _measure_actual_duration_sec,
     generate_script,
     run,
 )
+from core.script_gen.duration import estimate_duration_sec
 from core.script_gen.engine import FakeScriptEngine
 
 CLEAN_SCRIPT = (
@@ -46,6 +48,34 @@ class StubPipeline:
         self.calls.append(kwargs)
         wav = self.out_dir / "meditation.wav"
         wav.write_bytes(b"RIFF")
+        return str(wav), "ok"
+
+
+class RealAudioStubPipeline:
+    """Like StubPipeline, but writes a real (silent) WAV of a known duration.
+
+    Exercises the actual_sec/estimate_ratio calibration math end-to-end
+    without any TTS model or rendering -- just a synthetic silent clip
+    written via soundfile, the same pattern other unit tests use.
+    """
+
+    def __init__(self, out_dir: Path, duration_sec: float):
+        self.out_dir = out_dir
+        self.duration_sec = duration_sec
+        self.calls: list[dict] = []
+
+    def generate(self, **kwargs):
+        import numpy as np
+        import soundfile as sf
+
+        self.calls.append(kwargs)
+        wav = self.out_dir / "meditation.wav"
+        sample_rate = 24000
+        sf.write(
+            wav,
+            np.zeros(int(sample_rate * self.duration_sec), dtype="float32"),
+            sample_rate,
+        )
         return str(wav), "ok"
 
 
@@ -209,6 +239,38 @@ class TestRun(unittest.TestCase):
         call = pipeline.calls[0]
         self.assertEqual(result.background_path, call["uploaded_music_path"])
 
+    def test_run_succeeds_with_stub_audio_and_records_null_actual_sec(self):
+        # StubPipeline writes b"RIFF" -- not a real audio file. Reading its
+        # duration must fail, but that failure must never fail a job that
+        # already produced "audio": run() still succeeds, and actual_sec is
+        # recorded as null rather than raising.
+        pipeline = StubPipeline(self.dir)
+        result = self._run(pipeline)
+        self.assertTrue(Path(result.audio_path).is_file())
+        meta = json.loads(Path(result.meta_path).read_text())
+        self.assertIsNone(meta["actual_sec"])
+
+    def test_meta_metadata_shape_includes_duration_calibration_keys(self):
+        result = self._run(StubPipeline(self.dir))
+        meta = json.loads(Path(result.meta_path).read_text())
+        self.assertIn("estimated_sec", meta)
+        self.assertIn("actual_sec", meta)
+        self.assertIn("estimate_ratio", meta)
+        # estimate_ratio can't be computed without a real actual_sec.
+        self.assertIsNone(meta["estimate_ratio"])
+
+    def test_run_records_actual_sec_and_ratio_for_a_real_render(self):
+        estimated = estimate_duration_sec(
+            CLEAN_SCRIPT,
+            engine=self.config.tts_engine,
+            content_type=self.config.content_type,
+        )
+        pipeline = RealAudioStubPipeline(self.dir, duration_sec=estimated * 2)
+        result = self._run(pipeline)
+        meta = json.loads(Path(result.meta_path).read_text())
+        self.assertAlmostEqual(meta["actual_sec"], estimated * 2, delta=0.05)
+        self.assertAlmostEqual(meta["estimate_ratio"], 2.0, places=2)
+
     def test_pipeline_uses_the_golden_path_defaults(self):
         pipeline = StubPipeline(self.dir)
         self._run(pipeline)
@@ -296,6 +358,41 @@ class TestRecentBackgrounds(unittest.TestCase):
             self._run(pipeline)
         self.assertLessEqual(
             len(self.config.recent_backgrounds), RECENT_BACKGROUNDS_LIMIT
+        )
+
+
+class TestMeasureActualDuration(unittest.TestCase):
+    """_measure_actual_duration_sec must never raise -- it degrades to None
+    on anything unreadable, since a calibration nicety must never fail a
+    job that already produced audio."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_reads_duration_from_a_real_wav_file(self):
+        import numpy as np
+        import soundfile as sf
+
+        path = self.dir / "clip.wav"
+        sample_rate = 24000
+        sf.write(path, np.zeros(sample_rate * 2, dtype="float32"), sample_rate)
+        self.assertAlmostEqual(
+            _measure_actual_duration_sec(str(path)), 2.0, places=2
+        )
+
+    def test_returns_none_for_a_non_audio_file(self):
+        # Mirrors StubPipeline's b"RIFF" placeholder in the tests above.
+        path = self.dir / "not_audio.wav"
+        path.write_bytes(b"RIFF")
+        self.assertIsNone(_measure_actual_duration_sec(str(path)))
+
+    def test_returns_none_for_a_missing_file(self):
+        self.assertIsNone(
+            _measure_actual_duration_sec(str(self.dir / "missing.wav"))
         )
 
 
