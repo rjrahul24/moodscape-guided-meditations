@@ -134,5 +134,49 @@ class TestRepair(unittest.TestCase):
         self.assertEqual(script, "Fixed.")
 
 
+class TestEchoedProblemsBlock(unittest.TestCase):
+    """The repair prompt wraps the linter's findings in <problems>. A weak
+    model often echoes that block back. It must never survive into the script:
+    the linter's own messages name tags and show marker examples, so an echoed
+    problem list re-triggers UNKNOWN_TAG / MARKER_MALFORMED / ANGLE_TAG on the
+    text that reports them, and every repair round then adds more violations
+    than it fixes. Observed with ollama:llama3.2:3b, the default engine.
+    """
+
+    ECHO = (
+        "<problems>\n"
+        "1. [UNKNOWN_TAG/fatal] Unknown tag '[UNK]'. Only [pause:Xs], "
+        "[breath], [inhale] and [exhale] are supported.\n"
+        "2. [MARKER_MALFORMED/fatal] Malformed pause marker '[pause:1s]'. "
+        "Use exactly [pause:Xs], e.g. [pause:4s].\n"
+        "</problems>\n"
+    )
+
+    def test_echoed_block_is_removed_on_the_fallback_path(self):
+        script, _ = parse_judge_response(self.ECHO + "Breathe in.[pause:4s]")
+        self.assertEqual(script, "Breathe in.[pause:4s]")
+
+    def test_echoed_block_is_removed_when_a_script_block_is_present(self):
+        raw = self.ECHO + "<script>Breathe out.[pause:4s]</script>"
+        script, _ = parse_judge_response(raw)
+        self.assertEqual(script, "Breathe out.[pause:4s]")
+
+    def test_echoed_block_does_not_reach_the_linter(self):
+        from core.script_gen.linter import check, fatal_violations
+
+        script, _ = parse_judge_response(self.ECHO + "Breathe in.[pause:4s]")
+        self.assertEqual(fatal_violations(check(script)), [])
+
+    def test_unclosed_problems_tag_is_still_stripped(self):
+        script, _ = parse_judge_response("<problems>\nBreathe in.[pause:4s]")
+        self.assertNotIn("<problems>", script)
+        self.assertIn("Breathe in.[pause:4s]", script)
+
+    def test_script_prose_after_the_block_is_preserved_verbatim(self):
+        body = "Settle in.[pause:3s]\n\n[breath]\n\nLet go.[pause:5s]"
+        script, _ = parse_judge_response(self.ECHO + body)
+        self.assertEqual(script, body)
+
+
 if __name__ == "__main__":
     unittest.main()

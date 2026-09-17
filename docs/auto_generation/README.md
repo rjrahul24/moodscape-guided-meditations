@@ -82,6 +82,36 @@ A malformed numeric value (e.g. `MOODSCAPE_SCRIPT_MAX_REPAIRS=abc`) raises
 `ScriptGenerationError` naming the variable, rather than silently falling
 back to the default.
 
+### What the default engine actually produces
+
+The defaults (`ollama:llama3.2:3b` for **both** generator and judge) exist so
+the tab runs with no API key and no configuration. They are a starting point,
+not a recommendation. Measured on 2026-09-17, prompt *"I am feeling anxious.
+I need a relaxing meditation."*, n=3:
+
+| | Result |
+|---|---|
+| Completed the script stage | 2 of 3 (the third failed on `MARKDOWN_PRESENT`) |
+| Script length | 174 and 247 words |
+| Estimated runtime | 165 s and 208 s — **under** the 300–420 s target |
+| Advisory on every run | `DURATION_OUT_OF_WINDOW` |
+| Wall clock | 46–61 s per attempt |
+
+Two consequences worth knowing before a first end-to-end run:
+
+1. **A 3B model writes short.** `DURATION_OUT_OF_WINDOW` is advisory, so the
+   job renders anyway — you get a ~3-minute meditation, not the 5–7 minutes
+   the target window asks for. Raising the target does not help; the model
+   has to be told to write more, or replaced.
+2. **The judge is not independent by default.** Both specs point at the same
+   model, so pass 2 is the same weights reviewing their own output. The
+   two-pass design assumes an *independent* reviewer. Point
+   `MOODSCAPE_SCRIPT_JUDGE` at a different model — another local one, or a
+   hosted provider — to get the property the design is built on.
+
+Both are configuration choices, not code defects; the defaults are tuned for
+"runs out of the box", not for output quality.
+
 Provider API keys, from `script_gen/engine.py :: PROVIDER_KEY_ENV`:
 
 | Provider | Env var |

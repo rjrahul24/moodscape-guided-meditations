@@ -22,11 +22,16 @@ _SCRIPT_BLOCK = re.compile(
 _CHANGELOG_BLOCK = re.compile(
     r"<changelog\b[^>]*>\s*(.*?)\s*</\s*changelog\s*>", re.DOTALL | re.IGNORECASE
 )
-# Catches a leftover script/changelog tag that didn't pair up into a full
-# block above (e.g. an opening tag with no matching close). [^>\n]* is
+_PROBLEMS_BLOCK = re.compile(
+    r"<problems\b[^>]*>\s*(.*?)\s*</\s*problems\s*>", re.DOTALL | re.IGNORECASE
+)
+# Catches a leftover script/changelog/problems tag that didn't pair up into a
+# full block above (e.g. an opening tag with no matching close). [^>\n]* is
 # deliberately bounded to a single line so this can never swallow real script
 # prose sitting on the next line; >? tolerates a tag that never closes at all.
-_STRAY_TAG = re.compile(r"</?\s*(?:script|changelog)\b[^>\n]*>?", re.IGNORECASE)
+_STRAY_TAG = re.compile(
+    r"</?\s*(?:script|changelog|problems)\b[^>\n]*>?", re.IGNORECASE
+)
 
 
 def parse_judge_response(raw: str) -> tuple[str, str]:
@@ -35,10 +40,21 @@ def parse_judge_response(raw: str) -> tuple[str, str]:
     Degrades gracefully: a model that ignores the delimiters still yields a
     usable script rather than failing the run. When no <script> block can be
     located, the fallback is the raw text with any complete <changelog> block
-    and any stray script/changelog tags removed first — otherwise a malformed
-    tag could leak the judge's changelog straight into audio that gets read
-    aloud.
+    and any stray script/changelog/problems tags removed first — otherwise a
+    malformed tag could leak the judge's changelog straight into audio that
+    gets read aloud.
+
+    The <problems> block is dropped before anything else because it is *our*
+    repair instruction echoed back, not the model's output. Leaving it in is
+    not merely untidy — it makes the repair loop self-poisoning. The linter's
+    own messages name tags and show marker examples ("Unknown tag '[UNK]'",
+    "Use exactly [pause:Xs]"), so an echoed problem list re-triggers
+    UNKNOWN_TAG, MARKER_MALFORMED and ANGLE_TAG on the very text that reports
+    them. Each repair round then adds more violations than it fixes and the
+    budget is exhausted on a script whose prose was fine.
     """
+    raw = _PROBLEMS_BLOCK.sub("", raw)
+
     script_match = _SCRIPT_BLOCK.search(raw)
     changelog_match = _CHANGELOG_BLOCK.search(raw)
     changelog = changelog_match.group(1).strip() if changelog_match else ""
