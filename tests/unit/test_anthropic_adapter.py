@@ -119,6 +119,62 @@ class TestAnthropicEngine(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             engine.complete("sys", "usr")
 
+    # -- Malformed response shapes ---------------------------------------
+    #
+    # The text-extraction expression used to sit outside the try/except
+    # wrapping the stream call, so a malformed response escaped as a bare
+    # TypeError/AttributeError instead of the RuntimeError every caller
+    # (generator.py's orchestrator) catches. These pin all three observed
+    # escapes now raising RuntimeError, chained from the original exception.
+
+    def test_message_content_none_raises_runtime_error(self):
+        # Iterating `for block in message.content` over None raises
+        # TypeError -- must not escape as a bare TypeError.
+        client = StubClient(None)
+        engine = AnthropicEngine("claude-opus-5", client=client)
+        with self.assertRaises(RuntimeError) as ctx:
+            engine.complete("sys", "usr")
+        self.assertIsInstance(ctx.exception.__cause__, TypeError)
+
+    def test_message_none_raises_runtime_error(self):
+        # get_final_message() returning None makes `message.content` raise
+        # AttributeError -- must not escape as a bare AttributeError.
+        class NoneMessageStream:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def get_final_message(self):
+                return None
+
+        class NoneMessageMessages:
+            def stream(self, **kwargs):
+                return NoneMessageStream()
+
+        class NoneMessageClient:
+            def __init__(self):
+                self.messages = NoneMessageMessages()
+
+        engine = AnthropicEngine("claude-opus-5", client=NoneMessageClient())
+        with self.assertRaises(RuntimeError) as ctx:
+            engine.complete("sys", "usr")
+        self.assertIsInstance(ctx.exception.__cause__, AttributeError)
+
+    def test_text_block_missing_text_attribute_raises_runtime_error(self):
+        # A block reporting type="text" but with no .text attribute makes
+        # `block.text` raise AttributeError -- must not escape as a bare
+        # AttributeError.
+        class TextTypeNoTextAttr:
+            type = "text"
+
+        client = StubClient([TextTypeNoTextAttr()])
+        engine = AnthropicEngine("claude-opus-5", client=client)
+        with self.assertRaises(RuntimeError) as ctx:
+            engine.complete("sys", "usr")
+        self.assertIsInstance(ctx.exception.__cause__, AttributeError)
+
     def test_package_not_installed_raises(self):
         # Forcing sys.modules["anthropic"] = None makes `import anthropic`
         # raise the real ImportError, without needing the package absent.

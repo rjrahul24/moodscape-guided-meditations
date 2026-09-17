@@ -109,16 +109,17 @@ class AnthropicEngine(ScriptEngine):
                 messages=[{"role": "user", "content": user}],
             ) as stream:
                 message = stream.get_final_message()
+
+            text = "".join(
+                block.text
+                for block in message.content
+                if getattr(block, "type", None) == "text"
+            )
         except Exception as exc:
             raise RuntimeError(
                 f"Anthropic request failed for model {self._model!r}: {exc}"
             ) from exc
 
-        text = "".join(
-            block.text
-            for block in message.content
-            if getattr(block, "type", None) == "text"
-        )
         if not text:
             raise RuntimeError(
                 f"Anthropic returned no text content for model {self._model!r}."
