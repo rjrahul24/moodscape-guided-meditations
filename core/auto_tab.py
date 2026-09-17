@@ -72,39 +72,74 @@ def build_auto_tab() -> dict:
             "reviewed, checked, and rendered with a random background track — "
             "no further input needed."
         )
-        prompt = gr.Textbox(
-            label="What do you need?",
-            placeholder="I'm feeling anxious. I need a relaxing meditation.",
-            lines=3,
-        )
         with gr.Row():
-            content_type = gr.Dropdown(
-                choices=["meditation", "sleep_story"],
-                value="meditation",
-                label="Content Type",
-            )
-            tts_engine = gr.Dropdown(
-                choices=["f5", "kokoro"], value="f5", label="Voice Engine"
-            )
-        with gr.Row():
-            target_min = gr.Slider(1, 20, value=5, step=1, label="Min minutes")
-            target_max = gr.Slider(1, 30, value=7, step=1, label="Max minutes")
-        with gr.Row():
-            generator = gr.Textbox(
-                label="Generator model",
-                value=os.environ.get("MOODSCAPE_SCRIPT_GENERATOR", DEFAULT_GENERATOR),
-            )
-            judge = gr.Textbox(
-                label="Judge model",
-                value=os.environ.get("MOODSCAPE_SCRIPT_JUDGE", DEFAULT_JUDGE),
-            )
-        button = gr.Button("Generate", variant="primary")
-        audio = gr.Audio(label="Result", type="filepath")
-        status = gr.Textbox(label="Status", lines=4, interactive=False)
-        with gr.Accordion("Script", open=False):
-            script = gr.Textbox(label="Final script", lines=20, interactive=False)
-        with gr.Accordion("Judge changelog", open=False):
-            changelog = gr.Textbox(label="Changes", lines=8, interactive=False)
+            # ── Left column: Creative Canvas ──────────────────────────────
+            with gr.Column(scale=3, elem_classes="canvas-zone"):
+                prompt = gr.Textbox(
+                    label="What do you need?",
+                    placeholder="I'm feeling anxious. I need a relaxing meditation.",
+                    lines=3,
+                )
+                button = gr.Button(
+                    "Generate", variant="primary", elem_classes="primary-btn"
+                )
+                audio = gr.Audio(
+                    label="Result", type="filepath", elem_classes="music-player-glass"
+                )
+                status = gr.Textbox(label="Status", lines=4, interactive=False)
+                with gr.Accordion("Script", open=False, elem_classes="accordion-section"):
+                    script = gr.Textbox(
+                        label="Final script", lines=20, interactive=False
+                    )
+                with gr.Accordion(
+                    "Judge changelog", open=False, elem_classes="accordion-section"
+                ):
+                    changelog = gr.Textbox(
+                        label="Changes", lines=8, interactive=False
+                    )
+
+            # ── Right column: Settings Sidebar ────────────────────────────
+            with gr.Column(scale=2, elem_classes="settings-sidebar"):
+                with gr.Accordion(
+                    "Content & Voice", open=True, elem_classes="accordion-section"
+                ):
+                    content_type = gr.Dropdown(
+                        choices=["meditation", "sleep_story"],
+                        value="meditation",
+                        label="Content Type",
+                        elem_classes="dropdown-container",
+                    )
+                    tts_engine = gr.Dropdown(
+                        choices=["f5", "kokoro"],
+                        value="f5",
+                        label="Voice Engine",
+                        elem_classes="dropdown-container",
+                    )
+
+                with gr.Accordion(
+                    "Duration", open=True, elem_classes="accordion-section"
+                ):
+                    with gr.Row():
+                        target_min = gr.Slider(
+                            1, 20, value=5, step=1, label="Min minutes"
+                        )
+                        target_max = gr.Slider(
+                            1, 30, value=7, step=1, label="Max minutes"
+                        )
+
+                with gr.Accordion(
+                    "Models", open=False, elem_classes="accordion-section"
+                ):
+                    generator = gr.Textbox(
+                        label="Generator model",
+                        value=os.environ.get(
+                            "MOODSCAPE_SCRIPT_GENERATOR", DEFAULT_GENERATOR
+                        ),
+                    )
+                    judge = gr.Textbox(
+                        label="Judge model",
+                        value=os.environ.get("MOODSCAPE_SCRIPT_JUDGE", DEFAULT_JUDGE),
+                    )
 
         button.click(
             fn=auto_generate_handler,
