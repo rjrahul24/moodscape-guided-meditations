@@ -34,6 +34,12 @@ from core.script_gen.engine import (
 )
 from core.script_gen.generator import draft, strip_wrapper
 from core.script_gen.judge import parse_judge_response, repair, review
+from core.script_gen.bench import (
+    BENCH_PROMPTS,
+    BenchRow,
+    format_bench_table,
+    run_bench,
+)
 
 __all__ = [
     "ADVISORY",
@@ -61,4 +67,8 @@ __all__ = [
     "parse_judge_response",
     "repair",
     "review",
+    "BENCH_PROMPTS",
+    "BenchRow",
+    "format_bench_table",
+    "run_bench",
 ]
