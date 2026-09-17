@@ -1,7 +1,8 @@
 """Tests for the OpenAI-compatible adapter (Ollama + hosted open-weight providers).
 
 Uses httpx.MockTransport so the real request-building and response-parsing
-paths run with no network.
+paths run with no network, and injects the adapter's `sleep` callable so
+retry-with-backoff tests run with no real sleeping.
 """
 
 import json
@@ -11,7 +12,11 @@ from unittest.mock import patch
 
 import httpx
 
-from core.script_gen.adapters.openai_compat import OpenAICompatEngine
+from core.script_gen.adapters.openai_compat import (
+    BACKOFF_CAP_SEC,
+    DEFAULT_MAX_RETRIES,
+    OpenAICompatEngine,
+)
 
 
 def ok_transport(captured: list) -> httpx.MockTransport:
@@ -25,12 +30,57 @@ def ok_transport(captured: list) -> httpx.MockTransport:
     return httpx.MockTransport(handler)
 
 
-def status_transport(code: int, body: str = "boom") -> httpx.MockTransport:
-    return httpx.MockTransport(lambda request: httpx.Response(code, text=body))
+def status_transport(
+    code: int, body: str = "boom", captured: list | None = None
+) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if captured is not None:
+            captured.append(request)
+        return httpx.Response(code, text=body)
+
+    return httpx.MockTransport(handler)
+
+
+def ok_step(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={"choices": [{"message": {"content": "GENERATED SCRIPT"}}]},
+    )
+
+
+def status_step(code: int, body: str = "boom", headers: dict | None = None):
+    def _step(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(code, text=body, headers=headers or {})
+
+    return _step
+
+
+def connect_error_step(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("refused", request=request)
+
+
+def timeout_step(request: httpx.Request) -> httpx.Response:
+    raise httpx.ReadTimeout("timed out", request=request)
+
+
+def sequence_transport(steps: list, captured: list | None = None) -> httpx.MockTransport:
+    """Returns responses from `steps` in order; the last step repeats once
+    exhausted, so a transport that should "always fail" is just `[step]`."""
+    state = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if captured is not None:
+            captured.append(request)
+        idx = min(state["n"], len(steps) - 1)
+        state["n"] += 1
+        return steps[idx](request)
+
+    return httpx.MockTransport(handler)
 
 
 class TestOpenAICompatEngine(unittest.TestCase):
     def build(self, transport, **kwargs):
+        kwargs.setdefault("sleep", lambda seconds: None)
         return OpenAICompatEngine(
             provider="ollama",
             model="qwen3:30b",
@@ -80,10 +130,9 @@ class TestOpenAICompatEngine(unittest.TestCase):
         self.assertEqual(self.build(ok_transport([])).name, "ollama:qwen3:30b")
 
     def test_connection_error_names_the_provider_and_the_fix(self):
-        def refuse(request):
-            raise httpx.ConnectError("refused", request=request)
-
-        engine = self.build(httpx.MockTransport(refuse))
+        # Always fails: exhausts retries and raises RuntimeError. No real
+        # sleeping (self.build injects a no-op sleep by default).
+        engine = self.build(sequence_transport([connect_error_step]))
         with self.assertRaises(RuntimeError) as ctx:
             engine.complete("sys", "usr")
         message = str(ctx.exception)
@@ -107,12 +156,17 @@ class TestOpenAICompatEngine(unittest.TestCase):
             ).complete("sys", "usr")
         self.assertIn("MOODSCAPE_TEST_ABSENT_KEY", str(ctx.exception))
 
-    def test_malformed_response_raises(self):
-        transport = httpx.MockTransport(
-            lambda request: httpx.Response(200, json={"unexpected": True})
+    def test_malformed_response_raises_and_is_not_retried(self):
+        captured = []
+        transport = sequence_transport(
+            [lambda request: httpx.Response(200, json={"unexpected": True})],
+            captured,
         )
         with self.assertRaises(RuntimeError):
             self.build(transport).complete("sys", "usr")
+        # The request succeeded; the content is wrong. Retrying would just
+        # reproduce the same malformed body, so exactly one request is made.
+        self.assertEqual(len(captured), 1)
 
     def test_null_content_raises_runtime_error(self):
         # {"content": null} in a 200 body is standard for reasoning models
@@ -149,7 +203,7 @@ class TestOpenAICompatEngine(unittest.TestCase):
         def reset(request):
             raise httpx.ReadError("connection reset", request=request)
 
-        engine = self.build(httpx.MockTransport(reset))
+        engine = self.build(sequence_transport([reset]))
         with self.assertRaises(RuntimeError):
             engine.complete("sys", "usr")
 
@@ -164,6 +218,84 @@ class TestOpenAICompatEngine(unittest.TestCase):
                 transport=ok_transport(captured),
             ).complete("sys", "usr")
         self.assertEqual(captured[0].headers["authorization"], "Bearer secret123")
+
+    # -- Retry-with-backoff -------------------------------------------------
+
+    def test_500_then_200_succeeds_after_one_retry(self):
+        captured = []
+        sleeps = []
+        transport = sequence_transport([status_step(500), ok_step], captured)
+        engine = self.build(transport, sleep=sleeps.append)
+        result = engine.complete("sys", "usr")
+        self.assertEqual(result, "GENERATED SCRIPT")
+        self.assertEqual(len(captured), 2)
+        self.assertEqual(len(sleeps), 1)
+
+    def test_500_every_time_fails_after_exactly_configured_attempts(self):
+        captured = []
+        sleeps = []
+        transport = sequence_transport([status_step(500)], captured)
+        engine = self.build(transport, sleep=sleeps.append)
+        with self.assertRaises(RuntimeError) as ctx:
+            engine.complete("sys", "usr")
+        self.assertEqual(len(captured), DEFAULT_MAX_RETRIES)
+        self.assertEqual(len(sleeps), DEFAULT_MAX_RETRIES - 1)
+        self.assertIn(f"{DEFAULT_MAX_RETRIES} attempt", str(ctx.exception))
+
+    def test_400_is_never_retried(self):
+        captured = []
+        engine = self.build(status_transport(400, captured=captured))
+        with self.assertRaises(RuntimeError) as ctx:
+            engine.complete("sys", "usr")
+        # This is the regression guard: a bad model name or malformed
+        # request fails identically every time, so retrying would only
+        # triple the latency of a failure that was never going to succeed.
+        self.assertEqual(len(captured), 1)
+        self.assertIn("400", str(ctx.exception))
+
+    def test_429_retry_after_header_is_honoured_but_clamped_to_cap(self):
+        transport = sequence_transport(
+            [status_step(429, "slow down", {"Retry-After": "9999"}), ok_step]
+        )
+        sleeps = []
+        engine = self.build(transport, sleep=sleeps.append)
+        result = engine.complete("sys", "usr")
+        self.assertEqual(result, "GENERATED SCRIPT")
+        self.assertEqual(sleeps, [BACKOFF_CAP_SEC])
+
+    def test_connection_error_then_success_succeeds(self):
+        captured = []
+        transport = sequence_transport([connect_error_step, ok_step], captured)
+        engine = self.build(transport, sleep=lambda seconds: None)
+        self.assertEqual(engine.complete("sys", "usr"), "GENERATED SCRIPT")
+        self.assertEqual(len(captured), 2)
+
+    def test_timeout_then_success_succeeds(self):
+        captured = []
+        transport = sequence_transport([timeout_step, ok_step], captured)
+        engine = self.build(transport, sleep=lambda seconds: None)
+        self.assertEqual(engine.complete("sys", "usr"), "GENERATED SCRIPT")
+        self.assertEqual(len(captured), 2)
+
+    def test_backoff_grows_between_attempts(self):
+        sleeps = []
+        transport = sequence_transport([status_step(500)])
+        engine = self.build(transport, sleep=sleeps.append)
+        with self.assertRaises(RuntimeError):
+            engine.complete("sys", "usr")
+        self.assertEqual(len(sleeps), DEFAULT_MAX_RETRIES - 1)
+        for earlier, later in zip(sleeps, sleeps[1:]):
+            self.assertLess(earlier, later)
+
+    def test_max_retries_env_var_overrides_default(self):
+        captured = []
+        transport = sequence_transport([status_step(500)], captured)
+        with patch.dict(os.environ, {"MOODSCAPE_SCRIPT_MAX_RETRIES": "1"}):
+            engine = self.build(transport, sleep=lambda seconds: None)
+            with self.assertRaises(RuntimeError) as ctx:
+                engine.complete("sys", "usr")
+        self.assertEqual(len(captured), 1)
+        self.assertIn("1 attempt", str(ctx.exception))
 
 
 if __name__ == "__main__":
