@@ -4094,12 +4094,14 @@ git commit -m "test(auto): add end-to-end integration tests through the real pip
 
 **Files:**
 - Create: `docs/auto_generation/README.md`
-- Modify: `CLAUDE.md`
-- Modify: `docs/ARCHITECTURE.md`
-- Modify: `docs/COMPONENT_REGISTRY.md`
-- Modify: `docs/TASK_ROUTING.md`
-- Modify: `docs/GOTCHAS.md`
-- Modify: `README.md`
+- Create: `docs/auto_generation/pending_doc_updates.md`
+- Modify: `docs/ARCHITECTURE.md` (clean — safe to edit)
+- Modify: `docs/COMPONENT_REGISTRY.md` (clean — safe to edit)
+- Modify: `docs/TASK_ROUTING.md` (clean — safe to edit)
+- Modify: `docs/GOTCHAS.md` (clean — safe to edit)
+- **Do NOT modify `CLAUDE.md` or `README.md`** — both carry unrelated uncommitted work. Their intended content goes into `pending_doc_updates.md` instead.
+
+**Dirty-file rule.** `CLAUDE.md` (2 changed lines) and `README.md` (6) hold a third party's in-progress edits. Staging either would sweep their work into this branch — the same hazard already handled for `requirements.txt` and `app.py`. Write the exact intended additions for both into `docs/auto_generation/pending_doc_updates.md`, as copy-pasteable blocks with a one-line note saying where each goes. Task 15 Step 2d applies them if those files are clean by then.
 
 **Interfaces:**
 - Consumes: the finished implementation.
@@ -4124,7 +4126,7 @@ Create `docs/auto_generation/README.md` covering, with real content and no place
 - **How to choose a model** — the `scripts/bench_script_models.py` workflow with a runnable command.
 - **Calibrating `DEFAULT_WPM`** — what `log_estimate_accuracy` writes and how to act on it.
 
-- [ ] **Step 2: Update CLAUDE.md**
+- [ ] **Step 2: Write the CLAUDE.md additions into `pending_doc_updates.md` (do NOT edit CLAUDE.md)**
 
 Add to the Folder Map (respecting the RAM-fix warning above):
 
@@ -4189,7 +4191,7 @@ Add rows: "Change how scripts are written" → `docs/prompting_guides/` + `scrip
 
 Add: the fatal/advisory split; first-colon-only spec parsing (`ollama:qwen3:30b`); guides read at call time so edits apply without restart; `app.py` cannot be imported in tests because of the `atexit` hard-exit hook, which is why `core/streaming_run.py` exists; fades are excluded from duration estimates because `apply_fades` does not extend runtime.
 
-- [ ] **Step 7: Update README.md**
+- [ ] **Step 7: Write the README.md addition into `pending_doc_updates.md` (do NOT edit README.md)**
 
 A short "Auto-Generate" section: what it does, the minimum `.env` needed, and a pointer to `docs/auto_generation/README.md`.
 
@@ -4206,7 +4208,7 @@ Expected: no output.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add docs/auto_generation/README.md CLAUDE.md docs/ARCHITECTURE.md docs/COMPONENT_REGISTRY.md docs/TASK_ROUTING.md docs/GOTCHAS.md README.md
+git add docs/auto_generation/README.md docs/auto_generation/pending_doc_updates.md docs/ARCHITECTURE.md docs/COMPONENT_REGISTRY.md docs/TASK_ROUTING.md docs/GOTCHAS.md
 git commit -m "docs: document the auto-generation subsystem"
 ```
 
@@ -4256,6 +4258,15 @@ Run: `git status --short app.py`
 - **If it is still dirty**: do NOT stage it. Leave the change to the user, say so
   explicitly in the final report, and note it in the PR body. The tab module and its
   tests are committed either way — only the two wiring lines are outstanding.
+
+- [ ] **Step 2d: Apply the pending CLAUDE.md and README.md additions**
+
+Task 14 deliberately did not touch those two files because they held unrelated uncommitted work. Check:
+
+Run: `git status --short CLAUDE.md README.md`
+
+- **If both are clean**: apply the blocks from `docs/auto_generation/pending_doc_updates.md`, verify no `36 GB` line was altered (that belongs to a sibling branch), then commit as `docs: add auto-generation sections to CLAUDE.md and README.md`.
+- **If either is still dirty**: do NOT stage it. Leave those to the user, say so in the final report, and note it in the PR body. Everything else is documented and committed regardless.
 
 - [ ] **Step 3: Confirm the full suite is green**
 
