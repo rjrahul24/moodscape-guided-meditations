@@ -18,12 +18,27 @@ from core.kokoro_tts.engine import ELLIPSIS_PAUSE_SEC, INTER_SENTENCE_PAUSE_SEC
 
 logger = logging.getLogger(__name__)
 
-# Measured speaking rates. F5 at speed 0.88 runs ~95-100 WPM per
-# docs/prompting_guides/vocal_meditation_f5_instructions.md. These are the
-# calibration constants: log_estimate_accuracy() exists to refine them from
-# real renders rather than leaving them a guess.
+# Measured speaking rates. These are the calibration constants:
+# log_estimate_accuracy() exists to refine them from real renders rather than
+# leaving them a guess.
+#
+# f5: measured 2026-09-17 from a real render of a 235-word script through
+# tests/integration/test_auto_generate_e2e.py — at the old 97.0 WPM the
+# estimate was 205.4s against an actual 226.0s (ratio 1.10, implied WPM
+# 85.0). 85.0 reproduces the actual duration almost exactly (ratio 1.001).
+# Caveat: F5 clones the pacing of its reference audio, so this number is
+# voice-dependent — a markedly faster or slower reference voice will drift
+# from it. A 22-word script measured separately gave a wildly different
+# implied rate (36.8 WPM) because fixed per-chunk overhead (reference-audio
+# padding, leading/trailing silence) dominates a 3-chunk script; that
+# measurement was discarded as not representative of steady-state speech
+# rate.
+#
+# kokoro: NOT remeasured — left at the prior estimate. No real-render data
+# backs this number yet; do not change it on the strength of the f5
+# measurement above.
 DEFAULT_WPM: dict[str, float] = {
-    "f5": 97.0,
+    "f5": 85.0,
     "kokoro": 105.0,
 }
 
