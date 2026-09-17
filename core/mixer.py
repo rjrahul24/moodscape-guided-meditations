@@ -747,6 +747,7 @@ def mix(
     target_lufs: float = -19.0,
     stereo_output: bool = False,
     phrases: list[tuple[float, float]] | None = None,
+    bed_overrides: dict | None = None,
 ) -> np.ndarray:
     """Full mix pipeline: align → level → duck → overlay → fades → normalize.
 
@@ -755,6 +756,11 @@ def mix(
             music_volume_db. -8 dB gives ~20 dB voice-music separation.
         music_volume_db: Baseline music level in dB (applied before ducking).
             -16 dB keeps music subtly present during pauses.
+        bed_overrides: Optional dict of extra keyword args forwarded to the
+            fullband breathing-duck (e.g. ``{"release_ms": 2500, "lift_db": 0.5}``
+            for sleep stories, where the bed should stay softer and more
+            constant). None (default) preserves the meditation-tuned behaviour
+            exactly. Ignored when the spectral duck is enabled.
         phrases: Optional pre-detected (start_s, end_s) speech phrases in
             *unaligned voice* time (e.g. from bed calibration). Shifted by
             the pre-roll internally so the ducker reuses them instead of
@@ -830,6 +836,7 @@ def mix(
             aligned_voice, aligned_music, sample_rate,
             duck_depth_db=duck_amount_db,
             phrases=aligned_phrases,
+            **(bed_overrides or {}),
         )
 
     # 4b. Optional: shared convolution-reverb send (research Issue 2.3) — run

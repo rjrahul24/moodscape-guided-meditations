@@ -216,9 +216,14 @@ def generate_meditation(
     shared_reverb_flag,
     microprosody_flag,
     f5_cfg_strength,
+    content_type_choice,
 ):
     # Initial status
     yield None, _render_status("Initializing Pipeline", 0.0)
+
+    # Map content-type label ("Guided Meditation" / "Sleep Story") to its key.
+    from core.content_profiles import normalize_content_type
+    content_type = normalize_content_type(content_type_choice)
 
     # Research experiment toggles → MOODSCAPE_* env flags read by the mixer /
     # F5 engine. Set explicitly (including "0") so a toggle turned off clears
@@ -307,6 +312,7 @@ def generate_meditation(
                 quality_mode=bool(quality_mode_flag),
                 stereo_output=bool(stereo_output_flag),
                 uploaded_music_path=uploaded_music_file or None,
+                content_type=content_type,
             )
             result_container["result"] = result
         except Exception as e:
@@ -917,6 +923,16 @@ with gr.Blocks(
         # ── Left column: Creative Canvas ──────────────────────────────────
         with gr.Column(scale=3, elem_classes="canvas-zone"):
             with gr.Group():
+                content_type_dropdown = gr.Dropdown(
+                    choices=["Guided Meditation", "Sleep Story"],
+                    value="Guided Meditation",
+                    label="Content Type",
+                    info=(
+                        "Sleep Story: continuous narration with shorter pauses and a "
+                        "softer, near-constant music bed. Adjusts the controls below — "
+                        "you can still fine-tune any of them."
+                    ),
+                )
                 generation_mode = gr.Radio(
                     choices=["Instrumental Only", "Vocals Only", "Instrumental + Vocal"],
                     value="Instrumental + Vocal",
@@ -1178,6 +1194,26 @@ with gr.Blocks(
         outputs=[kokoro_settings, f5_settings, speed_slider],
     )
 
+    def apply_content_profile(content_type_label):
+        # Pre-fill the slider-backed controls with the selected content profile's
+        # defaults. The user can still override any of them afterward. Meditation
+        # restores today's defaults; Sleep Story applies the softer, slower tuning.
+        from core.content_profiles import get_profile, normalize_content_type
+        p = get_profile(normalize_content_type(content_type_label))
+        return (
+            gr.update(value=p["speed"]),          # speed_slider
+            gr.update(value=p["duck_amount_db"]), # duck_slider
+            gr.update(value=p["reverb_amount"]),  # reverb_slider
+            gr.update(value=p["fade_in_sec"]),    # fade_in_slider
+            gr.update(value=p["fade_out_sec"]),   # fade_out_slider
+        )
+
+    content_type_dropdown.change(
+        fn=apply_content_profile,
+        inputs=[content_type_dropdown],
+        outputs=[speed_slider, duck_slider, reverb_slider, fade_in_slider, fade_out_slider],
+    )
+
     generate_btn.click(
         fn=generate_meditation,
         inputs=[
@@ -1211,6 +1247,7 @@ with gr.Blocks(
             shared_reverb_checkbox,
             microprosody_checkbox,
             f5_cfg_slider,
+            content_type_dropdown,
         ],
         outputs=[audio_output, status_display],
         show_progress="full",

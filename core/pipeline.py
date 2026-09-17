@@ -67,6 +67,7 @@ class MeditationPipeline:
         quality_mode: bool = False,
         stereo_output: bool = False,
         uploaded_music_path: str | None = None,
+        content_type: str = "meditation",
     ) -> tuple[str, str]:
         """Run the full pipeline and return the path to the output audio file.
 
@@ -104,11 +105,26 @@ class MeditationPipeline:
             stem_separation: If True (default), run AI source separation
                 (HT Demucs) on generated music to remove any unwanted drums
                 or vocals that the model may have produced despite prompting.
+            content_type: "meditation" (default) or "sleep_story". Selects a
+                content profile (core/content_profiles.py) that shortens
+                paragraph-break pauses for continuous narration and softens the
+                music bed (gentler, more-constant ducking). "meditation" leaves
+                the long-tuned meditation path unchanged. Slider-backed values
+                (speed, duck, fades, reverb) are still passed in explicitly by
+                the caller; this only drives the non-slider behaviours.
 
         Returns:
             Tuple of (path_to_output_file, status_message).
         """
         status_message = ""
+
+        # Resolve the content profile (meditation vs sleep story). The profile
+        # drives non-slider behaviours: paragraph-pause length and the softer,
+        # more-constant sleep-story bed. "meditation" is a no-op vs the old path.
+        from core.content_profiles import get_profile, normalize_content_type
+        content_type = normalize_content_type(content_type)
+        profile = get_profile(content_type)
+        bed_profile = profile.get("bed")
 
         # Generate a session seed if not provided
         if seed is None:
@@ -143,7 +159,7 @@ class MeditationPipeline:
                     from core.f5_tts.preprocessor import prepare_segments as _prepare
                 else:
                     from core.kokoro_tts.preprocessor import prepare_segments as _prepare
-                segments = _prepare(script)
+                segments = _prepare(script, content_type=content_type)
 
                 if not segments:
                     raise ValueError("Script is empty or contains no content.")
@@ -455,8 +471,17 @@ class MeditationPipeline:
                 from core.mixer import calibrate_music_bed, detect_phrases
                 _progress(progress_cb, 0.81, "Calibrating music bed level...")
                 mix_phrases = detect_phrases(voice_audio, mix_sr, threshold_db=None)
+                # Sleep stories narrow the speech/pause loudness gap so the bed
+                # sits softly and nearly constant; meditation uses the default offsets.
+                cal_offsets = {}
+                if bed_profile is not None:
+                    cal_offsets = {
+                        "speech_offset_lu": bed_profile["speech_offset_lu"],
+                        "pause_offset_lu": bed_profile["pause_offset_lu"],
+                    }
                 cal_volume_db, cal_duck_db = calibrate_music_bed(
                     voice_audio, music_audio, mix_sr, phrases=mix_phrases,
+                    **cal_offsets,
                 )
                 music_volume_db = cal_volume_db
                 # A user-moved duck slider (non-default) still wins.
@@ -492,6 +517,7 @@ class MeditationPipeline:
                     fade_out_sec=fade_out_sec,
                     stereo_output=stereo_output,
                     phrases=mix_phrases,
+                    bed_overrides=bed_profile["duck_kwargs"] if bed_profile else None,
                 )
 
             # ── Step 10: Master processing ──────────────────────────────────

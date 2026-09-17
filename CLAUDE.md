@@ -2,6 +2,8 @@
 
 AI-guided meditation audio generator (Gradio UI). Two TTS engines (Kokoro, F5-TTS) and two music sources (Lyria RealTime or pre-existing background instrumentals). Target hardware: Apple Silicon M1 Max (36 GB unified RAM).
 
+**Content types.** The app generates **guided meditations** (default) and **sleep stories**, selected via the "Content Type" UI dropdown (`--content-type` on the CLI). A single `content_type` ("meditation" | "sleep_story") threads UI → pipeline → preprocessors → mixer; `"meditation"` is the default at every layer, so the meditation path is unchanged. Profiles live in [core/content_profiles.py](core/content_profiles.py): slider-backed values (speed, duck, fades, reverb) are *UI preset defaults the user can still override*; non-slider behaviours are driven by `content_type` — shorter paragraph-break pauses (`{engine}_paragraph_pause_sec`, passed into `prepare_segments`) and a softer, more-constant sleep bed (gentler `apply_breathing_duck` kwargs + narrower `calibrate_music_bed` offsets via `mix(bed_overrides=…)`). Prompting guides are per-engine **and** per-content-type: `vocal_meditation_{kokoro,f5}_instructions.md` and `vocal_sleep_story_{kokoro,f5}_instructions.md`.
+
 ## Setup & Run
 
 ```bash

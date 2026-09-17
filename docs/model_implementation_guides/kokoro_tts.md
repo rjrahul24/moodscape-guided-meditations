@@ -10,7 +10,7 @@
 - Tune prosody/punctuation rules → `preprocessor.py :: enhance_prosody_punctuation()`
 - Tune voice FX → `postprocessor.py :: build_voice_chain()`
 - Add/edit voice blends → `voice_manager.py :: MEDITATION_PRESETS`
-**See also:** `docs/ARCHITECTURE.md#phase-2--tts-synthesis` · `docs/prompting_guides/vocal_kokoro_instructions.md`
+**See also:** `docs/ARCHITECTURE.md#phase-2--tts-synthesis` · `docs/prompting_guides/vocal_meditation_kokoro_instructions.md` · `docs/prompting_guides/vocal_sleep_story_kokoro_instructions.md`
 <!-- ────────────────────────────────────────────────────────────────── -->
 
 # Kokoro TTS — Guided Meditation Implementation Research

@@ -31,7 +31,7 @@ Every beat traces back to real commits, docs, or code. Quick index:
 | Theme | Primary commits | Primary code | Primary docs |
 |-------|-----------------|--------------|--------------|
 | Engine selection & culling | `8e8e5b3`, `7aca804`, `f24dcdd` | `core/speech_engine.py`, `core/*_tts/` | `docs/COMPONENT_REGISTRY.md` |
-| Voice character (blending, stress) | `c85832b`, `ab041ef`, `e06e70b`, `19abbf3` | `core/kokoro_tts/voice_manager.py`, `preprocessor.py` | `docs/prompting_guides/vocal_kokoro_instructions.md` |
+| Voice character (blending, stress) | `c85832b`, `ab041ef`, `e06e70b`, `19abbf3` | `core/kokoro_tts/voice_manager.py`, `preprocessor.py` | `docs/prompting_guides/vocal_meditation_kokoro_instructions.md` |
 | Voice realism / post-processing | `400f65c`, `297f62a`, research pass | `core/kokoro_tts/postprocessor.py`, `core/f5_tts/{engine,postprocessor}.py` | `docs/optimization_and_processing/post-processing-pipeline.md` |
 | Mixing overhaul | `8a50df0`, `9bc4a5d`, `4efd6ed`, `cd612ad` | `core/mixer.py`, `core/audio_processor.py` | `docs/optimization_and_processing/audio_processing.md`, `docs/GOTCHAS.md` |
 | Music-source pivot | `611ae59`, `a0d5ad3`, `f24dcdd` | `core/upload_music/`, `core/lyria/` | `CLAUDE.md` (Pipeline Flow) |

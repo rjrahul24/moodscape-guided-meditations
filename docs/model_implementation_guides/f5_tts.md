@@ -10,7 +10,7 @@
 - Tune chunking → `preprocessor.py :: MAX_CHUNK_CHARS`
 - Tune VAD behavior → `engine.py :: _apply_silero_vad()`
 - Tune voice FX → `postprocessor.py :: build_f5_voice_chain()`
-**See also:** `docs/ARCHITECTURE.md#f5engine-specifics` · `docs/prompting_guides/vocal_f5_instructions.md`
+**See also:** `docs/ARCHITECTURE.md#f5engine-specifics` · `docs/prompting_guides/vocal_meditation_f5_instructions.md` · `docs/prompting_guides/vocal_sleep_story_f5_instructions.md`
 <!-- ────────────────────────────────────────────────────────────────── -->
 
 # F5-TTS Implementation Guide

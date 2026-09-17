@@ -46,14 +46,19 @@ def normalize_for_f5(text: str) -> str:
     return text
 
 
-def parse_script(script: str) -> list[dict]:
+def parse_script(script: str, paragraph_pause_sec: float = _PARAGRAPH_PAUSE_SEC) -> list[dict]:
     """Parse a meditation script into speech and pause segments.
+
+    Args:
+        paragraph_pause_sec: Pause duration inserted for a blank-line paragraph
+            break. Defaults to the meditation value (3.0s); sleep stories pass a
+            shorter value for more continuous narration.
 
     Supports the same pause marker syntax as kokoro_tts/preprocessor.py:
         [pause:Xs]          — explicit pause in seconds
         [N second pause]    — alternate explicit pause format
         [breath] / [inhale] / [exhale]  — 1.2s breath pause
-        double newline      — paragraph break (6.5s pause)
+        double newline      — paragraph break (paragraph_pause_sec pause)
 
     Returns a list of dicts with keys:
         {"type": "speech", "text": str, "voice": str|None}
@@ -98,7 +103,7 @@ def parse_script(script: str) -> list[dict]:
                 # At least one side is a pause tag — the \n\n is just formatting
                 parts_joined.append(' ')
             else:
-                parts_joined.append(f' [pause:{_PARAGRAPH_PAUSE_SEC}s] ')
+                parts_joined.append(f' [pause:{paragraph_pause_sec}s] ')
     script = ''.join(parts_joined)
 
     # Split on pause, voice, AND breath markers.
@@ -173,16 +178,25 @@ def split_into_chunks(text: str) -> list[str]:
     return chunks if chunks else [text]
 
 
-def prepare_segments(script: str) -> list[dict]:
+def prepare_segments(script: str, content_type: str = "meditation") -> list[dict]:
     """Full preprocessing pipeline for F5-TTS.
 
     Parses the script into pause/speech segments, then splits each speech
     block into ≤MAX_CHUNK_CHARS-character chunks to stay within F5-TTS's 30s context window.
 
+    Args:
+        content_type: "meditation" (default) or "sleep_story". Selects the
+            paragraph-break pause length from the content profile — sleep stories
+            use a shorter pause so narration flows continuously. The meditation
+            default is byte-for-byte identical to the previous behaviour.
+
     Returns the same segment dict format as kokoro_tts/preprocessor.py so the
     pipeline's synthesize() call is engine-agnostic.
     """
-    raw_segments = parse_script(script)
+    from core.content_profiles import get_profile
+
+    paragraph_pause_sec = get_profile(content_type)["f5_paragraph_pause_sec"]
+    raw_segments = parse_script(script, paragraph_pause_sec=paragraph_pause_sec)
     expanded: list[dict] = []
     current_voice = None
     

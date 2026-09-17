@@ -38,7 +38,7 @@ _BREAK_CONJUNCTIONS = frozenset({'and', 'or', 'but', 'as', 'while'})
 
 # ── Script parsing ───────────────────────────────────────────────────────
 
-def parse_script(script: str) -> list[dict]:
+def parse_script(script: str, paragraph_pause_sec: float = _PARAGRAPH_PAUSE_SEC) -> list[dict]:
     """Parse a meditation script into speech and pause segments.
 
     Supported markers:
@@ -47,7 +47,12 @@ def parse_script(script: str) -> list[dict]:
         [N sec pause]      — alias: [30 sec pause] → [pause:30s]
         [breath]           — alias for a 1.2s breath pause
         [inhale]/[exhale]  — alias for a 1.2s breath pause
-        \\n\\n               — paragraph break, treated as a 6.5s pause
+        \\n\\n               — paragraph break, treated as a paragraph_pause_sec pause
+
+    Args:
+        paragraph_pause_sec: Pause duration inserted for a blank-line paragraph
+            break. Defaults to the meditation value (6.5s); sleep stories pass a
+            shorter value for more continuous narration.
 
     Returns a list of dicts:
         {"type": "speech", "text": "..."}
@@ -58,7 +63,7 @@ def parse_script(script: str) -> list[dict]:
 
     # Use a distinct internal marker for paragraph breaks so they can be
     # distinguished from user-authored [pause:Xs] tags when merging adjacent pauses.
-    script = re.sub(r'\n\n+', f' [para-pause:{_PARAGRAPH_PAUSE_SEC}s] ', script)
+    script = re.sub(r'\n\n+', f' [para-pause:{paragraph_pause_sec}s] ', script)
 
     # Normalize natural-language pause aliases → [pause:Xs]
     # Handles: [2 second pause], [0.5 second pause], [30 sec pause], [5s pause]
@@ -638,12 +643,21 @@ def clamp_speed(speed: float) -> float:
     return max(speed, MIN_SPEED)
 
 
-def prepare_segments(script: str) -> list[dict]:
+def prepare_segments(script: str, content_type: str = "meditation") -> list[dict]:
     """Full preprocessing pipeline: parse script → preprocess each speech segment.
+
+    Args:
+        content_type: "meditation" (default) or "sleep_story". Selects the
+            paragraph-break pause length from the content profile — sleep stories
+            use a shorter pause so narration flows continuously. The meditation
+            default is byte-for-byte identical to the previous behaviour.
 
     Returns structured segments ready for KokoroEngine.synthesize().
     """
-    segments = parse_script(script)
+    from core.content_profiles import get_profile
+
+    paragraph_pause_sec = get_profile(content_type)["kokoro_paragraph_pause_sec"]
+    segments = parse_script(script, paragraph_pause_sec=paragraph_pause_sec)
     for seg in segments:
         if seg["type"] == "speech":
             seg["text"] = preprocess_for_meditation(seg["text"])

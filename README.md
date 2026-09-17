@@ -388,8 +388,10 @@ docs/
 │   ├── lyria.md                ← Lyria RealTime API, weighted prompts, session limits, SynthID
 │   └── pedalboard.md           ← Pedalboard FX chain design, all plugin parameters
 ├── prompting_guides/
-│   ├── vocal_kokoro_instructions.md   ← How to write scripts for Kokoro TTS
-│   ├── vocal_f5_instructions.md       ← How to write scripts for F5-TTS + phase guide
+│   ├── vocal_meditation_kokoro_instructions.md    ← Meditation scripts for Kokoro TTS
+│   ├── vocal_meditation_f5_instructions.md         ← Meditation scripts for F5-TTS + phase guide
+│   ├── vocal_sleep_story_kokoro_instructions.md    ← Sleep-story scripts for Kokoro TTS
+│   ├── vocal_sleep_story_f5_instructions.md        ← Sleep-story scripts for F5-TTS
 ├── optimization_and_processing/
 │   ├── audio_processing.md            ← Ducking, FX chains, sample rate strategy, stereo-to-mono
 │   └── post-processing-pipeline.md    ← Export, LUFS, master chain, streaming export
