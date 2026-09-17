@@ -483,8 +483,11 @@ Unit, all with `FakeScriptEngine`, no network, no model weights:
 - Duration band -> seconds mapping.
 - Preflight fails fast and names the missing model.
 
-Integration, reusing the existing stub-pipeline pattern from
-`tests/integration/test_auto_generate_e2e.py`:
+Integration, in a new `tests/integration/test_genre_e2e.py` with its own stub
+pipeline. It does not extend `test_auto_generate_e2e.py`: that file is gated
+behind `MOODSCAPE_E2E=1` and drives the real pipeline, so anything added there
+is skipped by default. The stub-pipeline pattern to copy lives in
+`tests/unit/test_auto_generate.py`.
 
 - genre -> audio end to end with a stub pipeline;
 - **two runs of one genre with an engine returning identical text must produce
