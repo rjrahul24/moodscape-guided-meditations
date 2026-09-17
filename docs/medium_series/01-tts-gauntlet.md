@@ -1,6 +1,6 @@
 # Article 1 — The TTS Gauntlet: Choosing an AI Voice for Meditation
 
-**Thesis (one line):** I auditioned six speech engines on a single 36 GB Apple Silicon
+**Thesis (one line):** I auditioned six speech engines on a single 32 GB Apple Silicon
 machine and shipped two — and the *selection logic* matters more than any one engine.
 
 **Target reader takeaway:** How to evaluate neural TTS engines for a specific,
@@ -13,7 +13,7 @@ cheap rather than a rewrite.
 
 ## Narrative beats (in order)
 
-1. **Hook — the constraint frames everything.** One Mac, 36 GB unified RAM, target
+1. **Hook — the constraint frames everything.** One Mac, 32 GB unified RAM, target
    quality "Calm/Headspace". You cannot hold two large models in memory at once, so
    the pipeline *loads engines sequentially* and every engine is a swappable module.
    That constraint is the reason this became a "gauntlet" and not a "pick one".

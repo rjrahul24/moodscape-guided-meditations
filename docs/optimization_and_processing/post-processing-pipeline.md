@@ -2,7 +2,7 @@
 
 ## 1. Objective
 
-A high-fidelity vocal and music post-processing "Mastering Chain" for MoodScape. The pipeline handles raw output from both **Kokoro TTS** and **F5-TTS**, removing digital artifacts while enhancing warmth, intimacy, and musical cohesion. Optimized for Apple Silicon M1 Max with 36 GB unified memory.
+A high-fidelity vocal and music post-processing "Mastering Chain" for MoodScape. The pipeline handles raw output from both **Kokoro TTS** and **F5-TTS**, removing digital artifacts while enhancing warmth, intimacy, and musical cohesion. Optimized for Apple Silicon M1 Max with 32 GB unified memory.
 
 ---
 

@@ -26,7 +26,7 @@ AI-powered meditation audio generator that synthesizes guided voice, adaptive mu
 
 ## Hardware Target
 
-Optimized for **Apple Silicon (M1 Max, 36 GB unified RAM)** with MPS acceleration and memory-conscious sequential loading of models.
+Optimized for **Apple Silicon (M1 Max, 32 GB unified RAM)** with MPS acceleration and memory-conscious sequential loading of models.
 
 ## Quick Start
 

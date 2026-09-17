@@ -493,7 +493,7 @@ TTS and music engines are loaded **sequentially**, never simultaneously:
 1. TTS engine loads → narration is synthesized → TTS unloads (memory freed)
 2. Music engine loads → music is generated → music engine unloads (memory freed)
 
-This allows the 36 GB M1 Max to run all engines comfortably at peak usage of ~12–16 GB. **Lyria RealTime** is an exception — it runs in Google's cloud and consumes zero local GPU memory.
+This allows the 32 GB M1 Max to run all engines comfortably at peak usage of ~12–16 GB. **Lyria RealTime** is an exception — it runs in Google's cloud and consumes zero local GPU memory.
 
 ---
 

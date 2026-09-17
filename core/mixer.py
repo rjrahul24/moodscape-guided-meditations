@@ -968,7 +968,7 @@ def export_audio(
     tmp.close()
 
     # 1. Apply Pedalboard mastering EQ/glue (no limiter) to the whole array.
-    # We do this in-memory (safe for 36 GB RAM target hardware).
+    # We do this in-memory (safe for 32 GB RAM target hardware).
     mastered_audio = audio
     if master_chain:
         audio_2d = audio.reshape(1, -1) if audio.ndim == 1 else audio

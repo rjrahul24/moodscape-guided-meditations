@@ -315,7 +315,11 @@ The worker process holds Demucs weights; when it exits, all its memory is reclai
 
 ### MPS Memory Ceiling
 
-`PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7` set as `os.environ` in `core//engine.py` module scope (before any torch import in that file). 0.7 × 36 GB = 25.2 GB ceiling. Values below 0.5 cause OOM during 3B LM generation.
+`PYTORCH_MPS_HIGH_WATERMARK_RATIO` is set once, in `app.py` module scope (before any torch import), via `os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.0")`. It is the only place the variable is set anywhere in the repo.
+
+**`0.0` means *unlimited*, not a zero-byte ceiling** — it disables the PyTorch MPS allocator's high-watermark cap entirely, so there is no framework-enforced memory ceiling. Because `setdefault` is used, an existing value in the environment wins, so a ratio can still be imposed externally (`PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.8 python app.py`).
+
+With no allocator cap in place, the practical limit is Metal's own recommended working set — `torch.mps.recommended_max_memory()` reports **~24.96 GiB** of the machine's 32 GiB. That is a soft advisory figure, not an enforced ceiling. What actually keeps the pipeline inside the budget is the sequential load/unload discipline described above (peak usage ~12–16 GB), not a watermark ratio.
 
 ### atexit Hook
 

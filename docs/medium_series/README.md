@@ -19,7 +19,7 @@ set of narrative beats, and real, verbatim code snippets pulled from the repo wi
 
 | # | File | Thesis in one line |
 |---|------|--------------------|
-| 1 | [`01-tts-gauntlet.md`](01-tts-gauntlet.md) | I auditioned six speech engines on a 36 GB Mac and shipped two — here's the selection logic. |
+| 1 | [`01-tts-gauntlet.md`](01-tts-gauntlet.md) | I auditioned six speech engines on a 32 GB Mac and shipped two — here's the selection logic. |
 | 2 | [`02-humanizing-the-voice.md`](02-humanizing-the-voice.md) | Raw neural TTS is *too* clean; realism is deliberately engineered back in. |
 | 3 | [`03-the-mix.md`](03-the-mix.md) | The hardest problem was sitting narration on a music bed so it breathes. *(centerpiece)* |
 | 4 | [`04-architecture.md`](04-architecture.md) | Keeping a multi-engine ML audio pipeline maintainable under a hard RAM ceiling. *(optional / mergeable into #3's tail for a tight 3-part series)* |
