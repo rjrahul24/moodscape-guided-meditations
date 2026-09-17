@@ -920,341 +920,343 @@ with gr.Blocks(
         </div>
     """)
 
-    with gr.Row():
-        # ── Left column: Creative Canvas ──────────────────────────────────
-        with gr.Column(scale=3, elem_classes="canvas-zone"):
-            with gr.Group():
-                content_type_dropdown = gr.Dropdown(
-                    choices=["Guided Meditation", "Sleep Story"],
-                    value="Guided Meditation",
-                    label="Content Type",
-                    info=(
-                        "Sleep Story: continuous narration with shorter pauses and a "
-                        "softer, near-constant music bed. Adjusts the controls below — "
-                        "you can still fine-tune any of them."
-                    ),
-                )
-                generation_mode = gr.Radio(
-                    choices=["Instrumental Only", "Vocals Only", "Instrumental + Vocal"],
-                    value="Instrumental + Vocal",
-                    label="Mode",
-                    elem_classes="pill-radio",
-                )
-                script_input = gr.Textbox(
-                    label="Meditation Script",
-                    placeholder=(
-                        "Write your meditation script here…\n"
-                        "Use [pause:5s] for timed pauses, [breath] for breath cues.\n"
-                        "Double newlines create natural phrase gaps."
-                    ),
-                    value=DEFAULT_SCRIPT,
-                    lines=14,
-                    elem_id="script-textbox",
-                )
-
+    with gr.Tabs():
+        with gr.Tab("Manual"):
             with gr.Row():
-                music_prompt = gr.Textbox(
-                    label="Atmosphere",
-                    placeholder="E.g. warm synthesizer pads, gentle rain, minimal soft piano…",
-                    value=DEFAULT_MUSIC_PROMPT,
-                    lines=2,
-                    scale=2,
-                )
-                music_duration = gr.Slider(
-                    minimum=1.0,
-                    maximum=30.0,
-                    value=3.0,
-                    step=0.5,
-                    label="Duration (min)",
-                    visible=False,
-                    scale=1,
-                )
+                # ── Left column: Creative Canvas ──────────────────────────────────
+                with gr.Column(scale=3, elem_classes="canvas-zone"):
+                    with gr.Group():
+                        content_type_dropdown = gr.Dropdown(
+                            choices=["Guided Meditation", "Sleep Story"],
+                            value="Guided Meditation",
+                            label="Content Type",
+                            info=(
+                                "Sleep Story: continuous narration with shorter pauses and a "
+                                "softer, near-constant music bed. Adjusts the controls below — "
+                                "you can still fine-tune any of them."
+                            ),
+                        )
+                        generation_mode = gr.Radio(
+                            choices=["Instrumental Only", "Vocals Only", "Instrumental + Vocal"],
+                            value="Instrumental + Vocal",
+                            label="Mode",
+                            elem_classes="pill-radio",
+                        )
+                        script_input = gr.Textbox(
+                            label="Meditation Script",
+                            placeholder=(
+                                "Write your meditation script here…\n"
+                                "Use [pause:5s] for timed pauses, [breath] for breath cues.\n"
+                                "Double newlines create natural phrase gaps."
+                            ),
+                            value=DEFAULT_SCRIPT,
+                            lines=14,
+                            elem_id="script-textbox",
+                        )
 
-            generate_btn = gr.Button(
-                "Generate Meditation",
-                variant="primary",
-                size="lg",
-                elem_classes="primary-btn",
-            )
-            audio_output = gr.Audio(
-                label="Your Meditation",
-                type="filepath",
-                elem_classes="music-player-glass",
-            )
-            status_display = gr.HTML(
-                _render_status("Ready", 0.0, "Ready to synthesize."),
-                elem_id="status-display",
-            )
-
-        # ── Right column: Settings Sidebar ────────────────────────────────
-        with gr.Column(scale=2, elem_classes="settings-sidebar"):
-
-            # Section 1: Voice & Sound
-            with gr.Accordion("Voice & Sound", open=True, elem_classes="accordion-section"):
-                music_model_dropdown = gr.Dropdown(
-                    choices=["Lyria RealTime", "Background Music"],
-                    value="Background Music",
-                    label="Music Engine",
-                    info="Background Music uses curated instrumentals. Lyria RealTime generates AI music (requires Google API key).",
-                    elem_classes="dropdown-container",
-                )
-                with gr.Group(visible=True) as upload_settings:
                     with gr.Row():
-                        uploaded_music = gr.Dropdown(
-                            choices=BACKGROUND_CHOICES if BACKGROUND_CHOICES else ["(no tracks found)"],
-                            value=BACKGROUND_DEFAULT,
-                            label="Instrumental Track",
-                            interactive=bool(BACKGROUND_CHOICES),
-                            elem_classes="dropdown-container",
+                        music_prompt = gr.Textbox(
+                            label="Atmosphere",
+                            placeholder="E.g. warm synthesizer pads, gentle rain, minimal soft piano…",
+                            value=DEFAULT_MUSIC_PROMPT,
+                            lines=2,
+                            scale=2,
+                        )
+                        music_duration = gr.Slider(
+                            minimum=1.0,
+                            maximum=30.0,
+                            value=3.0,
+                            step=0.5,
+                            label="Duration (min)",
+                            visible=False,
                             scale=1,
                         )
-                        refresh_backgrounds_btn = gr.Button("↻", scale=0, min_width=48)
-                tts_engine_radio = gr.Radio(
-                    choices=["Kokoro", "F5-TTS"],
-                    value="F5-TTS",
-                    label="Voice Engine",
-                    elem_classes="pill-radio",
+
+                    generate_btn = gr.Button(
+                        "Generate Meditation",
+                        variant="primary",
+                        size="lg",
+                        elem_classes="primary-btn",
+                    )
+                    audio_output = gr.Audio(
+                        label="Your Meditation",
+                        type="filepath",
+                        elem_classes="music-player-glass",
+                    )
+                    status_display = gr.HTML(
+                        _render_status("Ready", 0.0, "Ready to synthesize."),
+                        elem_id="status-display",
+                    )
+
+                # ── Right column: Settings Sidebar ────────────────────────────────
+                with gr.Column(scale=2, elem_classes="settings-sidebar"):
+
+                    # Section 1: Voice & Sound
+                    with gr.Accordion("Voice & Sound", open=True, elem_classes="accordion-section"):
+                        music_model_dropdown = gr.Dropdown(
+                            choices=["Lyria RealTime", "Background Music"],
+                            value="Background Music",
+                            label="Music Engine",
+                            info="Background Music uses curated instrumentals. Lyria RealTime generates AI music (requires Google API key).",
+                            elem_classes="dropdown-container",
+                        )
+                        with gr.Group(visible=True) as upload_settings:
+                            with gr.Row():
+                                uploaded_music = gr.Dropdown(
+                                    choices=BACKGROUND_CHOICES if BACKGROUND_CHOICES else ["(no tracks found)"],
+                                    value=BACKGROUND_DEFAULT,
+                                    label="Instrumental Track",
+                                    interactive=bool(BACKGROUND_CHOICES),
+                                    elem_classes="dropdown-container",
+                                    scale=1,
+                                )
+                                refresh_backgrounds_btn = gr.Button("↻", scale=0, min_width=48)
+                        tts_engine_radio = gr.Radio(
+                            choices=["Kokoro", "F5-TTS"],
+                            value="F5-TTS",
+                            label="Voice Engine",
+                            elem_classes="pill-radio",
+                        )
+                        with gr.Group(visible=False, elem_id="kokoro-group") as kokoro_settings:
+                            kokoro_voice_dropdown = gr.Dropdown(
+                                choices=KOKORO_VOICE_CHOICES,
+                                value="balanced_calm",
+                                label="Voice",
+                                elem_classes="dropdown-container",
+                            )
+                        with gr.Group(visible=True, elem_id="f5-group") as f5_settings:
+                            f5_voice_dropdown = gr.Dropdown(
+                                choices=F5_VOICE_CHOICES if F5_VOICE_CHOICES else ["(no voices)"],
+                                value=F5_VOICE_DEFAULT,
+                                label="Voice",
+                                interactive=bool(F5_VOICE_CHOICES),
+                                elem_classes="dropdown-container",
+                            )
+                            f5_wpm_slider = gr.Slider(
+                                0, 150, 0, step=5,
+                                label="Pacing (WPM)",
+                                info="0 = natural rhythm (recommended). 90–110 = meditation. 120–150 = narration.",
+                            )
+
+                        # ── Voice & mix experiments (A/B listening tests) ──────────────
+                        with gr.Row():
+                            spectral_duck_checkbox = gr.Checkbox(
+                                label="Spectral Ducking", value=False,
+                                info="Duck only the mid band — keeps bass warmth + air.",
+                                elem_classes="toggle-switch",
+                            )
+                            shared_reverb_checkbox = gr.Checkbox(
+                                label="Shared Reverb", value=False,
+                                info="Sit the music in the voice's room for cohesion.",
+                                elem_classes="toggle-switch",
+                            )
+                            microprosody_checkbox = gr.Checkbox(
+                                label="Voice Microprosody", value=False,
+                                info="F5 only: phrase-final pitch drop + breathiness.",
+                                elem_classes="toggle-switch",
+                            )
+                        f5_cfg_slider = gr.Slider(
+                            minimum=1.0, maximum=2.5, value=2.0, step=0.1,
+                            label="Voice Expressiveness (F5 guidance)",
+                            info="Lower = warmer/more expressive, slightly less voice-identical. "
+                                 "2.0 = default; try ~1.2. F5 only.",
+                        )
+
+                    # Section 2: Mix & Effects
+                    with gr.Accordion("Mix & Effects", open=False, elem_classes="accordion-section"):
+                        with gr.Row():
+                            speed_slider = gr.Slider(0.70, 1.20, 0.9, step=0.01, label="Speech Speed", info="0.85–0.95 is ideal for guided meditation.")
+                            duck_slider = gr.Slider(-30, -6, -16, step=1, label="Music Ducking (dB)", info="How low the bed drops while you speak; it rises back gradually in pauses.")
+                        with gr.Row():
+                            reverb_slider = gr.Slider(0.0, 0.5, 0.15, step=0.05, label="Reverb Amount")
+                            reverb_ir_dropdown = gr.Dropdown(
+                                choices=[
+                                    ("Warm Studio", "warm_studio"),
+                                    ("Wooden Hall", "wooden_hall"),
+                                    ("Stone Chapel", "stone_chapel"),
+                                ],
+                                value="warm_studio",
+                                label="Space / IR",
+                                elem_classes="dropdown-container",
+                            )
+                        with gr.Row():
+                            fade_in_slider = gr.Slider(0, 10, 1.5, step=0.5, label="Fade In (s)")
+                            fade_out_slider = gr.Slider(0, 15, 6, step=0.5, label="Fade Out (s)")
+
+                    # Section 3: Advanced
+                    with gr.Accordion("Advanced", open=False, elem_classes="accordion-section"):
+                        with gr.Group(visible=False) as lyria_settings:
+                            gr.Markdown("#### Lyria Tuning")
+                            lyria_bpm = gr.Slider(60, 200, 70, step=1, label="BPM")
+                            with gr.Row():
+                                lyria_density = gr.Slider(0, 1.0, 0.1, step=0.05, label="Density")
+                                lyria_brightness = gr.Slider(0, 1.0, 0.15, step=0.05, label="Brightness")
+
+
+                        gr.Markdown("#### Export")
+                        with gr.Row():
+                            format_radio = gr.Radio(
+                                ["wav", "mp3"], value="wav", label="Format",
+                                elem_classes="pill-radio",
+                            )
+                            seed_input = gr.Number(label="Seed", value=0, precision=0)
+                        with gr.Row():
+                            upsample_checkbox = gr.Checkbox(
+                                label="Hi-Fi (48 kHz)", value=True,
+                                elem_classes="toggle-switch",
+                            )
+                            stems_checkbox = gr.Checkbox(
+                                label="Export Stems", value=False,
+                                elem_classes="toggle-switch",
+                            )
+                        stem_separation_checkbox = gr.Checkbox(
+                            label="Clean Music (Source Separation)", value=True,
+                            elem_classes="toggle-switch",
+                        )
+                        with gr.Row():
+                            quality_mode_checkbox = gr.Checkbox(
+                                label="High Quality (Best-of-3)", value=False,
+                                elem_classes="toggle-switch",
+                            )
+                            stereo_output_checkbox = gr.Checkbox(
+                                label="Stereo Output", value=False,
+                                elem_classes="toggle-switch",
+                            )
+
+
+            # ── Visibility Callbacks ───────────────────────────────────────────────
+
+            def toggle_mode_settings(mode, current_music_model, current_tts_engine):
+                is_inst = mode == "Instrumental Only"
+                is_voc = mode == "Vocals Only"
+                show_lyria = (current_music_model == "Lyria RealTime") and not is_voc
+                show_upload = (current_music_model == "Background Music") and not is_voc
+                show_kokoro = (current_tts_engine == "Kokoro") and not is_inst
+                show_f5 = (current_tts_engine == "F5-TTS") and not is_inst
+                return (
+                    gr.update(visible=not is_inst),   # script_input
+                    gr.update(visible=not is_voc),    # music_prompt
+                    gr.update(visible=is_inst),       # music_duration
+                    gr.update(visible=show_kokoro),   # kokoro_settings
+                    gr.update(visible=not is_inst),   # speed_slider
+                    gr.update(visible=not is_voc),    # duck_slider
+                    gr.update(visible=not is_inst),   # reverb_slider
+                    gr.update(visible=show_lyria),    # lyria_settings
+                    gr.update(visible=show_upload),   # upload_settings
+                    gr.update(visible=show_f5),       # f5_settings
                 )
-                with gr.Group(visible=False, elem_id="kokoro-group") as kokoro_settings:
-                    kokoro_voice_dropdown = gr.Dropdown(
-                        choices=KOKORO_VOICE_CHOICES,
-                        value="balanced_calm",
-                        label="Voice",
-                        elem_classes="dropdown-container",
-                    )
-                with gr.Group(visible=True, elem_id="f5-group") as f5_settings:
-                    f5_voice_dropdown = gr.Dropdown(
-                        choices=F5_VOICE_CHOICES if F5_VOICE_CHOICES else ["(no voices)"],
-                        value=F5_VOICE_DEFAULT,
-                        label="Voice",
-                        interactive=bool(F5_VOICE_CHOICES),
-                        elem_classes="dropdown-container",
-                    )
-                    f5_wpm_slider = gr.Slider(
-                        0, 150, 0, step=5,
-                        label="Pacing (WPM)",
-                        info="0 = natural rhythm (recommended). 90–110 = meditation. 120–150 = narration.",
-                    )
 
-                # ── Voice & mix experiments (A/B listening tests) ──────────────
-                with gr.Row():
-                    spectral_duck_checkbox = gr.Checkbox(
-                        label="Spectral Ducking", value=False,
-                        info="Duck only the mid band — keeps bass warmth + air.",
-                        elem_classes="toggle-switch",
-                    )
-                    shared_reverb_checkbox = gr.Checkbox(
-                        label="Shared Reverb", value=False,
-                        info="Sit the music in the voice's room for cohesion.",
-                        elem_classes="toggle-switch",
-                    )
-                    microprosody_checkbox = gr.Checkbox(
-                        label="Voice Microprosody", value=False,
-                        info="F5 only: phrase-final pitch drop + breathiness.",
-                        elem_classes="toggle-switch",
-                    )
-                f5_cfg_slider = gr.Slider(
-                    minimum=1.0, maximum=2.5, value=2.0, step=0.1,
-                    label="Voice Expressiveness (F5 guidance)",
-                    info="Lower = warmer/more expressive, slightly less voice-identical. "
-                         "2.0 = default; try ~1.2. F5 only.",
+            generation_mode.change(
+                fn=toggle_mode_settings,
+                inputs=[generation_mode, music_model_dropdown, tts_engine_radio],
+                outputs=[script_input, music_prompt, music_duration, kokoro_settings, speed_slider, duck_slider, reverb_slider, lyria_settings, upload_settings, f5_settings],
+            )
+
+            def toggle_music_engine_ui(model, mode):
+                is_lyria = model == "Lyria RealTime"
+                is_upload = model == "Background Music"
+                is_voc = mode == "Vocals Only"
+                return (
+                    gr.update(visible=is_lyria and not is_voc),    # lyria_settings
+                    gr.update(visible=is_upload and not is_voc),   # upload_settings
                 )
 
-            # Section 2: Mix & Effects
-            with gr.Accordion("Mix & Effects", open=False, elem_classes="accordion-section"):
-                with gr.Row():
-                    speed_slider = gr.Slider(0.70, 1.20, 0.9, step=0.01, label="Speech Speed", info="0.85–0.95 is ideal for guided meditation.")
-                    duck_slider = gr.Slider(-30, -6, -16, step=1, label="Music Ducking (dB)", info="How low the bed drops while you speak; it rises back gradually in pauses.")
-                with gr.Row():
-                    reverb_slider = gr.Slider(0.0, 0.5, 0.15, step=0.05, label="Reverb Amount")
-                    reverb_ir_dropdown = gr.Dropdown(
-                        choices=[
-                            ("Warm Studio", "warm_studio"),
-                            ("Wooden Hall", "wooden_hall"),
-                            ("Stone Chapel", "stone_chapel"),
-                        ],
-                        value="warm_studio",
-                        label="Space / IR",
-                        elem_classes="dropdown-container",
-                    )
-                with gr.Row():
-                    fade_in_slider = gr.Slider(0, 10, 1.5, step=0.5, label="Fade In (s)")
-                    fade_out_slider = gr.Slider(0, 15, 6, step=0.5, label="Fade Out (s)")
+            music_model_dropdown.change(
+                fn=toggle_music_engine_ui,
+                inputs=[music_model_dropdown, generation_mode],
+                outputs=[lyria_settings, upload_settings],
+            )
 
-            # Section 3: Advanced
-            with gr.Accordion("Advanced", open=False, elem_classes="accordion-section"):
-                with gr.Group(visible=False) as lyria_settings:
-                    gr.Markdown("#### Lyria Tuning")
-                    lyria_bpm = gr.Slider(60, 200, 70, step=1, label="BPM")
-                    with gr.Row():
-                        lyria_density = gr.Slider(0, 1.0, 0.1, step=0.05, label="Density")
-                        lyria_brightness = gr.Slider(0, 1.0, 0.15, step=0.05, label="Brightness")
-
-
-                gr.Markdown("#### Export")
-                with gr.Row():
-                    format_radio = gr.Radio(
-                        ["wav", "mp3"], value="wav", label="Format",
-                        elem_classes="pill-radio",
-                    )
-                    seed_input = gr.Number(label="Seed", value=0, precision=0)
-                with gr.Row():
-                    upsample_checkbox = gr.Checkbox(
-                        label="Hi-Fi (48 kHz)", value=True,
-                        elem_classes="toggle-switch",
-                    )
-                    stems_checkbox = gr.Checkbox(
-                        label="Export Stems", value=False,
-                        elem_classes="toggle-switch",
-                    )
-                stem_separation_checkbox = gr.Checkbox(
-                    label="Clean Music (Source Separation)", value=True,
-                    elem_classes="toggle-switch",
+            def _refresh_backgrounds():
+                # Re-scan assets/backgrounds/ so newly added tracks appear without restart.
+                choices = scan_backgrounds()
+                return gr.update(
+                    choices=choices if choices else ["(no tracks found)"],
+                    value=choices[0][1] if choices else None,
+                    interactive=bool(choices),
                 )
-                with gr.Row():
-                    quality_mode_checkbox = gr.Checkbox(
-                        label="High Quality (Best-of-3)", value=False,
-                        elem_classes="toggle-switch",
-                    )
-                    stereo_output_checkbox = gr.Checkbox(
-                        label="Stereo Output", value=False,
-                        elem_classes="toggle-switch",
-                    )
 
+            refresh_backgrounds_btn.click(fn=_refresh_backgrounds, outputs=[uploaded_music])
 
-    # ── Visibility Callbacks ───────────────────────────────────────────────
+            def toggle_tts_engine_ui(tts_engine, mode):
+                is_inst = mode == "Instrumental Only"
+                show_kokoro = (tts_engine == "Kokoro") and not is_inst
+                show_f5 = (tts_engine == "F5-TTS") and not is_inst
+                # Engine-optimal speed default (0.90 for both Kokoro and F5-TTS)
+                speed_val = 0.90
+                speed_label = "Speech Speed"
+                return (
+                    gr.update(visible=show_kokoro),
+                    gr.update(visible=show_f5),
+                    gr.update(value=speed_val, label=speed_label),
+                )
 
-    def toggle_mode_settings(mode, current_music_model, current_tts_engine):
-        is_inst = mode == "Instrumental Only"
-        is_voc = mode == "Vocals Only"
-        show_lyria = (current_music_model == "Lyria RealTime") and not is_voc
-        show_upload = (current_music_model == "Background Music") and not is_voc
-        show_kokoro = (current_tts_engine == "Kokoro") and not is_inst
-        show_f5 = (current_tts_engine == "F5-TTS") and not is_inst
-        return (
-            gr.update(visible=not is_inst),   # script_input
-            gr.update(visible=not is_voc),    # music_prompt
-            gr.update(visible=is_inst),       # music_duration
-            gr.update(visible=show_kokoro),   # kokoro_settings
-            gr.update(visible=not is_inst),   # speed_slider
-            gr.update(visible=not is_voc),    # duck_slider
-            gr.update(visible=not is_inst),   # reverb_slider
-            gr.update(visible=show_lyria),    # lyria_settings
-            gr.update(visible=show_upload),   # upload_settings
-            gr.update(visible=show_f5),       # f5_settings
-        )
+            tts_engine_radio.change(
+                fn=toggle_tts_engine_ui,
+                inputs=[tts_engine_radio, generation_mode],
+                outputs=[kokoro_settings, f5_settings, speed_slider],
+            )
 
-    generation_mode.change(
-        fn=toggle_mode_settings,
-        inputs=[generation_mode, music_model_dropdown, tts_engine_radio],
-        outputs=[script_input, music_prompt, music_duration, kokoro_settings, speed_slider, duck_slider, reverb_slider, lyria_settings, upload_settings, f5_settings],
-    )
+            def apply_content_profile(content_type_label):
+                # Pre-fill the slider-backed controls with the selected content profile's
+                # defaults. The user can still override any of them afterward. Meditation
+                # restores today's defaults; Sleep Story applies the softer, slower tuning.
+                from core.content_profiles import get_profile, normalize_content_type
+                p = get_profile(normalize_content_type(content_type_label))
+                return (
+                    gr.update(value=p["speed"]),          # speed_slider
+                    gr.update(value=p["duck_amount_db"]), # duck_slider
+                    gr.update(value=p["reverb_amount"]),  # reverb_slider
+                    gr.update(value=p["fade_in_sec"]),    # fade_in_slider
+                    gr.update(value=p["fade_out_sec"]),   # fade_out_slider
+                )
 
-    def toggle_music_engine_ui(model, mode):
-        is_lyria = model == "Lyria RealTime"
-        is_upload = model == "Background Music"
-        is_voc = mode == "Vocals Only"
-        return (
-            gr.update(visible=is_lyria and not is_voc),    # lyria_settings
-            gr.update(visible=is_upload and not is_voc),   # upload_settings
-        )
+            content_type_dropdown.change(
+                fn=apply_content_profile,
+                inputs=[content_type_dropdown],
+                outputs=[speed_slider, duck_slider, reverb_slider, fade_in_slider, fade_out_slider],
+            )
 
-    music_model_dropdown.change(
-        fn=toggle_music_engine_ui,
-        inputs=[music_model_dropdown, generation_mode],
-        outputs=[lyria_settings, upload_settings],
-    )
+            generate_btn.click(
+                fn=generate_meditation,
+                inputs=[
+                    generation_mode,
+                    script_input,
+                    music_prompt,
+                    music_duration,
+                    music_model_dropdown,
+                    kokoro_voice_dropdown,
+                    speed_slider,
+                    duck_slider,
+                    reverb_slider,
+                    fade_in_slider,
+                    fade_out_slider,
+                    format_radio,
+                    seed_input,
+                    stems_checkbox,
+                    upsample_checkbox,
+                    stem_separation_checkbox,
+                    lyria_bpm,
+                    lyria_density,
+                    lyria_brightness,
+                    tts_engine_radio,
+                    f5_voice_dropdown,
+                    f5_wpm_slider,
+                    reverb_ir_dropdown,
+                    quality_mode_checkbox,
+                    stereo_output_checkbox,
+                    uploaded_music,
+                    spectral_duck_checkbox,
+                    shared_reverb_checkbox,
+                    microprosody_checkbox,
+                    f5_cfg_slider,
+                    content_type_dropdown,
+                ],
+                outputs=[audio_output, status_display],
+                show_progress="full",
+            )
 
-    def _refresh_backgrounds():
-        # Re-scan assets/backgrounds/ so newly added tracks appear without restart.
-        choices = scan_backgrounds()
-        return gr.update(
-            choices=choices if choices else ["(no tracks found)"],
-            value=choices[0][1] if choices else None,
-            interactive=bool(choices),
-        )
-
-    refresh_backgrounds_btn.click(fn=_refresh_backgrounds, outputs=[uploaded_music])
-
-    def toggle_tts_engine_ui(tts_engine, mode):
-        is_inst = mode == "Instrumental Only"
-        show_kokoro = (tts_engine == "Kokoro") and not is_inst
-        show_f5 = (tts_engine == "F5-TTS") and not is_inst
-        # Engine-optimal speed default (0.90 for both Kokoro and F5-TTS)
-        speed_val = 0.90
-        speed_label = "Speech Speed"
-        return (
-            gr.update(visible=show_kokoro),
-            gr.update(visible=show_f5),
-            gr.update(value=speed_val, label=speed_label),
-        )
-
-    tts_engine_radio.change(
-        fn=toggle_tts_engine_ui,
-        inputs=[tts_engine_radio, generation_mode],
-        outputs=[kokoro_settings, f5_settings, speed_slider],
-    )
-
-    def apply_content_profile(content_type_label):
-        # Pre-fill the slider-backed controls with the selected content profile's
-        # defaults. The user can still override any of them afterward. Meditation
-        # restores today's defaults; Sleep Story applies the softer, slower tuning.
-        from core.content_profiles import get_profile, normalize_content_type
-        p = get_profile(normalize_content_type(content_type_label))
-        return (
-            gr.update(value=p["speed"]),          # speed_slider
-            gr.update(value=p["duck_amount_db"]), # duck_slider
-            gr.update(value=p["reverb_amount"]),  # reverb_slider
-            gr.update(value=p["fade_in_sec"]),    # fade_in_slider
-            gr.update(value=p["fade_out_sec"]),   # fade_out_slider
-        )
-
-    content_type_dropdown.change(
-        fn=apply_content_profile,
-        inputs=[content_type_dropdown],
-        outputs=[speed_slider, duck_slider, reverb_slider, fade_in_slider, fade_out_slider],
-    )
-
-    generate_btn.click(
-        fn=generate_meditation,
-        inputs=[
-            generation_mode,
-            script_input,
-            music_prompt,
-            music_duration,
-            music_model_dropdown,
-            kokoro_voice_dropdown,
-            speed_slider,
-            duck_slider,
-            reverb_slider,
-            fade_in_slider,
-            fade_out_slider,
-            format_radio,
-            seed_input,
-            stems_checkbox,
-            upsample_checkbox,
-            stem_separation_checkbox,
-            lyria_bpm,
-            lyria_density,
-            lyria_brightness,
-            tts_engine_radio,
-            f5_voice_dropdown,
-            f5_wpm_slider,
-            reverb_ir_dropdown,
-            quality_mode_checkbox,
-            stereo_output_checkbox,
-            uploaded_music,
-            spectral_duck_checkbox,
-            shared_reverb_checkbox,
-            microprosody_checkbox,
-            f5_cfg_slider,
-            content_type_dropdown,
-        ],
-        outputs=[audio_output, status_display],
-        show_progress="full",
-    )
-
-    build_auto_tab()
+        build_auto_tab()
 
 if __name__ == "__main__":
     # theme, css, and js moved here from gr.Blocks() per Gradio 6.0 API change.
