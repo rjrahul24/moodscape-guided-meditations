@@ -557,14 +557,52 @@ actually means for this project. Clause references are to the terms as read
    weights.** There is no mechanism reaching a local GGUF. It matters for
    hosted Gemma.
 
-**Where it brushes this project**
+**Commercial use is permitted**
 
-The Prohibited Use Policy covers harmful content including unqualified medical
-and health advice, and meditations addressing grief, anxiety and burnout sit
-adjacent to that. This is already mitigated for reasons that predate the
-licence question: `content_safety_rules.md` and the linter's safety
-**hard-blocks** exist to stop clinical claims reaching audio. Those checks must
-not be weakened.
+Confirmed 2026-09-17 against both documents. Terms 3.3 — "Google claims no
+rights in Outputs you generate using Gemma" — and neither the Terms nor the
+Prohibited Use Policy carries any blanket commercial restriction. Meditations
+generated with Gemma-4 may be sold.
+
+**Where the Prohibited Use Policy brushes this project**
+
+Two clauses are relevant, both quoted verbatim because the paraphrase
+("unqualified medical advice") is broader than the real wording and would
+mislead a future reader. Under misinformation:
+
+> "Misleading claims of expertise or capability made particularly in sensitive
+> areas (e.g. health, finance, government services, or legal)"
+
+and separately:
+
+> "Engaging in the unauthorized or unlicensed practice of any profession
+> including, but not limited to, financial, legal, medical/health, or related
+> professional practices."
+
+These are **conduct restrictions, not content-category bans**. Guided
+meditation is not the practice of medicine and is not a licensed profession in
+any relevant jurisdiction. What would cross the line is framing: claiming
+clinical efficacy ("cures anxiety", "clinically proven"), positioning the
+product as a substitute for therapy, or implying the narrator is a licensed
+clinician. That is a marketing constraint, not a script-generation one.
+
+Critically, **these obligations exist independently of Gemma.** A commercial
+wellness product making clinical claims is an advertising-law problem whether
+its scripts came from Gemma, Qwen, or a human writer. The PUP adds essentially
+nothing to what already applies.
+
+This is already mitigated for reasons that predate the licence question:
+`content_safety_rules.md` and the linter's safety **hard-blocks** exist to stop
+clinical claims reaching audio. Those checks must not be weakened.
+
+This section is a reading of the terms, not legal advice. Before a commercial
+launch involving revenue or an app-store listing, have a lawyer read the Gemma
+Terms once.
+
+**Decision (2026-09-17): Gemma-4-31B stays the judge.** Commercial use is
+confirmed permitted, the PUP clauses are narrower than first assumed and are
+already covered by existing safety checks, and the Judgemark advantage is
+worth keeping. The revisit triggers below still stand.
 
 **Why this is not a blocking risk**
 
