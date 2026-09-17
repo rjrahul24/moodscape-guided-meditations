@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core.auto_generate import (
+    RECENT_BACKGROUNDS_LIMIT,
     AutoConfig,
     ScriptGenerationError,
     generate_script,
@@ -50,7 +51,18 @@ class StubPipeline:
 
 class TestScriptGeneration(unittest.TestCase):
     def setUp(self):
-        self.config = AutoConfig(target_min_sec=1.0, target_max_sec=100000.0)
+        # A per-test failure_dir: a fatal-violation test below writes failure
+        # artifacts, and without an override that lands in the shared
+        # <tempdir>/moodscape_failures every test/run uses by default.
+        self._tmp = tempfile.TemporaryDirectory()
+        self.config = AutoConfig(
+            target_min_sec=1.0,
+            target_max_sec=100000.0,
+            failure_dir=Path(self._tmp.name) / "failures",
+        )
+
+    def tearDown(self):
+        self._tmp.cleanup()
 
     def test_clean_script_passes_first_time(self):
         outcome = generate_script(
@@ -98,7 +110,10 @@ class TestScriptGeneration(unittest.TestCase):
     def test_repair_budget_is_respected(self):
         judge = FakeScriptEngine([judged(BROKEN_SCRIPT)])
         config = AutoConfig(
-            target_min_sec=1.0, target_max_sec=100000.0, max_repairs=2
+            target_min_sec=1.0,
+            target_max_sec=100000.0,
+            max_repairs=2,
+            failure_dir=self.config.failure_dir,
         )
         with self.assertRaises(ScriptGenerationError):
             generate_script(
@@ -135,6 +150,9 @@ class TestRun(unittest.TestCase):
             target_min_sec=1.0,
             target_max_sec=100000.0,
             background_scan=FAKE_SCAN,
+            # Per-test failure_dir so a failing test never writes into the
+            # shared <tempdir>/moodscape_failures.
+            failure_dir=self.dir / "failures",
         )
 
     def tearDown(self):
@@ -200,7 +218,6 @@ class TestRun(unittest.TestCase):
 
     def test_artifacts_are_written_when_script_generation_fails(self):
         pipeline = StubPipeline(self.dir)
-        self.config.failure_dir = self.dir / "failures"
         with self.assertRaises(ScriptGenerationError):
             run(
                 "I feel anxious",
@@ -228,6 +245,58 @@ class TestRun(unittest.TestCase):
         meta = json.loads(metas[0].read_text())
         self.assertIn("changelog", meta)
         self.assertTrue(meta["changelog"].strip())
+
+
+FAKE_SCAN_TWO_TRACKS = lambda: [
+    ("Track One", "/bg/one.mp3"),
+    ("Track Two", "/bg/two.mp3"),
+]
+
+
+class TestRecentBackgrounds(unittest.TestCase):
+    """recent_backgrounds has a producer (run()) as well as a consumer.
+
+    Only has effect when a caller reuses one AutoConfig across run() calls
+    (batch/scripted use) -- these tests do exactly that, sharing self.config.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+        self.config = AutoConfig(
+            target_min_sec=1.0,
+            target_max_sec=100000.0,
+            background_scan=FAKE_SCAN_TWO_TRACKS,
+            failure_dir=self.dir / "failures",
+        )
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _run(self, pipeline):
+        return run(
+            "I feel anxious",
+            config=self.config,
+            pipeline=pipeline,
+            generator_engine=FakeScriptEngine([CLEAN_SCRIPT]),
+            judge_engine=FakeScriptEngine([judged(CLEAN_SCRIPT)]),
+        )
+
+    def test_successive_runs_sharing_a_config_avoid_the_same_track(self):
+        pipeline = StubPipeline(self.dir)
+        first = self._run(pipeline)
+        second = self._run(pipeline)
+        # Pool has exactly two tracks; after run 1 excludes its own pick,
+        # run 2 has only the other track left as a candidate.
+        self.assertNotEqual(first.background_path, second.background_path)
+
+    def test_recent_backgrounds_is_capped_at_the_limit(self):
+        pipeline = StubPipeline(self.dir)
+        for _ in range(RECENT_BACKGROUNDS_LIMIT + 3):
+            self._run(pipeline)
+        self.assertLessEqual(
+            len(self.config.recent_backgrounds), RECENT_BACKGROUNDS_LIMIT
+        )
 
 
 class TestAutoConfigFromEnv(unittest.TestCase):

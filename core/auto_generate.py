@@ -10,8 +10,8 @@ import logging
 import os
 import random
 import tempfile
-import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from core.background_picker import pick_background
@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_GENERATOR = "ollama:llama3.2:3b"
 DEFAULT_JUDGE = "ollama:llama3.2:3b"
+
+# Cap on how many recently-used background paths AutoConfig.recent_backgrounds
+# remembers. Bounded so a config reused across a long batch doesn't grow an
+# ever-larger exclude list.
+RECENT_BACKGROUNDS_LIMIT = 5
 
 
 class ScriptGenerationError(RuntimeError):
@@ -74,6 +79,17 @@ class AutoConfig:
     # Zero-arg callable returning [(label, path), ...]; None uses the real
     # scan_backgrounds. Injected in tests.
     background_scan: object | None = None
+    # Paths of recently-used background tracks to avoid repeating; run()
+    # appends the chosen background_path here after a successful render and
+    # caps the list at RECENT_BACKGROUNDS_LIMIT.
+    #
+    # IMPORTANT: this only has any effect when the CALLER REUSES ONE
+    # AutoConfig instance across multiple run() calls — e.g. a batch script
+    # or scripts/generate.py looping over prompts with one config object.
+    # The Gradio Auto-Generate tab (core/auto_tab.py) builds a brand-new
+    # AutoConfig on every button click, so recent_backgrounds is always
+    # empty there by construction — the exclude-recent behaviour is
+    # currently inert in the UI, not just untested.
     recent_backgrounds: list[str] = field(default_factory=list)
     failure_dir: Path = field(
         default_factory=lambda: Path(tempfile.gettempdir()) / "moodscape_failures"
@@ -153,7 +169,11 @@ def _write_failure_artifacts(
     broken state.
     """
     config.failure_dir.mkdir(parents=True, exist_ok=True)
-    stamp = time.strftime("%Y%m%d-%H%M%S")
+    # Microsecond precision so two failures in the same wall-clock second
+    # (routine in a fast unit-test suite, and possible in production under
+    # concurrent auto-generation) don't silently collide and overwrite one
+    # another's artifacts.
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     base = config.failure_dir / f"failed-{stamp}"
     base.with_suffix(".script.txt").write_text(script, encoding="utf-8")
     base.with_suffix(".draft.txt").write_text(draft_script, encoding="utf-8")
@@ -328,6 +348,13 @@ def run(
         progress_cb=progress_cb,
         **pipeline_kwargs,
     )
+
+    # Record this background as recently used so a caller that reuses this
+    # AutoConfig across multiple run() calls (batch/scripted use) gets
+    # variety. See the recent_backgrounds field docstring for the caveat
+    # that a fresh-config-per-call caller (the Gradio tab) never benefits.
+    config.recent_backgrounds.append(background_path)
+    del config.recent_backgrounds[:-RECENT_BACKGROUNDS_LIMIT]
 
     audio = Path(audio_path)
     script_path = audio.with_suffix(".script.txt")
