@@ -33,10 +33,12 @@ class StreamingRun:
         self._kwargs = kwargs
         self.result: AutoResult | None = None
         self.error: str | None = None
+        self.invalid_input: bool = False
 
     def __iter__(self):
         if not self._prompt or not self._prompt.strip():
             self.error = "Enter a prompt first."
+            self.invalid_input = True
             return
 
         updates: queue.Queue = queue.Queue()
@@ -52,7 +54,15 @@ class StreamingRun:
                     progress_cb=progress_cb,
                     **self._kwargs,
                 )
-            except ScriptGenerationError as exc:
+            except (ScriptGenerationError, RuntimeError) as exc:
+                # ScriptGenerationError and RuntimeError are this system's own
+                # contract types: their messages are written to be read as-is
+                # by a human (e.g. "ollama returned HTTP 404 for model X"), so
+                # prefixing the class name only adds noise. ScriptGenerationError
+                # subclasses RuntimeError, but both branches produce the same
+                # bare message, so the except order here doesn't change behavior.
+                # Any other exception type is unexpected, so its class name is
+                # kept below because it may be the only clue to what broke.
                 self.error = str(exc)
             except Exception as exc:  # adapter or pipeline failure
                 self.error = f"{type(exc).__name__}: {exc}"

@@ -41,7 +41,8 @@ def auto_generate_handler(
         yield None, "", "", update.message
 
     if run.error:
-        yield None, "", "", f"Failed: {run.error}"
+        message = run.error if run.invalid_input else f"Failed: {run.error}"
+        yield None, "", "", message
         return
 
     result = run.result
