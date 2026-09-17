@@ -1,8 +1,11 @@
 """Run an auto-generation on a background thread, streaming progress.
 
-Lives in core/ rather than app.py so it can be unit-tested: app.py loads
-torch and Gradio and registers an atexit hard-exit hook, so importing it from
-a test is not viable.
+Lives in core/ rather than app.py so it can be unit-tested. Note that
+importing torch is NOT the reason app.py can't be imported directly — this
+module already pulls in torch transitively (auto_generate -> duration ->
+core.kokoro_tts.engine), and that's fine in a test. The actual blocker is
+that app.py registers `atexit.register(lambda: os._exit(0))`, which would
+hijack pytest's own exit code if app.py were ever imported from a test.
 
 The thread-and-queue pattern mirrors the manual handler in app.py.
 """

@@ -9,11 +9,8 @@ import os
 
 import gradio as gr
 
-from core.auto_generate import AutoConfig
+from core.auto_generate import DEFAULT_GENERATOR, DEFAULT_JUDGE, AutoConfig
 from core.streaming_run import StreamingRun
-
-DEFAULT_GENERATOR = "ollama:llama3.2:3b"
-DEFAULT_JUDGE = "ollama:llama3.2:3b"
 
 
 def auto_generate_handler(
@@ -40,7 +37,12 @@ def auto_generate_handler(
     for update in run:
         yield None, "", "", update.message
 
-    if run.error:
+    if run.result is None:
+        # Guard on result, not on the truthiness of run.error: an exception
+        # with an EMPTY message sets run.error = "", which is falsy, so a
+        # truthiness check here would fall through to `run.result` (still
+        # None) and raise AttributeError inside this Gradio generator
+        # instead of reporting the failure.
         message = run.error if run.invalid_input else f"Failed: {run.error}"
         yield None, "", "", message
         return
