@@ -28,4 +28,7 @@ When you need to change something, start here. Locate the row that matches your 
 | Change how scripts are written | `docs/prompting_guides/` | `core/script_gen/rules.py` |
 | Add a safety rule | `docs/prompting_guides/content_safety_rules.md` | `core/script_gen/linter.py` **and** a case in `tests/unit/test_script_linter.py` |
 | Add a model provider | `core/script_gen/engine.py` (provider registry) | An adapter under `core/script_gen/adapters/` |
-| Tune duration accuracy | `core/script_gen/duration.py :: DEFAULT_WPM` | `core/script_gen/duration.py :: log_estimate_accuracy()` |
+| Tune duration accuracy | `core/script_gen/duration.py :: DEFAULT_WPM` | `core/auto_generate.py :: run()` (auto-logs `actual_sec`/`estimate_ratio` into `meta.json` via `log_estimate_accuracy()`) |
+| Tune script-gen retry behaviour | `core/script_gen/adapters/openai_compat.py` (hand-rolled backoff loop) | `core/script_gen/adapters/anthropic_api.py` (SDK `max_retries`, no second loop) — both read `MOODSCAPE_SCRIPT_MAX_RETRIES` |
+| Add/adjust a script-format check | `core/script_gen/linter.py :: check_format()` | A case in `tests/unit/test_script_linter.py` |
+| Change the Manual / Auto-Generate tab layout | `app.py` (`gr.Tabs()` container) | `core/auto_tab.py` (Auto-Generate tab content + `elem_classes` styling) |

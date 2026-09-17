@@ -41,10 +41,10 @@ Authoritative map of every class and module in `core/`. Use this when you need t
 | Prompt assembly | `core/script_gen/rules.py` | — | `build_generator_system_prompt()`, `build_judge_system_prompt()`, `load_guide()`, `load_safety_rules()` |
 | Script generator (pass 1) | `core/script_gen/generator.py` | — | `draft()`, `strip_wrapper()` |
 | Script judge (pass 2) | `core/script_gen/judge.py` | — | `review()`, `repair()`, `parse_judge_response()` |
-| Script linter | `core/script_gen/linter.py` | `Violation` | `check()`, `check_format()`, `check_safety()`, `fatal_violations()`, `format_for_repair()` |
-| Duration estimator | `core/script_gen/duration.py` | — | `estimate_duration_sec()`, `log_estimate_accuracy()`, `DEFAULT_WPM` |
-| OpenAI-compatible adapter | `core/script_gen/adapters/openai_compat.py` | `OpenAICompatEngine` | `complete()` — covers ollama, openrouter, together, fireworks, groq |
-| Anthropic adapter | `core/script_gen/adapters/anthropic_api.py` | `AnthropicEngine` | `complete()` |
+| Script linter | `core/script_gen/linter.py` | `Violation` | `check()`, `check_format()` (both take an optional `engine` arg — `"kokoro"` enables the `CHUNK_TOO_LONG` backstop), `check_safety()`, `fatal_violations()`, `format_for_repair()` |
+| Duration estimator | `core/script_gen/duration.py` | — | `estimate_duration_sec()`, `log_estimate_accuracy()` (now called automatically by `auto_generate.py :: run()`), `DEFAULT_WPM` |
+| OpenAI-compatible adapter | `core/script_gen/adapters/openai_compat.py` | `OpenAICompatEngine` | `complete()` — covers ollama, openrouter, together, fireworks, groq; hand-rolled retry-with-backoff (`MOODSCAPE_SCRIPT_MAX_RETRIES`) |
+| Anthropic adapter | `core/script_gen/adapters/anthropic_api.py` | `AnthropicEngine` | `complete()` — no hand-rolled retry; passes `max_retries` to the SDK client, derived from `MOODSCAPE_SCRIPT_MAX_RETRIES` |
 | Auto-generate orchestrator | `core/auto_generate.py` | `AutoConfig`, `ScriptOutcome`, `AutoResult`, `ScriptGenerationError` | `generate_script()`, `run()` |
 | Background picker | `core/background_picker.py` | — | `pick_background()` |
 | Model benchmark harness | `core/bench.py` | `BenchRow` | `run_bench()`, `format_bench_table()`, `BENCH_PROMPTS` |

@@ -43,7 +43,8 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 │   ├── script_gen/                    # prompt → validated script (generator + judge + linter)
 │   ├── auto_generate.py               # orchestrator: script → music → pipeline
 │   ├── background_picker.py           # random pick from assets/backgrounds/
-│   └── streaming_run.py               # threaded progress streaming for the UI
+│   ├── streaming_run.py               # threaded progress streaming for the UI
+│   └── auto_tab.py                    # Gradio "Auto-Generate" tab (peer of "Manual" under app.py's gr.Tabs())
 ├── scripts/                          # generate.py · separate_worker.py · generate_breath_samples.py
 ├── tests/unit/  tests/integration/
 ├── assets/                           # tracked in git
@@ -93,7 +94,20 @@ Prompt in, finished meditation out, with no human step.
    `upload_music.scan_backgrounds()`, excluding recently used tracks
 7. **Render** → `MeditationPipeline.generate()`, unchanged, on the golden path
    (F5 + uploaded background)
-8. **Persist** → `<name>.wav`, `<name>.script.txt`, `<name>.meta.json` as siblings
+8. **Calibrate** → measures the rendered file's actual duration and calls
+   `script_gen/duration.py :: log_estimate_accuracy()`, closing the loop that
+   calibrates `DEFAULT_WPM`; a failed duration read never fails a job that
+   already produced audio
+9. **Persist** → `<name>.wav`, `<name>.script.txt`, `<name>.meta.json`
+   (now including `actual_sec` and `estimate_ratio` alongside
+   `estimated_sec`) as siblings
+
+The UI exposes this as an "Auto-Generate" tab (`core/auto_tab.py`), a peer
+of the "Manual" tab under one `gr.Tabs()` in `app.py` (Manual first, so it
+stays the default). Its generator/judge model calls retry transient
+failures (connection errors, timeouts, 429, 5xx) via
+`MOODSCAPE_SCRIPT_MAX_RETRIES` — see the adapter-asymmetry gotcha in
+[docs/GOTCHAS.md](docs/GOTCHAS.md).
 
 Full detail: [docs/auto_generation/README.md](docs/auto_generation/README.md).
 
