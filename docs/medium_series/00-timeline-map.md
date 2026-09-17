@@ -125,5 +125,5 @@ The project lands on its final, deliberately small stack.
 2. **Clean neural output is a *starting* point, not the goal.** Realism (breath,
    micro-pitch, room) is engineered *back in* on both voice and music.
 3. **The mix is where meditation audio is won or lost** — ducking, loudness staging,
-   and shared acoustic space, all under a hard 36 GB memory ceiling that forces
+   and shared acoustic space, all under a hard 32 GB memory ceiling that forces
    sequential model loading.

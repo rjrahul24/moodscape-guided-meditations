@@ -1,6 +1,6 @@
 # MoodScape Guided Meditations
 
-AI-guided meditation audio generator (Gradio UI). Two TTS engines (Kokoro, F5-TTS) and two music sources (Lyria RealTime or pre-existing background instrumentals). Target hardware: Apple Silicon M1 Max (36 GB unified RAM).
+AI-guided meditation audio generator (Gradio UI). Two TTS engines (Kokoro, F5-TTS) and two music sources (Lyria RealTime or pre-existing background instrumentals). Target hardware: Apple Silicon M1 Max (32 GB unified RAM).
 
 **Content types.** The app generates **guided meditations** (default) and **sleep stories**, selected via the "Content Type" UI dropdown (`--content-type` on the CLI). A single `content_type` ("meditation" | "sleep_story") threads UI → pipeline → preprocessors → mixer; `"meditation"` is the default at every layer, so the meditation path is unchanged. Profiles live in [core/content_profiles.py](core/content_profiles.py): slider-backed values (speed, duck, fades, reverb) are *UI preset defaults the user can still override*; non-slider behaviours are driven by `content_type` — shorter paragraph-break pauses (`{engine}_paragraph_pause_sec`, passed into `prepare_segments`) and a softer, more-constant sleep bed (gentler `apply_breathing_duck` kwargs + narrower `calibrate_music_bed` offsets via `mix(bed_overrides=…)`). Prompting guides are per-engine **and** per-content-type: `vocal_meditation_{kokoro,f5}_instructions.md` and `vocal_sleep_story_{kokoro,f5}_instructions.md`.
 
@@ -58,7 +58,7 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 
 1. **Parse script** → `{tts}/preprocessor.py :: prepare_segments()`
 2. **TTS synth** → 24 kHz mono float32
-3. **Unload TTS**, load music engine (sequential — 36 GB RAM constraint)
+3. **Unload TTS**, load music engine (sequential — 32 GB RAM constraint)
 4. **Music gen** → 48 kHz mono float32 (Lyria or `upload_music` — decode + resample + loop/trim-fit the uploaded file to the same contract)
 5. **Stem separation** (optional; skipped for uploads) → `stem_separator.remove_drums_and_vocals()`
 6. **TTS upsample** 24 → 48 kHz via `audio_processor.upsample_audio(high_accuracy=True)`; then per-chunk humanize (Kokoro)

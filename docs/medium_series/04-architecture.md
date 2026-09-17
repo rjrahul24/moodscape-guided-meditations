@@ -1,7 +1,7 @@
-# Article 4 (optional) — Architecture for a Multi-Engine ML Audio Pipeline on 36 GB
+# Article 4 (optional) — Architecture for a Multi-Engine ML Audio Pipeline on 32 GB
 
 **Thesis (one line):** Shipping four generative audio models through one pipeline on a
-single 36 GB machine is less an ML problem than a systems-discipline problem — memory,
+single 32 GB machine is less an ML problem than a systems-discipline problem — memory,
 sample-rate contracts, quality gates, and docs.
 
 **Target reader takeaway:** The unglamorous engineering that keeps a multi-model audio
@@ -15,7 +15,7 @@ artifact. *Can be folded into Article 3's tail if you prefer a tight 3-part seri
 
 ## Narrative beats (in order)
 
-1. **Hook — the 36 GB ceiling is the architect.** You cannot hold a TTS model and a
+1. **Hook — the 32 GB ceiling is the architect.** You cannot hold a TTS model and a
    music model in memory simultaneously. Every major design choice — sequential
    loading, aggressive unloading, the streaming export — descends from this one number.
 
