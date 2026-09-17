@@ -3,7 +3,7 @@
 import unittest
 
 from core.auto_generate import AutoConfig
-from core.script_gen.bench import (
+from core.bench import (
     BENCH_PROMPTS,
     BenchRow,
     format_bench_table,

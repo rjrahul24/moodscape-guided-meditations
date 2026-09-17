@@ -4,20 +4,11 @@ Answers "which model" with evidence rather than argument: fixed prompts, the
 same linter, and the scripts themselves to read.
 """
 
-from __future__ import annotations
-
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
+from core.auto_generate import AutoConfig, ScriptGenerationError, generate_script
 from core.script_gen.engine import build_engine
-
-if TYPE_CHECKING:
-    # Import-time only: core.auto_generate imports core.script_gen submodules,
-    # which run this package's __init__.py (which imports this module) before
-    # core.auto_generate finishes defining AutoConfig. A module-level import
-    # here would be circular, so the real import is deferred into run_bench().
-    from core.auto_generate import AutoConfig
 
 # Deliberately spans the real emotional range the app serves, including the
 # harder cases (grief, overwhelm) where safety rules matter most.
@@ -68,8 +59,6 @@ def run_bench(
     Returns:
         One BenchRow per (pairing, prompt).
     """
-    from core.auto_generate import AutoConfig, ScriptGenerationError, generate_script
-
     prompts = prompts if prompts is not None else BENCH_PROMPTS
     config = config or AutoConfig.from_env()
     factory = engine_factory or build_engine

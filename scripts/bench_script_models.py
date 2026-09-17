@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.auto_generate import AutoConfig  # noqa: E402
-from core.script_gen.bench import (  # noqa: E402
+from core.bench import (  # noqa: E402
     BENCH_PROMPTS,
     format_bench_table,
     run_bench,
