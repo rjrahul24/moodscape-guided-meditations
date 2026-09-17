@@ -117,63 +117,6 @@ class TestFormatChecks(unittest.TestCase):
         self.assertNotIn("ANGLE_TAG", codes(check_format(script)))
 
 
-class TestKokoroChunkLengthCheck(unittest.TestCase):
-    """CHUNK_TOO_LONG is a Kokoro-specific backstop.
-
-    merge_sentences_to_chunks() flushes a chunk before it would exceed
-    MAX_CHUNK_TOKENS, so a multi-sentence chunk can never end up over the
-    limit -- only a single sentence that is *itself* already ~115+ words can
-    produce an oversized chunk, and a sentence that long has already tripped
-    the far cheaper SENTENCE_TOO_LONG check (25-word threshold). These tests
-    pin exactly that: the check exists, it is engine-gated, and it never
-    fires without SENTENCE_TOO_LONG also firing.
-    """
-
-    # 120 words with no internal punctuation, so split_into_sentences()
-    # and the linter's own sentence splitter both see it as a single
-    # sentence. estimate_tokens(120 words) ~= 156 tokens, over the
-    # 150-token MAX_CHUNK_TOKENS limit.
-    OVERSIZED_CHUNK_SCRIPT = (" ".join(["breathe slowly and let go"] * 24) + ".")
-
-    def test_oversized_chunk_flags_under_kokoro(self):
-        violations = check_format(self.OVERSIZED_CHUNK_SCRIPT, engine="kokoro")
-        self.assertIn("CHUNK_TOO_LONG", codes(violations))
-        self.assertTrue(
-            all(v.severity == ADVISORY for v in violations if v.code == "CHUNK_TOO_LONG")
-        )
-
-    def test_oversized_chunk_also_trips_sentence_too_long(self):
-        # Confirms the redundancy claim: the script that triggers
-        # CHUNK_TOO_LONG must also already be caught by SENTENCE_TOO_LONG.
-        violations = check_format(self.OVERSIZED_CHUNK_SCRIPT, engine="kokoro")
-        self.assertIn("SENTENCE_TOO_LONG", codes(violations))
-
-    def test_oversized_chunk_is_not_flagged_for_f5(self):
-        violations = check_format(self.OVERSIZED_CHUNK_SCRIPT, engine="f5")
-        self.assertNotIn("CHUNK_TOO_LONG", codes(violations))
-
-    def test_oversized_chunk_is_not_flagged_by_default(self):
-        violations = check_format(self.OVERSIZED_CHUNK_SCRIPT)
-        self.assertNotIn("CHUNK_TOO_LONG", codes(violations))
-
-    def test_ordinary_meditation_script_flags_nothing_under_kokoro(self):
-        script = (
-            "Settle in and let your shoulders drop.\n\n"
-            "[pause:4s]\n\n"
-            "Breathe out slowly, and notice the weight of your hands."
-        )
-        violations = check_format(script, engine="kokoro")
-        self.assertNotIn("CHUNK_TOO_LONG", codes(violations))
-
-    def test_check_threads_engine_through_to_check_format(self):
-        violations = check(self.OVERSIZED_CHUNK_SCRIPT, engine="kokoro")
-        self.assertIn("CHUNK_TOO_LONG", codes(violations))
-
-    def test_check_default_engine_omits_chunk_check(self):
-        violations = check(self.OVERSIZED_CHUNK_SCRIPT)
-        self.assertNotIn("CHUNK_TOO_LONG", codes(violations))
-
-
 class TestSafetyChecks(unittest.TestCase):
     def test_clean_script_passes(self):
         script = "If it feels right, you might let your eyes close."

@@ -238,7 +238,6 @@ def generate_script(
         )
         violations = check(
             script,
-            engine=config.tts_engine,
             estimated_sec=estimated_sec,
             target_min_sec=config.target_min_sec,
             target_max_sec=config.target_max_sec,

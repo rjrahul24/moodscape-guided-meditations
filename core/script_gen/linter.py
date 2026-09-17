@@ -68,15 +68,8 @@ def _strip_tags(script: str) -> str:
     return _ANY_TAG.sub(" ", script)
 
 
-def check_format(script: str, engine: str | None = None) -> list[Violation]:
-    """Validate the engine contract: tags, markup, and sentence shape.
-
-    Args:
-        engine: When "kokoro", also runs the Kokoro-specific chunk-length
-            backstop (see `_check_kokoro_chunk_length`). Any other value,
-            including the default None, runs exactly the engine-agnostic
-            checks below — unchanged from before this parameter existed.
-    """
+def check_format(script: str) -> list[Violation]:
+    """Validate the engine contract: tags, markup, and sentence shape."""
     violations: list[Violation] = []
 
     for match in _ANY_TAG.finditer(script):
@@ -188,58 +181,6 @@ def check_format(script: str, engine: str | None = None) -> list[Violation]:
                 )
             )
 
-    if engine == "kokoro":
-        violations.extend(_check_kokoro_chunk_length(script))
-
-    return violations
-
-
-def _check_kokoro_chunk_length(script: str) -> list[Violation]:
-    """Backstop: flag any chunk Kokoro's own chunker would actually produce
-    that exceeds its MAX_CHUNK_TOKENS sweet spot.
-
-    core.kokoro_tts.preprocessor.merge_sentences_to_chunks() merges
-    consecutive sentences up to MAX_CHUNK_TOKENS (150 tokens, ~115 words),
-    flushing the chunk before it would exceed that limit. Because of that
-    flush-before-exceed behaviour, a multi-sentence chunk can never end up
-    over MAX_CHUNK_TOKENS — the only way a produced chunk exceeds it is for
-    a single sentence to already be over ~115 words on its own, and any
-    sentence that long has already tripped the far cheaper SENTENCE_TOO_LONG
-    check above (its threshold is 25 words, roughly a third of the size).
-
-    In other words: SENTENCE_TOO_LONG is the stricter gate in every case
-    this function can reach. This check exists as a backstop for a script
-    that would somehow slip past it, not as an independent detector — do
-    not expect it to fire on its own in practice.
-    """
-    from core.kokoro_tts.preprocessor import (
-        MAX_CHUNK_TOKENS,
-        estimate_tokens,
-        merge_sentences_to_chunks,
-        parse_script,
-        split_into_sentences,
-    )
-
-    violations: list[Violation] = []
-    for segment in parse_script(script):
-        if segment["type"] != "speech":
-            continue
-        sentences = split_into_sentences(segment["text"])
-        for chunk in merge_sentences_to_chunks(sentences):
-            tokens = estimate_tokens(chunk)
-            if tokens > MAX_CHUNK_TOKENS:
-                violations.append(
-                    Violation(
-                        code="CHUNK_TOO_LONG",
-                        severity=ADVISORY,
-                        message=(
-                            f"Kokoro chunk is ~{tokens} tokens, above the "
-                            f"{MAX_CHUNK_TOKENS}-token limit. Kokoro rushes "
-                            "chunks above ~150 tokens, flattening prosody "
-                            "and pacing."
-                        ),
-                    )
-                )
     return violations
 
 
@@ -404,19 +345,12 @@ def check_safety(script: str) -> list[Violation]:
 def check(
     script: str,
     *,
-    engine: str | None = None,
     estimated_sec: float | None = None,
     target_min_sec: float = 300.0,
     target_max_sec: float = 420.0,
 ) -> list[Violation]:
-    """Run every check family. Duration is skipped when no estimate is given.
-
-    Args:
-        engine: Forwarded to check_format() — "kokoro" enables the
-            Kokoro-specific chunk-length backstop. Default None preserves
-            prior behaviour exactly.
-    """
-    violations = check_format(script, engine=engine) + check_safety(script)
+    """Run every check family. Duration is skipped when no estimate is given."""
+    violations = check_format(script) + check_safety(script)
 
     if estimated_sec is not None and not (
         target_min_sec <= estimated_sec <= target_max_sec

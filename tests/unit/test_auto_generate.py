@@ -17,7 +17,6 @@ from core.auto_generate import (
     generate_script,
     run,
 )
-from core.kokoro_tts.preprocessor import MAX_CHUNK_TOKENS, estimate_tokens
 from core.script_gen.duration import estimate_duration_sec
 from core.script_gen.engine import FakeScriptEngine
 
@@ -32,27 +31,6 @@ CLEAN_SCRIPT = (
 UNSAFE_SCRIPT = "This meditation will cure your anxiety.\n\n[pause:5s]\n\nRest now."
 
 BROKEN_SCRIPT = "Breathe in. [pause:4] Breathe out."
-
-
-def _oversized_kokoro_chunk_script() -> str:
-    """Build a script whose single sentence exceeds Kokoro's chunk-token cap.
-
-    The word count is derived from MAX_CHUNK_TOKENS/estimate_tokens rather
-    than hardcoded, so this keeps working if those constants ever move.
-    Everything else in the script (format, safety) stays clean so this is
-    the only violation that can fire.
-    """
-    words = 1
-    while estimate_tokens(" ".join(["word"] * words) + ".") <= MAX_CHUNK_TOKENS:
-        words += 1
-    sentence = " ".join(["word"] * words) + "."
-    return (
-        "Let your body settle here for a while.\n\n"
-        "[pause:5s]\n\n"
-        f"{sentence}\n\n"
-        "[pause:5s]\n\n"
-        "And rest now."
-    )
 
 
 def judged(script: str, changelog: str = "- none") -> str:
@@ -189,49 +167,6 @@ class TestScriptGeneration(unittest.TestCase):
         self.assertTrue(
             any(v.code == "DURATION_OUT_OF_WINDOW" for v in outcome.violations)
         )
-
-    def test_chunk_too_long_fires_for_kokoro_but_not_f5(self):
-        """Regression guard for the engine=config.tts_engine wiring.
-
-        CHUNK_TOO_LONG (core/script_gen/linter.py, added in 8aa98f2) is
-        Kokoro-specific and only runs when check() is called with
-        engine="kokoro". generate_script() must forward config.tts_engine to
-        check(), or the rule is unit-tested but dead in the real
-        auto-generate flow. This exercises the rule end to end through
-        generate_script rather than just asserting the kwarg is passed.
-        """
-        script = _oversized_kokoro_chunk_script()
-
-        kokoro_outcome = generate_script(
-            "p",
-            generator_engine=FakeScriptEngine([script]),
-            judge_engine=FakeScriptEngine([judged(script)]),
-            config=AutoConfig(
-                tts_engine="kokoro",
-                target_min_sec=1.0,
-                target_max_sec=100000.0,
-                failure_dir=self.config.failure_dir,
-            ),
-        )
-        self.assertIn(
-            "CHUNK_TOO_LONG", {v.code for v in kokoro_outcome.violations}
-        )
-
-        f5_outcome = generate_script(
-            "p",
-            generator_engine=FakeScriptEngine([script]),
-            judge_engine=FakeScriptEngine([judged(script)]),
-            config=AutoConfig(
-                tts_engine="f5",
-                target_min_sec=1.0,
-                target_max_sec=100000.0,
-                failure_dir=self.config.failure_dir,
-            ),
-        )
-        self.assertNotIn(
-            "CHUNK_TOO_LONG", {v.code for v in f5_outcome.violations}
-        )
-
 
 FAKE_SCAN = lambda: [("Healing Forest — 23:12", "/bg/forest.mp3")]
 
