@@ -1735,7 +1735,7 @@ git commit -m "feat(script_gen): add ScriptEngine ABC and provider registry"
 
 **Files:**
 - Create: `core/script_gen/adapters/openai_compat.py`
-- Modify: `requirements.txt` (add `httpx` if absent — check first with `grep -i httpx requirements.txt`)
+- **Do NOT modify `requirements.txt`.** See the dependency note below.
 - Test: `tests/unit/test_openai_compat_adapter.py`
 
 **Interfaces:**
@@ -1873,10 +1873,12 @@ if __name__ == "__main__":
 Run: `.venv/bin/python -m pytest tests/unit/test_openai_compat_adapter.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'core.script_gen.adapters.openai_compat'`
 
-- [ ] **Step 3: Ensure httpx is declared**
+- [ ] **Step 3: Confirm httpx is importable (do NOT edit requirements.txt)**
 
-Run: `grep -i "^httpx" requirements.txt || echo "httpx" >> requirements.txt`
-Then: `.venv/bin/pip install httpx`
+Run: `.venv/bin/python -c "import httpx; print(httpx.__version__)"`
+Expected: a version prints (0.28.1 at time of writing — it is already installed transitively).
+
+**Dependency note:** `httpx` is NOT declared in `requirements.txt`, and this task deliberately does not add it. That file currently holds unrelated uncommitted work, so `git add requirements.txt` would sweep a third party's changes into this branch. The declaration is deferred to a single controller-owned step; see Task 15 Step 2b.
 
 - [ ] **Step 4: Write minimal implementation**
 
@@ -2003,7 +2005,7 @@ Expected: PASS — 11 tests
 - [ ] **Step 6: Commit**
 
 ```bash
-git add core/script_gen/adapters/openai_compat.py tests/unit/test_openai_compat_adapter.py requirements.txt
+git add core/script_gen/adapters/openai_compat.py tests/unit/test_openai_compat_adapter.py
 git commit -m "feat(script_gen): add OpenAI-compatible adapter for local and hosted models"
 ```
 
@@ -2013,7 +2015,7 @@ git commit -m "feat(script_gen): add OpenAI-compatible adapter for local and hos
 
 **Files:**
 - Create: `core/script_gen/adapters/anthropic_api.py`
-- Modify: `requirements.txt` (add `anthropic`)
+- **Do NOT modify `requirements.txt`.** See the dependency note below.
 - Test: `tests/unit/test_anthropic_adapter.py`
 
 **Interfaces:**
@@ -2142,10 +2144,13 @@ if __name__ == "__main__":
 Run: `.venv/bin/python -m pytest tests/unit/test_anthropic_adapter.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'core.script_gen.adapters.anthropic_api'`
 
-- [ ] **Step 3: Declare the dependency**
+- [ ] **Step 3: Do NOT install or declare `anthropic`**
 
-Run: `grep -i "^anthropic" requirements.txt || echo "anthropic" >> requirements.txt`
-Then: `.venv/bin/pip install anthropic`
+**Dependency note:** the `anthropic` package is NOT required for this task's tests — every test injects a stub client, and `_get_client()` raises on the missing-API-key check *before* it ever reaches the lazy `import anthropic`. Do not install it and do not add it to `requirements.txt`: that file holds unrelated uncommitted work, so staging it would sweep a third party's changes into this branch. The declaration is deferred to a single controller-owned step; see Task 15 Step 2b.
+
+Verify the import is lazy by confirming the module imports without the package present:
+Run: `.venv/bin/python -c "from core.script_gen.adapters.anthropic_api import AnthropicEngine; print('ok')"`
+Expected: prints `ok` (after Step 4 creates the file).
 
 - [ ] **Step 4: Write minimal implementation**
 
@@ -2251,7 +2256,7 @@ Expected: PASS — 9 tests
 - [ ] **Step 6: Commit**
 
 ```bash
-git add core/script_gen/adapters/anthropic_api.py tests/unit/test_anthropic_adapter.py requirements.txt
+git add core/script_gen/adapters/anthropic_api.py tests/unit/test_anthropic_adapter.py
 git commit -m "feat(script_gen): add Anthropic adapter"
 ```
 
@@ -4144,6 +4149,17 @@ Expected: only the pre-existing sleep-story changes (`CLAUDE.md`, `app.py`, `cor
 Run: `git log --oneline dev..dev-automate`
 
 Expected: roughly seventeen commits, each a conventional commit naming one deliverable. Read them as a story: does each message say what changed and why? If any is vague ("fix stuff", "wip"), reword it with `git rebase -i dev` before pushing. Nothing has been published yet, so history is still safe to edit.
+
+- [ ] **Step 2b: Declare the new runtime dependencies**
+
+Tasks 7 and 8 deliberately did not touch `requirements.txt` because it held unrelated uncommitted work. Check whether that is still true:
+
+Run: `git status --short requirements.txt`
+
+- **If it is now clean** (the other work was committed or stashed): append `httpx` and `anthropic` to `requirements.txt`, then `git add requirements.txt` and commit as `chore(deps): declare httpx and anthropic for script generation`.
+- **If it is still dirty**: do NOT stage it. Leave the declaration to the user and say so explicitly in the final report — the two lines needed are `httpx` and `anthropic`. Note it in the PR body as a known follow-up.
+
+Either way, `httpx` is already installed transitively so nothing breaks at runtime today; `anthropic` is only needed if a Claude model is actually configured.
 
 - [ ] **Step 3: Confirm the full suite is green**
 
