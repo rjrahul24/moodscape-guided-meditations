@@ -6,9 +6,9 @@ protocol — only the base URL and the API-key env var differ.
 
 Uses httpx directly rather than adding another SDK dependency. Because there
 is no SDK here, this module hand-rolls its own retry-with-backoff loop for
-transient failures (connection errors, timeouts, 429, 5xx). Compare with
-adapters/anthropic_api.py, where the official SDK already retries and no
-second loop is added.
+transient failures (connection errors, timeouts, 408, 409, 429, 5xx).
+Compare with adapters/anthropic_api.py, where the official SDK already
+retries and no second loop is added.
 """
 
 import logging
@@ -208,10 +208,13 @@ class OpenAICompatEngine(ScriptEngine):
                 f"{self._provider} request failed at {url}: {exc}"
             ) from exc
 
-        if response.status_code == 429 or response.status_code >= 500:
-            # Transient: rate limiting and server-side failures are worth
-            # retrying. Everything else in 4xx (bad model, malformed
-            # request, auth) will fail identically every time.
+        if response.status_code in (408, 409, 429) or response.status_code >= 500:
+            # Transient: request timeouts, conflicts, rate limiting, and
+            # server-side failures are worth retrying -- this mirrors the
+            # anthropic SDK's own transient set (see module docstring) so
+            # the two adapters' documented retry guarantee is actually true.
+            # Everything else in 4xx (bad model, malformed request, auth)
+            # will fail identically every time.
             raise _Transient(
                 f"{self._provider} returned HTTP {response.status_code} "
                 f"for model {self._model!r}: {response.text[:400]}",

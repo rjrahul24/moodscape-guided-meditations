@@ -253,6 +253,49 @@ class TestOpenAICompatEngine(unittest.TestCase):
         self.assertEqual(len(captured), 1)
         self.assertIn("400", str(ctx.exception))
 
+    def test_408_then_200_succeeds_after_one_retry(self):
+        # Request Timeout is transient by definition -- and the anthropic
+        # SDK already retries it, so this is the fix that makes the two
+        # adapters' documented retry guarantee actually true.
+        captured = []
+        sleeps = []
+        transport = sequence_transport([status_step(408), ok_step], captured)
+        engine = self.build(transport, sleep=sleeps.append)
+        result = engine.complete("sys", "usr")
+        self.assertEqual(result, "GENERATED SCRIPT")
+        self.assertEqual(len(captured), 2)
+        self.assertEqual(len(sleeps), 1)
+
+    def test_408_every_time_fails_after_exactly_configured_attempts(self):
+        captured = []
+        sleeps = []
+        transport = sequence_transport([status_step(408)], captured)
+        engine = self.build(transport, sleep=sleeps.append)
+        with self.assertRaises(RuntimeError) as ctx:
+            engine.complete("sys", "usr")
+        self.assertEqual(len(captured), DEFAULT_MAX_RETRIES)
+        self.assertIn(f"{DEFAULT_MAX_RETRIES} attempt", str(ctx.exception))
+
+    def test_409_then_200_succeeds_after_one_retry(self):
+        captured = []
+        sleeps = []
+        transport = sequence_transport([status_step(409), ok_step], captured)
+        engine = self.build(transport, sleep=sleeps.append)
+        result = engine.complete("sys", "usr")
+        self.assertEqual(result, "GENERATED SCRIPT")
+        self.assertEqual(len(captured), 2)
+        self.assertEqual(len(sleeps), 1)
+
+    def test_409_every_time_fails_after_exactly_configured_attempts(self):
+        captured = []
+        sleeps = []
+        transport = sequence_transport([status_step(409)], captured)
+        engine = self.build(transport, sleep=sleeps.append)
+        with self.assertRaises(RuntimeError) as ctx:
+            engine.complete("sys", "usr")
+        self.assertEqual(len(captured), DEFAULT_MAX_RETRIES)
+        self.assertIn(f"{DEFAULT_MAX_RETRIES} attempt", str(ctx.exception))
+
     def test_429_retry_after_header_is_honoured_but_clamped_to_cap(self):
         transport = sequence_transport(
             [status_step(429, "slow down", {"Retry-After": "9999"}), ok_step]
