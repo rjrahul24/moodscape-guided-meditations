@@ -3530,7 +3530,7 @@ git commit -m "feat(ui): add Auto-Generate tab builder and streaming runner"
 ### Task 12: Benchmark harness
 
 **Files:**
-- Create: `core/script_gen/bench.py`
+- Create: `core/bench.py`
 - Create: `scripts/bench_script_models.py`
 - Modify: `core/script_gen/__init__.py` (extend exports)
 - Test: `tests/unit/test_script_bench.py`
@@ -3660,7 +3660,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'core.script_gen.bench'
 
 - [ ] **Step 3: Write minimal implementation**
 
-Create `core/script_gen/bench.py`:
+Create `core/bench.py`:
 
 ```python
 """Benchmark candidate model pairings on the script-generation task.
@@ -4179,7 +4179,7 @@ spec, the module table, the failure-severity table, and a note that
 
 - [ ] **Step 4: Update docs/COMPONENT_REGISTRY.md**
 
-One row per new module: `script_gen/{engine,rules,generator,judge,linter,duration,bench}.py`, `script_gen/adapters/{openai_compat,anthropic_api}.py`, `auto_generate.py`, `background_picker.py`, `streaming_run.py` — each with its public API and one-line responsibility.
+One row per new module: `script_gen/{engine,rules,generator,judge,linter,duration}.py`, `script_gen/adapters/{openai_compat,anthropic_api}.py`, `auto_generate.py`, `background_picker.py`, `bench.py`, `streaming_run.py`, `auto_tab.py` — each with its public API and one-line responsibility.
 
 - [ ] **Step 5: Update docs/TASK_ROUTING.md**
 
