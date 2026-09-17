@@ -9,8 +9,8 @@ validated, `run()` hands it to `MeditationPipeline.generate()` exactly as the
 manual tab does — same arguments, same FX chains, same mix. Everything this
 document covers happens *before* that call.
 
-For how the tab itself is wired (or, currently, not yet wired) into `app.py`,
-see [app_wiring.md](app_wiring.md). This document covers the generation
+For how the tab itself is wired into `app.py`, see
+[app_wiring.md](app_wiring.md). This document covers the generation
 subsystem underneath the tab.
 
 ## What it does
@@ -288,6 +288,6 @@ exactly (ratio 1.001).
 | Safety rules text | `docs/prompting_guides/content_safety_rules.md` |
 | Per-engine, per-content-type formatting guides | `docs/prompting_guides/vocal_{content_type}_{engine}_instructions.md` |
 
-For app.py wiring status, see [app_wiring.md](app_wiring.md). For the full
+For app.py wiring details, see [app_wiring.md](app_wiring.md). For the full
 pipeline this subsystem renders through unmodified, see
 [../ARCHITECTURE.md](../ARCHITECTURE.md).

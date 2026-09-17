@@ -39,7 +39,11 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 │   ├── text_utils.py · breath_sounds.py · stereo_upmix.py · deepfilter_enhancer.py
 │   ├── kokoro_tts/  f5_tts/             # TTS engines (engine + preproc + postproc + voices)
 │   ├── lyria/                             # Lyria RealTime music generation (Google API)
-│   └── upload_music/                      # Background instrumental (engine + arrange/length-fit)
+│   ├── upload_music/                      # Background instrumental (engine + arrange/length-fit)
+│   ├── script_gen/                    # prompt → validated script (generator + judge + linter)
+│   ├── auto_generate.py               # orchestrator: script → music → pipeline
+│   ├── background_picker.py           # random pick from assets/backgrounds/
+│   └── streaming_run.py               # threaded progress streaming for the UI
 ├── scripts/                          # generate.py · separate_worker.py · generate_breath_samples.py
 ├── tests/unit/  tests/integration/
 ├── assets/                           # tracked in git
@@ -71,6 +75,28 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 
 Full breakdown with parameters: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## Auto-Generation Flow (`core/auto_generate.py :: run()`)
+
+Prompt in, finished meditation out, with no human step.
+
+1. **Assemble prompts** → `script_gen/rules.py` reads the engine- and
+   content-type-specific guide from `docs/prompting_guides/` at call time,
+   plus `content_safety_rules.md`
+2. **Draft** → generator model (`MOODSCAPE_SCRIPT_GENERATOR`)
+3. **Review** → an *independent* judge model (`MOODSCAPE_SCRIPT_JUDGE`)
+   returns a revised script plus a changelog — it revises, it does not score
+4. **Validate** → `script_gen/linter.py` (format + mental-health safety) and
+   `script_gen/duration.py` (runtime estimate, no rendering)
+5. **Repair** → fatal violations go back to the judge as targeted
+   instructions, bounded by `MOODSCAPE_SCRIPT_MAX_REPAIRS` (default 2)
+6. **Pick music** → `background_picker.pick_background()` reuses
+   `upload_music.scan_backgrounds()`, excluding recently used tracks
+7. **Render** → `MeditationPipeline.generate()`, unchanged, on the golden path
+   (F5 + uploaded background)
+8. **Persist** → `<name>.wav`, `<name>.script.txt`, `<name>.meta.json` as siblings
+
+Full detail: [docs/auto_generation/README.md](docs/auto_generation/README.md).
+
 ## Code Conventions
 
 - `PascalCase` classes · `snake_case` functions · `UPPER_SNAKE_CASE` constants · `_leading_underscore` private
@@ -93,6 +119,11 @@ The six that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
 - **No pedalboard `Limiter`** → pedalboard 0.9.23's `Limiter` inflates sub-threshold signals ~+4.75 dB and adds broadband "static". It was removed from all music + master chains. Peak control is `mixer.true_peak_limit()` at export (LUFS-normalize → true-peak limit to −1 dBTP).
 - **Breathing duck** → `mixer.mix()` uses `apply_breathing_duck` (deep gradual S-curve, rises in pauses). Bed/duck levels are auto-calibrated per session (`calibrate_music_bed`, targets: bed 14.5 LU under voice in pauses, 30.5 LU under during speech); `MOODSCAPE_ADAPTIVE_BED=0` restores the fixed −16/−16 constants. The old multiband/`hold_ms` reactive ducker has been removed.
 - **Intro fade-in** → default **1.5 s**, gentle exponential (rising steepness **2.0**, not 4.0). A 3 s steepness-4 fade read as "2–3 s of silence then music". `apply_fades` uses steepness 2.0 for the rising curve only (fade-out stays 4.0). Slider in `app.py`, default in `pipeline.generate`.
+- **Fatal vs advisory violations** → `script_gen/linter.py` fails the job for
+  safety hard-blocks and malformed markers, but renders anyway (with a warning)
+  for duration drift and style issues. Treating every violation as fatal makes
+  a weaker local model unusable; treating none as fatal lets a safety failure
+  reach audio. Do not flatten this distinction.
 
 ## Research Experiment Flags
 

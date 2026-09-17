@@ -183,6 +183,34 @@ python scripts/generate.py my_script.txt \
 
 ---
 
+## Usage — Auto-Generate
+
+Skip writing a script by hand: describe how you feel, and a script is
+drafted, independently reviewed, checked against the same safety rules as
+the manual path, and rendered with a random background track — no further
+input needed. This lives in the "Auto-Generate" tab and is built on
+`core/auto_generate.py`.
+
+Minimum `.env` for the default configuration (a local Ollama model as both
+generator and judge):
+
+```bash
+HF_TOKEN=hf_...           # Required — same as the manual path
+```
+
+No extra key is needed for `ollama:*` specs — just have `ollama serve`
+running locally with the model pulled. Using a hosted model instead requires
+that provider's key (e.g. `ANTHROPIC_API_KEY` for `anthropic:*`,
+`OPENROUTER_API_KEY` for `openrouter:*`) — see
+[docs/auto_generation/README.md](docs/auto_generation/README.md#configuration)
+for the full list.
+
+Full subsystem reference — configuration, model spec format, the fatal/
+advisory violation split, and how to benchmark model pairings — lives in
+[docs/auto_generation/README.md](docs/auto_generation/README.md).
+
+---
+
 ## Script Format
 
 ### Pause Tags

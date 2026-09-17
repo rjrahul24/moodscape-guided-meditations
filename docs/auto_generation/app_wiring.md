@@ -1,12 +1,12 @@
 # Wiring the Auto-Generate tab into `app.py`
 
-**Status: not applied.** `app.py` currently holds 37 lines of a third party's
-uncommitted work. Staging or editing it here would sweep those unrelated
-changes into this branch, so Task 11 stops short of touching it. The tab
-itself lives entirely in `core/auto_tab.py` (built and unit-tested there);
-`app.py` needs only the two-line change below. Apply it as part of Task 15
-Step 2c once `app.py` is clean, or hand this file to the user to apply
-themselves.
+**Status: applied** (2026-09-17, `dev-automate`). `app.py` previously held a
+third party's uncommitted work, so Task 11 stopped short of touching it and
+left this document as the exact change to apply once it was clean. That work
+has since landed and the tree was clean, so the two-line change below is now
+live in `app.py`. Kept here as a record of what changed and why the tab is
+wired the way it is; the tab itself lives entirely in `core/auto_tab.py`
+(built and unit-tested there).
 
 ## The two-line change
 
@@ -32,12 +32,12 @@ and wires its own `button.click(...)` handler internally, so no other part of
 `app.py` needs to change. The manual tab (script textbox, sliders, etc.)
 continues to work exactly as it does today; the new tab appears alongside it.
 
-## Why this is safe to defer
+## Why this was safe to defer
 
 `core/auto_tab.py` and `core/streaming_run.py` are fully unit-tested without
 importing `app.py` (see `tests/unit/test_auto_tab.py` and
 `tests/unit/test_streaming_run.py`). `app.py` cannot be imported in a test —
 it loads `torch` and registers `atexit.register(lambda: os._exit(0))`, which
-would hijack pytest's exit code — so this wiring step can only be verified by
-actually running `python app.py` after the two lines above are applied to a
-clean `app.py`.
+would hijack pytest's exit code — so this wiring step could only be verified
+by actually running `python -c "import app"` (or `python app.py`) after the
+two lines above were applied, which was done once `app.py` was clean.
