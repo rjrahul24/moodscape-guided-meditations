@@ -2,10 +2,13 @@
 
 Pauses are summed exactly from the engine's own parse. Speech is estimated as
 word_count / wpm * 60 — the same formula core/f5_tts/engine.py:463 uses when
-fixed pacing is enabled. Inter-sentence room-tone gaps are added because the
-engines insert them. Breath/inhale/exhale cues add their measured sample
-duration (BREATH_SEC) since both preprocessors emit a distinct "breath"
-segment type for these markers rather than a "pause".
+fixed pacing is enabled. Gap handling is engine-specific because the two
+engines insert silence differently: Kokoro adds a room-tone gap after every
+sentence, while F5 only gaps between ≤400-char CHUNKS (each usually several
+sentences) — see _speech_seconds and _F5_CHUNK_GAP_SEC. Breath/inhale/exhale
+cues add their measured sample duration (BREATH_SEC) since both
+preprocessors emit a distinct "breath" segment type for these markers rather
+than a "pause".
 
 Fades are deliberately NOT added: apply_fades shapes amplitude over audio that
 already exists, so they do not extend runtime.
@@ -22,7 +25,8 @@ logger = logging.getLogger(__name__)
 # log_estimate_accuracy() exists to refine them from real renders rather than
 # leaving them a guess.
 #
-# f5: measured 2026-09-17 from a real render of a 235-word script through
+# f5: measured 2026-09-17 from a real render of REALISTIC_SCRIPT (198 words,
+# excluding [pause:Xs] markers) in
 # tests/integration/test_auto_generate_e2e.py — at the old 97.0 WPM the
 # estimate was 205.4s against an actual 226.0s (ratio 1.10, implied WPM
 # 85.0). 85.0 reproduces the actual duration almost exactly (ratio 1.001).
@@ -52,6 +56,15 @@ BREATH_SEC: dict[str, float] = {
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
+# core/f5_tts/engine.py inserts a 0.4s room-tone gap plus a 300ms equal-power
+# crossfade between consecutive "speech"-type chunks (the crossfade overlaps
+# the gap, so the net silence added is GAP - FADE = 0.1s). This only happens
+# at CHUNK boundaries — the ≤400-char splits core/f5_tts/preprocessor.py's
+# split_into_chunks() makes per "speech" segment, which usually span several
+# sentences. It does NOT happen between sentences within one chunk; those are
+# synthesized as continuous prose with no gap at all.
+_F5_CHUNK_GAP_SEC = 0.4 - 0.3
+
 
 def _load_prepare_segments(engine: str):
     """Return the engine's prepare_segments, or raise for an unknown engine."""
@@ -66,13 +79,26 @@ def _load_prepare_segments(engine: str):
     )
 
 
-def _speech_seconds(text: str, wpm: float) -> float:
-    """Words at the target rate, plus the gaps the engine puts between sentences."""
+def _speech_seconds(text: str, wpm: float, *, engine: str) -> float:
+    """Words at the target rate, plus this engine's own inter-sentence gaps.
+
+    Kokoro (core/kokoro_tts/engine.py) inserts a room-tone gap after every
+    sentence within a segment, so that model applies here. F5
+    (core/f5_tts/engine.py) does not: sentences within one ≤400-char chunk
+    are synthesized as continuous prose with no inserted gap at all — F5
+    only gaps at chunk BOUNDARIES, which estimate_duration_sec accounts for
+    separately via _F5_CHUNK_GAP_SEC, between consecutive "speech" segments.
+    Applying Kokoro's per-sentence gap to F5 text overestimates duration by
+    ~0.7s per extra sentence in a multi-sentence paragraph.
+    """
     words = len(text.split())
     if words == 0:
         return 0.0
 
     speech = words / wpm * 60.0
+
+    if engine != "kokoro":
+        return speech
 
     sentences = [s for s in _SENTENCE_SPLIT.split(text.strip()) if s]
     gaps = 0.0
@@ -115,15 +141,22 @@ def estimate_duration_sec(
     segments = prepare_segments(script, content_type=content_type)
 
     total = 0.0
+    prev_type = None
     for segment in segments:
         if segment["type"] == "pause":
             total += float(segment["duration_sec"])
         elif segment["type"] == "speech":
-            total += _speech_seconds(segment["text"], rate)
+            if engine == "f5" and prev_type == "speech":
+                # Mirrors the engine: a gap is only inserted between two
+                # consecutive "speech" chunks, never before the first one or
+                # after a pause/breath segment.
+                total += _F5_CHUNK_GAP_SEC
+            total += _speech_seconds(segment["text"], rate, engine=engine)
         elif segment["type"] == "breath":
             # Unrecognised subtypes degrade to the plain "breath" duration
             # rather than raising — a bad tag shouldn't crash a generation run.
             total += BREATH_SEC.get(segment.get("subtype"), BREATH_SEC["breath"])
+        prev_type = segment["type"]
 
     return total
 

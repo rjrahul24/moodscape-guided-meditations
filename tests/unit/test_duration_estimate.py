@@ -46,16 +46,90 @@ class TestDurationEstimate(unittest.TestCase):
         # 60s of speech, plus no pauses and a single sentence (no gaps).
         self.assertAlmostEqual(estimate, 60.0, delta=1.0)
 
-    def test_inter_sentence_gaps_are_counted(self):
+    def test_inter_sentence_gaps_are_counted_for_kokoro(self):
         # Both are exactly 8 words; only the sentence count differs, so the
-        # delta is purely the three inter-sentence gaps (3 x 0.8s).
+        # delta is purely the three inter-sentence gaps (3 x 0.8s). This is
+        # Kokoro-specific behaviour -- see test_f5_does_not_add_* below for
+        # why f5 must NOT show this delta.
         one = estimate_duration_sec(
-            "word word word word word word word word.", engine="f5", wpm=100.0
+            "word word word word word word word word.",
+            engine="kokoro",
+            wpm=100.0,
         )
         four = estimate_duration_sec(
-            "word word. word word. word word. word word.", engine="f5", wpm=100.0
+            "word word. word word. word word. word word.",
+            engine="kokoro",
+            wpm=100.0,
         )
         self.assertGreater(four, one + 1.5)
+
+    def test_f5_does_not_add_per_sentence_gaps_within_one_chunk(self):
+        # F5's engine (core/f5_tts/engine.py) synthesizes every sentence
+        # within one <=400-char chunk as continuous prose with no inserted
+        # gap -- it only gaps between CHUNKS (core/f5_tts/preprocessor.py's
+        # split_into_chunks). A 3-sentence paragraph and the same words as
+        # one sentence stay in a single chunk here, so they must estimate
+        # nearly the same duration. Applying Kokoro's per-sentence gap model
+        # to f5 (the pre-fix bug) would make the 3-sentence version ~1.6s
+        # longer for no reason.
+        one_sentence = estimate_duration_sec(
+            "word word word word word word word word word.",
+            engine="f5",
+            wpm=100.0,
+        )
+        three_sentences = estimate_duration_sec(
+            "word word word. word word word. word word word.",
+            engine="f5",
+            wpm=100.0,
+        )
+        self.assertAlmostEqual(three_sentences, one_sentence, delta=0.05)
+
+    def test_kokoro_gap_matches_engine_constant(self):
+        from core.kokoro_tts.engine import INTER_SENTENCE_PAUSE_SEC
+
+        one_sentence = estimate_duration_sec(
+            "word word word word word word word word word.",
+            engine="kokoro",
+            wpm=100.0,
+        )
+        three_sentences = estimate_duration_sec(
+            "word word word. word word word. word word word.",
+            engine="kokoro",
+            wpm=100.0,
+        )
+        self.assertAlmostEqual(
+            three_sentences - one_sentence,
+            2 * INTER_SENTENCE_PAUSE_SEC,
+            delta=0.05,
+        )
+
+    def test_f5_adds_a_gap_only_between_chunk_boundary_segments(self):
+        # A single long paragraph forces core/f5_tts/preprocessor.py's
+        # split_into_chunks() to split it into multiple "speech" segments at
+        # MAX_CHUNK_CHARS -- exactly the chunk boundary the real F5 engine
+        # gaps between. Derive the expected chunk count from prepare_segments
+        # itself so this doesn't hardcode MAX_CHUNK_CHARS or exact wrapping.
+        from core.f5_tts.preprocessor import prepare_segments
+        from core.script_gen.duration import _F5_CHUNK_GAP_SEC
+
+        sentence = "The gentle tide moves in and out with the breath. "
+        script = sentence * 20
+        segments = prepare_segments(script, content_type="meditation")
+        speech_segments = [s for s in segments if s["type"] == "speech"]
+        self.assertGreater(
+            len(speech_segments),
+            1,
+            "test script must actually split into multiple f5 chunks",
+        )
+
+        total_words = sum(len(s["text"].split()) for s in speech_segments)
+        expected_speech = total_words / 100.0 * 60.0
+        expected_gaps = (len(speech_segments) - 1) * _F5_CHUNK_GAP_SEC
+
+        estimate = estimate_duration_sec(script, engine="f5", wpm=100.0)
+        self.assertAlmostEqual(
+            estimate, expected_speech + expected_gaps, delta=0.05
+        )
 
     def test_both_engines_supported(self):
         script = "Breathe in and let go.\n\n[pause:5s]\n\nBreathe out."
