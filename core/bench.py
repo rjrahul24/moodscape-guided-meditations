@@ -7,7 +7,7 @@ same linter, and the scripts themselves to read.
 import time
 from dataclasses import dataclass
 
-from core.auto_generate import AutoConfig, ScriptGenerationError, generate_script
+from core.auto_generate import AutoConfig, generate_script
 from core.script_gen.engine import build_engine
 
 # Deliberately spans the real emotional range the app serves, including the
@@ -35,7 +35,7 @@ class BenchRow:
     prompt: str
     passed: bool
     estimated_sec: float
-    repairs_used: int
+    repairs_used: int | None
     elapsed_sec: float
     advisories: int
     error: str
@@ -68,6 +68,11 @@ def run_bench(
         for prompt in prompts:
             started = time.monotonic()
             try:
+                # A row is the unit of isolation: engine construction (which
+                # can raise ValueError on a malformed "provider:model" spec)
+                # and generate_script (which can raise ScriptGenerationError
+                # or a backend RuntimeError) are both inside this try, so no
+                # single bad pairing or prompt can end the whole run.
                 outcome = generate_script(
                     prompt,
                     generator_engine=factory(generator_spec),
@@ -87,7 +92,7 @@ def run_bench(
                         error="",
                     )
                 )
-            except (ScriptGenerationError, RuntimeError) as exc:
+            except Exception as exc:
                 rows.append(
                     BenchRow(
                         generator=generator_spec,
@@ -95,7 +100,7 @@ def run_bench(
                         prompt=prompt,
                         passed=False,
                         estimated_sec=0.0,
-                        repairs_used=config.max_repairs,
+                        repairs_used=None,
                         elapsed_sec=time.monotonic() - started,
                         advisories=0,
                         error=str(exc),
@@ -111,9 +116,10 @@ def format_bench_table(rows: list[BenchRow]) -> str:
         "|---|---|---|---|---|---|---|---|",
     ]
     for row in rows:
+        repairs = "-" if row.repairs_used is None else str(row.repairs_used)
         lines.append(
             f"| {row.generator} | {row.judge} | {row.prompt[:40]} | "
             f"{'yes' if row.passed else 'NO'} | {row.estimated_sec / 60:.1f} | "
-            f"{row.repairs_used} | {row.elapsed_sec:.1f} | {row.advisories} |"
+            f"{repairs} | {row.elapsed_sec:.1f} | {row.advisories} |"
         )
     return "\n".join(lines)
