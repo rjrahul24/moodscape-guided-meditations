@@ -29,15 +29,17 @@ SHORT_SCRIPT = (
     "And when you are ready, let your eyes open."
 )
 
-# Realistic length (~215 words / 17 sentences), used ONLY for the duration
-# estimate test. Fixed per-chunk overhead (F5 reference-audio padding,
-# leading/trailing silence) is roughly constant per chunk regardless of
-# script length, so it dominates a short script like SHORT_SCRIPT and
-# swamps the per-word speaking rate the estimator is actually trying to
-# measure. On a 22-word script the observed ratio was 2.14 (implied ~37
-# WPM) purely from that overhead amortizing over too few words. A script in
-# this length range is long enough for per-word rate to dominate over fixed
-# overhead, so it is the only length that can actually validate DEFAULT_WPM.
+# Realistic length (198 words excluding [pause:Xs] markers / 17 sentences),
+# used ONLY for the duration estimate test. Fixed per-chunk overhead (F5
+# reference-audio padding, leading/trailing silence) is roughly constant per
+# chunk regardless of script length, so it dominates a short script like
+# SHORT_SCRIPT and swamps the per-word speaking rate the estimator is
+# actually trying to measure. On a 22-word script measured separately, the
+# observed ratio was 2.14 (implied ~37 WPM) purely from that overhead
+# amortizing over too few words; that measurement is not this script and is
+# not reproduced here. A script in this length range is long enough for
+# per-word rate to dominate over fixed overhead, so it is the only length
+# that can actually validate DEFAULT_WPM.
 REALISTIC_SCRIPT = (
     "Find a comfortable position, either sitting or lying down.\n\n"
     "[pause:4s]\n\n"

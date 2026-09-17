@@ -177,15 +177,15 @@ codes except the two advisory ones below are **FATAL**.
 | `DURATION_OUT_OF_WINDOW` | ADVISORY | Duration | The estimated runtime falls outside `target_min_sec`–`target_max_sec`. Only emitted when an estimate is supplied. |
 
 The safety patterns are matched case-insensitively against tag-stripped
-prose, with typographic apostrophes (`'`) normalized to ASCII first — a
-curly quote from an LLM would otherwise slip `Don't feel anxious` past
-`INVALIDATING`.
+prose, with typographic apostrophes (U+2019, U+2018, U+02BC, U+00B4, U+0060)
+normalized to ASCII `'` first — a curly quote from an LLM would otherwise
+slip `Don't feel anxious` past `INVALIDATING`.
 
-**Known gap:** the linter only recognizes square-bracket tags
-(`_ANY_TAG = re.compile(r"\[([^\]]*)\]")`). It has no rule for angle-bracket
-markup — a stray `<break/>` or `<emphasis>` from a model would pass every
-check and reach the TTS engine untouched. See the Gotchas note in
-`docs/GOTCHAS.md`.
+The linter also rejects angle-bracket markup (`ANGLE_TAG`, e.g. a stray SSML
+`<break time="2s"/>` or `<emphasis>`): by the time a judge's response reaches
+`check_format`, `parse_judge_response` has already stripped the judge's own
+`<script>`/`<changelog>` protocol tags, so any surviving `<...>` is genuinely
+stray markup the TTS engine would otherwise read aloud.
 
 ## How to choose a model
 
@@ -232,15 +232,18 @@ trusting a pairing that merely "passes."
 without rendering anything: pauses are summed exactly from the same
 `prepare_segments()` the real preprocessor uses, breath/inhale/exhale cues
 add their measured sample duration, and prose is estimated as
-`word_count / wpm * 60` plus inter-sentence gaps. Fades are deliberately
-**not** added — `apply_fades` shapes amplitude on audio that already exists,
-so they don't extend runtime.
+`word_count / wpm * 60` plus the engine's own inter-sentence/inter-chunk
+gaps — modeled per engine, since Kokoro gaps after every sentence while F5
+only gaps between the ≤400-char chunks its preprocessor splits a paragraph
+into (each chunk usually holds several sentences with no gap between them).
+Fades are deliberately **not** added — `apply_fades` shapes amplitude on
+audio that already exists, so they don't extend runtime.
 
 `DEFAULT_WPM` currently holds:
 
 | Engine | WPM | Basis |
 |---|---|---|
-| `f5` | `85.0` | Measured 2026-09-17 from a real render of a 235-word script (`tests/integration/test_auto_generate_e2e.py :: REALISTIC_SCRIPT`) through the full pipeline. At the old value of 97.0, the estimate was 205.4s against an actual 226.0s — ratio 1.10. 85.0 reproduces the actual duration almost exactly (ratio 1.001). |
+| `f5` | `85.0` | Measured 2026-09-17 from a real render of `tests/integration/test_auto_generate_e2e.py :: REALISTIC_SCRIPT` (198 words, excluding `[pause:Xs]` markers) through the full pipeline. At the old value of 97.0, the estimate was 205.4s against an actual 226.0s — ratio 1.10. 85.0 reproduces the actual duration almost exactly (ratio 1.001). |
 | `kokoro` | `105.0` | **Not verified.** No real-render measurement exists for this number yet — treat it as a placeholder, not a calibrated constant. |
 
 **F5's number is voice-dependent.** F5 clones the pacing of its reference
