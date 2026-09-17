@@ -3101,8 +3101,18 @@ git commit -m "feat(auto): add prompt-to-meditation orchestrator"
 
 **Files:**
 - Create: `core/streaming_run.py`
-- Modify: `app.py` (add a tab; do not alter the existing manual tab)
-- Test: `tests/unit/test_streaming_run.py`
+- Create: `core/auto_tab.py`
+- Create: `docs/auto_generation/app_wiring.md`
+- Test: `tests/unit/test_streaming_run.py`, `tests/unit/test_auto_tab.py`
+- **Do NOT modify `app.py`.** See the wiring note below.
+
+**app.py wiring note.** `app.py` currently holds 37 lines of a third party's uncommitted
+work. `git add app.py` would sweep their changes into this branch, so this task does not
+touch it. Instead the entire tab is built in `core/auto_tab.py` as a callable, which is
+committed and tested; `app.py` needs only a two-line wiring change, written to
+`docs/auto_generation/app_wiring.md` and applied by Task 15 Step 2c once that file is
+clean (or handed to the user if it is not). This also makes the tab testable — `app.py`
+cannot be imported in a test because it registers `atexit.register(lambda: os._exit(0))`.
 
 **Interfaces:**
 - Consumes: `run`, `AutoConfig`, `ScriptGenerationError`, `AutoResult` from Task 10.
@@ -3299,26 +3309,91 @@ class StreamingRun:
 Run: `.venv/bin/python -m pytest tests/unit/test_streaming_run.py -v`
 Expected: PASS — 7 tests
 
-- [ ] **Step 5: Read the existing tab structure**
+- [ ] **Step 5: Read the existing tab structure for reference only**
 
-Run: `grep -n "gr.Tab\|with gr.Blocks\|def run_pipeline\|update_queue" app.py`
-Read the surrounding 40 lines of each hit. The new tab must follow the same construction and the same progress-streaming generator pattern.
+Run: `grep -n "gr.Tab\|with gr.Blocks\|BACKGROUND_CHOICES\|def _refresh_backgrounds" app.py`
 
-- [ ] **Step 6: Add the imports**
+Read the surrounding lines to match construction style and component naming. **Do not edit
+the file.** You are reproducing its idiom inside a new module.
 
-Near the other `core` imports in `app.py`:
+- [ ] **Step 6: Write the failing test for the tab module**
+
+Create `tests/unit/test_auto_tab.py`:
 
 ```python
-from core.auto_generate import AutoConfig
-from core.streaming_run import StreamingRun
+"""Tests for the Auto-Generate tab builder.
+
+Never imports app.py: that module loads torch and registers an atexit
+hard-exit hook, so importing it from a test is not viable.
+"""
+
+import unittest
+
+import gradio as gr
+
+from core.auto_tab import build_auto_tab
+
+
+class TestBuildAutoTab(unittest.TestCase):
+    def test_builds_inside_a_blocks_context(self):
+        with gr.Blocks():
+            components = build_auto_tab()
+        self.assertIsInstance(components, dict)
+
+    def test_exposes_the_components_the_handler_needs(self):
+        with gr.Blocks():
+            components = build_auto_tab()
+        for key in (
+            "prompt", "content_type", "tts_engine", "target_min", "target_max",
+            "generator", "judge", "button", "audio", "status", "script", "changelog",
+        ):
+            self.assertIn(key, components)
+
+    def test_defaults_to_the_golden_path(self):
+        with gr.Blocks():
+            components = build_auto_tab()
+        self.assertEqual(components["tts_engine"].value, "f5")
+        self.assertEqual(components["content_type"].value, "meditation")
+
+    def test_duration_defaults_are_five_to_seven_minutes(self):
+        with gr.Blocks():
+            components = build_auto_tab()
+        self.assertEqual(components["target_min"].value, 5)
+        self.assertEqual(components["target_max"].value, 7)
+
+
+if __name__ == "__main__":
+    unittest.main()
 ```
 
-- [ ] **Step 7: Add the handler**
+- [ ] **Step 7: Run it to verify it fails**
 
-A thin shim: build the config, iterate for progress, format the outcome. All
-the real logic is in `core/streaming_run.py`, under test.
+Run: `.venv/bin/python -m pytest tests/unit/test_auto_tab.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'core.auto_tab'`
+
+- [ ] **Step 8: Write the tab module**
+
+Create `core/auto_tab.py`:
 
 ```python
+"""Gradio Auto-Generate tab, built as a callable so it can be tested.
+
+app.py cannot be imported in a test — it loads torch and registers
+atexit.register(lambda: os._exit(0)), which would hijack pytest's exit. Keeping
+the tab here means its construction is covered; app.py only wires it in.
+"""
+
+import os
+
+import gradio as gr
+
+from core.auto_generate import AutoConfig
+from core.streaming_run import StreamingRun
+
+DEFAULT_GENERATOR = "ollama:llama3.2:3b"
+DEFAULT_JUDGE = "ollama:llama3.2:3b"
+
+
 def auto_generate_handler(
     prompt,
     content_type,
@@ -3357,90 +3432,97 @@ def auto_generate_handler(
         status = f"{status}\n\nAdvisories:\n{advisories}"
 
     yield result.audio_path, result.script, result.changelog, status
-```
 
-- [ ] **Step 8: Add the tab**
 
-Inside the existing `gr.Blocks` context, after the current tab:
+def build_auto_tab() -> dict:
+    """Construct the Auto-Generate tab. Call inside a gr.Blocks() context.
 
-```python
+    Returns:
+        A dict of the created components, keyed by role, so callers (and tests)
+        can reach them without depending on layout order.
+    """
     with gr.Tab("Auto-Generate"):
         gr.Markdown(
             "Describe how you feel. A script is written, independently "
             "reviewed, checked, and rendered with a random background track — "
             "no further input needed."
         )
-        auto_prompt = gr.Textbox(
+        prompt = gr.Textbox(
             label="What do you need?",
             placeholder="I'm feeling anxious. I need a relaxing meditation.",
             lines=3,
         )
         with gr.Row():
-            auto_content_type = gr.Dropdown(
+            content_type = gr.Dropdown(
                 choices=["meditation", "sleep_story"],
                 value="meditation",
                 label="Content Type",
             )
-            auto_tts_engine = gr.Dropdown(
+            tts_engine = gr.Dropdown(
                 choices=["f5", "kokoro"], value="f5", label="Voice Engine"
             )
         with gr.Row():
-            auto_min = gr.Slider(1, 20, value=5, step=1, label="Min minutes")
-            auto_max = gr.Slider(1, 30, value=7, step=1, label="Max minutes")
+            target_min = gr.Slider(1, 20, value=5, step=1, label="Min minutes")
+            target_max = gr.Slider(1, 30, value=7, step=1, label="Max minutes")
         with gr.Row():
-            auto_generator = gr.Textbox(
+            generator = gr.Textbox(
                 label="Generator model",
-                value=os.environ.get("MOODSCAPE_SCRIPT_GENERATOR", "ollama:llama3.2:3b"),
+                value=os.environ.get("MOODSCAPE_SCRIPT_GENERATOR", DEFAULT_GENERATOR),
             )
-            auto_judge = gr.Textbox(
+            judge = gr.Textbox(
                 label="Judge model",
-                value=os.environ.get("MOODSCAPE_SCRIPT_JUDGE", "ollama:llama3.2:3b"),
+                value=os.environ.get("MOODSCAPE_SCRIPT_JUDGE", DEFAULT_JUDGE),
             )
-        auto_button = gr.Button("Generate", variant="primary")
-        auto_audio = gr.Audio(label="Result", type="filepath")
-        auto_status = gr.Textbox(label="Status", lines=4, interactive=False)
+        button = gr.Button("Generate", variant="primary")
+        audio = gr.Audio(label="Result", type="filepath")
+        status = gr.Textbox(label="Status", lines=4, interactive=False)
         with gr.Accordion("Script", open=False):
-            auto_script = gr.Textbox(label="Final script", lines=20, interactive=False)
+            script = gr.Textbox(label="Final script", lines=20, interactive=False)
         with gr.Accordion("Judge changelog", open=False):
-            auto_changelog = gr.Textbox(label="Changes", lines=8, interactive=False)
+            changelog = gr.Textbox(label="Changes", lines=8, interactive=False)
 
-        auto_button.click(
+        button.click(
             fn=auto_generate_handler,
-            inputs=[
-                auto_prompt,
-                auto_content_type,
-                auto_tts_engine,
-                auto_min,
-                auto_max,
-                auto_generator,
-                auto_judge,
-            ],
-            outputs=[auto_audio, auto_script, auto_changelog, auto_status],
+            inputs=[prompt, content_type, tts_engine, target_min, target_max,
+                    generator, judge],
+            outputs=[audio, script, changelog, status],
         )
+
+    return {
+        "prompt": prompt, "content_type": content_type, "tts_engine": tts_engine,
+        "target_min": target_min, "target_max": target_max,
+        "generator": generator, "judge": judge, "button": button,
+        "audio": audio, "status": status, "script": script, "changelog": changelog,
+    }
 ```
 
-- [ ] **Step 9: Verify the app still starts**
+- [ ] **Step 9: Run the tests to verify they pass**
 
-Run: `.venv/bin/python -c "import app"`
-Expected: no exception. (Do not launch the server in this step — importing proves the layout is syntactically valid and the handler resolves.)
-
-- [ ] **Step 10: Run the full unit suite**
-
-Run: `.venv/bin/python -m pytest tests/unit/ -v`
+Run: `.venv/bin/python -m pytest tests/unit/test_auto_tab.py tests/unit/test_streaming_run.py -v`
 Expected: PASS
 
-- [ ] **Step 11: Manual smoke test**
+- [ ] **Step 10: Write the app.py wiring instructions**
 
-Run: `ollama pull llama3.2:3b` (if not already present), then `.venv/bin/python app.py`
-Open http://localhost:7860, select the Auto-Generate tab, enter "I'm feeling anxious and need to unwind", and click Generate.
+Create `docs/auto_generation/app_wiring.md` documenting the exact two-line change: the
+import to add beside the other `core` imports in `app.py`, and the `build_auto_tab()` call
+to place inside the existing `gr.Blocks()` context after the current tab. State plainly
+that it is deliberately not applied because `app.py` holds unrelated uncommitted work.
 
-Expected: progress messages stream; either a rendered WAV appears with the script and changelog populated, or a clear failure message naming the violation codes. `llama3.2:3b` is small enough that the script may well fail the linter — that is a *successful* test of the repair-and-fail path, not a bug.
+- [ ] **Step 11: Confirm app.py is NOT staged**
 
-- [ ] **Step 12: Commit**
+Run: `git status --short app.py`
+Expected: still ` M app.py` — modified, unstaged, exactly as before you started.
+
+- [ ] **Step 12: Run the full unit suite**
+
+Run: `.venv/bin/python -m pytest tests/unit/ -q`
+Expected: PASS
+
+- [ ] **Step 13: Commit**
 
 ```bash
-git add core/streaming_run.py tests/unit/test_streaming_run.py app.py
-git commit -m "feat(ui): add Auto-Generate tab and testable streaming runner"
+git add core/streaming_run.py core/auto_tab.py tests/unit/test_streaming_run.py tests/unit/test_auto_tab.py docs/auto_generation/app_wiring.md
+git commit -m "feat(ui): add Auto-Generate tab builder and streaming runner"
 ```
 
 ---
@@ -4160,6 +4242,20 @@ Run: `git status --short requirements.txt`
 - **If it is still dirty**: do NOT stage it. Leave the declaration to the user and say so explicitly in the final report — the two lines needed are `httpx` and `anthropic`. Note it in the PR body as a known follow-up.
 
 Either way, `httpx` is already installed transitively so nothing breaks at runtime today; `anthropic` is only needed if a Claude model is actually configured.
+
+- [ ] **Step 2c: Wire the Auto-Generate tab into app.py**
+
+Task 11 deliberately did not touch `app.py` because it held unrelated uncommitted work.
+Check whether that is still true:
+
+Run: `git status --short app.py`
+
+- **If it is now clean**: apply the two-line change documented in
+  `docs/auto_generation/app_wiring.md`, verify with `.venv/bin/python -c "import app"`,
+  then commit as `feat(ui): wire the Auto-Generate tab into app.py`.
+- **If it is still dirty**: do NOT stage it. Leave the change to the user, say so
+  explicitly in the final report, and note it in the PR body. The tab module and its
+  tests are committed either way — only the two wiring lines are outstanding.
 
 - [ ] **Step 3: Confirm the full suite is green**
 
