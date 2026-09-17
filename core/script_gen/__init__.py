@@ -26,6 +26,12 @@ from core.script_gen.rules import (
     load_guide,
     load_safety_rules,
 )
+from core.script_gen.engine import (
+    FakeScriptEngine,
+    ScriptEngine,
+    build_engine,
+    parse_engine_spec,
+)
 
 __all__ = [
     "ADVISORY",
@@ -44,4 +50,8 @@ __all__ = [
     "build_judge_system_prompt",
     "load_guide",
     "load_safety_rules",
+    "FakeScriptEngine",
+    "ScriptEngine",
+    "build_engine",
+    "parse_engine_spec",
 ]
