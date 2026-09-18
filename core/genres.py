@@ -36,6 +36,7 @@ GENRE_PACKS_DIR = Path(
 MAX_PAUSE_RATIO = 0.6
 MIN_ANGLES = 2
 MIN_ARC_STEPS = 3
+MIN_ANGLE_IMAGERY = 1
 
 _KNOWN_TAGS = MEASURED_VOCAB | DECLARED_VOCAB
 
@@ -227,6 +228,11 @@ def load_pack(slug: str, packs_dir: Path | None = None) -> GenrePack:
                         f"{type(item).__name__} ({item!r})."
                     )
             imagery = tuple(imagery_value)
+        if len(imagery) < MIN_ANGLE_IMAGERY:
+            raise GenrePackError(
+                f"{path}: angle {angle_name!r} has {len(imagery)} imagery item(s); "
+                f"at least {MIN_ANGLE_IMAGERY} is needed to ground the angle."
+            )
         angles.append(Angle(name=angle_name, imagery=imagery))
 
     angles = tuple(angles)

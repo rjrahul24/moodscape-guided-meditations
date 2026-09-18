@@ -40,14 +40,19 @@ def plan(
         f"Technique:\n{pack.technique}",
         f"Session arc:\n{_bullet(pack.arc)}",
         f"Angle for this session: {angle.name}",
-        f"Imagery to build on:\n{_bullet(angle.imagery)}",
+    ]
+
+    if angle.imagery:
+        sections.append(f"Imagery to build on:\n{_bullet(angle.imagery)}")
+
+    sections.extend([
         (
             f"Silence budget: about {pack.pause_ratio:.0%} of the runtime "
             "should be silence held by [pause:Xs] markers. Say in the brief "
             "where the long pauses belong."
         ),
         f"Genre safety notes:\n{pack.safety}",
-    ]
+    ])
 
     if pack.banned:
         sections.append(

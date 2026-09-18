@@ -93,6 +93,16 @@ class PlanTest(unittest.TestCase):
         engine, _brief = self._plan()
         self.assertEqual(engine.calls[0]["system"], "SYSTEM")
 
+    def test_empty_imagery_omits_the_header(self):
+        """Imagery is guarded; dangling headers must never appear."""
+        empty_angle = Angle(name="bare", imagery=())
+        engine = FakeScriptEngine([BRIEF])
+        plan(
+            engine, PACK, empty_angle, system="S",
+            target_min_sec=360.0, target_max_sec=600.0,
+        )
+        self.assertNotIn("Imagery to build on", engine.calls[0]["user"])
+
 
 if __name__ == "__main__":
     unittest.main()

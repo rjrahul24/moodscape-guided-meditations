@@ -220,6 +220,20 @@ class PackTypeValidationTest(unittest.TestCase):
         self.assertIn("imagery", exc_msg)
         self.assertIn("array", exc_msg)
 
+    def test_angle_with_empty_imagery_is_rejected(self):
+        """An angle must have at least one imagery item to ground it."""
+        body = VALID.replace(
+            'imagery = ["a chair by a window", "afternoon light"]',
+            'imagery = []',
+            1  # Replace only the first occurrence
+        )
+        self._write("bad", body)
+        with self.assertRaises(GenrePackError) as ctx:
+            load_pack("bad", packs_dir=self.dir)
+        exc_msg = str(ctx.exception)
+        self.assertIn("the empty chair", exc_msg)  # the angle name
+        self.assertIn("imagery", exc_msg)
+
     def test_non_string_label_is_rejected(self):
         """Label must be a string."""
         body = VALID.replace('label        = "Grief & Loss"', 'label = 123')
