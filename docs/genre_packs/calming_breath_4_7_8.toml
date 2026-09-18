@@ -5,11 +5,12 @@ music_tags   = ["warm", "steady"]
 pause_ratio  = 0.48
 
 technique = """
-The 4-7-8 breathing pattern: inhale to a count, hold at a gentle pace (like a
-slow metronome), exhale over a longer count. The hold is optional — if holding
-makes you lightheaded or uncomfortable, skip it and keep the inhale and exhale.
-Anyone feeling dizzy should return to ordinary breathing immediately. Count aloud
-at first, then silently. This is about pacing, not endurance.
+The 4-7-8 breathing pattern: count as you inhale, hold, and exhale (four counts,
+seven counts, eight counts). The counts are a rhythm you set by your own pace —
+at a brisk counting speed, seven counts take about three seconds. The hold is
+optional and should never exceed four seconds in actual time. Anyone feeling dizzy
+should skip the hold and return to ordinary breathing immediately. Count aloud at
+first, then silently. This is about the shape of the breath, not endurance.
 """
 
 arc = [
@@ -20,7 +21,14 @@ arc = [
     "unguided practice",
 ]
 
-safety = """Holds never exceed seven counts at a gentle pace (approximately seven seconds). This is about rhythm, not breath endurance. The hold is entirely optional — if holding makes you lightheaded or uncomfortable, skip it. Anyone feeling dizzy should immediately return to ordinary breathing. Do not present this as a treatment for anxiety disorders; describe it as a calming practice."""
+safety = """
+The counts are a rhythm, not seconds: count briskly enough that the seven-count
+hold lasts no more than four seconds. Never instruct a hold longer than that.
+The hold is always optional — say so before the first one — and anyone who feels
+lightheaded should drop it and return to ordinary breathing immediately. Do not
+present this as a treatment for anxiety or insomnia; it is a calming practice
+that many people find settling.
+"""
 
 banned = [
     "force the breath",
