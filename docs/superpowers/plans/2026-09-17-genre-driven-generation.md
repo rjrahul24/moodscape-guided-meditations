@@ -2018,7 +2018,18 @@ def avoid_terms(
             if len(term) >= 2:
                 weights[term] += value
 
-    return [" ".join(term) for term, _ in weights.most_common(top_n)]
+    # TF-IDF weight alone ties constantly: every term unique to one entry
+    # gets the same maximal weight, whether it is a content phrase ("copper
+    # staircase") or a run of function words ("it picture a"). Break ties by
+    # character length rather than insertion order -- a longer phrase is
+    # disproportionately likely to be the specific, informative one, and
+    # this needs no hand-maintained stoplist, just the term itself.
+    ranked = sorted(
+        weights.items(),
+        key=lambda item: (item[1], sum(len(word) for word in item[0])),
+        reverse=True,
+    )
+    return [" ".join(term) for term, _ in ranked[:top_n]]
 ```
 
 Append to `core/script_gen/linter.py`:
