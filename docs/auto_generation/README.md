@@ -292,40 +292,41 @@ stray markup the TTS engine would otherwise read aloud.
 
 The interface is pluggable on purpose — which generator/judge pairing is
 actually good enough is an open, measured question, not a recommendation
-this doc makes. `scripts/bench_script_models.py` runs the ten prompts in
-`core/bench.py :: BENCH_PROMPTS` (deliberately spanning the harder emotional
-cases — grief, overwhelm, numbness — where the safety rules matter most)
-through every generator/judge pairing you give it, using the real
-generate → judge → lint → repair loop.
+this doc makes. `scripts/eval_genres.py` renders a full genre matrix for every
+model configuration you give it, using the real generate → judge → lint →
+repair loop on every run. It writes every script, audio file, and metric into
+a directory so configurations can be compared by ear and by measured outcomes.
 
 Run it:
 
 ```bash
-python scripts/bench_script_models.py \
-    --pair ollama:qwen3:30b ollama:gemma3:27b \
-    --pair anthropic:claude-opus-5 anthropic:claude-sonnet-5 \
-    --out bench_results.md
+python scripts/eval_genres.py \
+    --configs "baseline=ollama:qwen3.8:27b|ollama:gemma4:31b" \
+             "muse_trial=ollama:muse-glimmer:30b|ollama:gemma4:31b" \
+    --out /tmp/eval_results \
+    --band medium
 ```
 
-Each `--pair GENERATOR JUDGE` is one pairing to test; pass it as many times
-as you like. `--limit N` runs only the first N benchmark prompts (useful for
-a quick smoke test before a full run). The script writes a markdown table
-(one row per pairing × prompt) to `--out` and also prints it, followed by a
-pass/fail summary and the error text for any failing row.
+Each `--configs` entry names a configuration: `name=writer_model|judge_model`.
+Pass as many as you like. The script renders all genres × all configs × all
+runs (default 1 per combo; `--runs N` for repeats). It writes a markdown table
+with metrics (duration, violations, originality scores) to `results.json` in
+the output directory and prints it, followed by a pass/fail summary and error
+text for any failed run.
 
-Each row (`BenchRow`) records: whether it passed, the estimated duration,
-how many repairs were used, wall-clock elapsed time, and how many advisory
-violations remained. A row failing does not stop the run — pairing
-construction and script generation are both isolated per row
-(`core/bench.py :: run_bench()`), so one bad spec or one model timeout
-doesn't take down the rest of the benchmark.
+Each row in `results.json` records: whether it passed, estimated duration,
+number of repairs used, wall-clock elapsed time, originality score, and any
+advisory violations. A row failing does not stop the run — render construction
+and script generation are isolated per row, so one bad config or one model
+timeout doesn't take down the rest of the matrix.
 
-Read the table for: pass rate, repair count (a pairing that needs 2 repairs
-on every prompt is running at the edge of its budget), and elapsed time
-(relevant for a local model on Apple Silicon). Read the actual generated
-scripts — written alongside a real run via the normal artifact paths, or by
-inspecting `outcome.script` if you call `generate_script()` directly — before
-trusting a pairing that merely "passes."
+Read the table for: pass rate, repair count (a config that needs 2 repairs
+on most runs is running at the edge of its budget), originality scores,
+and elapsed time (relevant for a local model on Apple Silicon). Listen to
+the generated audio files (stored in `--out` alongside scripts) for speech
+quality, naturalness, and whether the meditations actually work. Read the
+scripts before trusting a config that merely "passes" — high metrics and
+passing linter checks don't guarantee a meditation that breathes.
 
 ## Calibrating `DEFAULT_WPM`
 
