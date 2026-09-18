@@ -69,10 +69,14 @@ def main() -> int:
                         genre=slug,
                         config=AutoConfig.from_genre(load_pack(slug), band=args.band),
                     )
-                    # Move produced files into out_dir
-                    shutil.copy2(result.audio_path, out_dir / Path(result.audio_path).name)
-                    shutil.copy2(result.script_path, out_dir / Path(result.script_path).name)
-                    shutil.copy2(result.meta_path, out_dir / Path(result.meta_path).name)
+                    # Move produced files into out_dir (not copy) to avoid leaking temp files
+                    for src_path, attr_name in [
+                        (result.audio_path, "audio"),
+                        (result.script_path, "script"),
+                        (result.meta_path, "meta"),
+                    ]:
+                        if Path(src_path).is_file():
+                            shutil.move(str(src_path), str(out_dir / Path(src_path).name))
 
                     rows.append(
                         {
