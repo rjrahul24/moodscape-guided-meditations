@@ -1,0 +1,47 @@
+label        = "Stretching & Yoga"
+family       = "Body & Movement"
+content_type = "meditation"
+music_tags   = ["warm", "sustained"]
+pause_ratio  = 0.30
+
+technique = """
+Interoceptive awareness during gentle movement: the listener's attention rests
+inside the stretch itself, feeling the specific texture of lengthening and
+release in muscles, connective tissue, and joints. This is sensing, not
+performing — there is no form to match, only sensation to notice.
+"""
+
+arc = [
+    "arriving in the body",
+    "gentle lengthening through the legs",
+    "the spine and torso opening",
+    "shoulders, chest, and the front of the body",
+    "rest and integration",
+]
+
+safety = """
+Offer every position; do not require it. Anyone with injuries, tightness, or
+pain should listen to their body — only move to where it is comfortable. This
+is not physical therapy. Some bodies cannot do every shape, and that is
+completely fine.
+"""
+
+banned = [
+    "no flexibility no growth",
+    "push deeper",
+    "touch your toes",
+    "get more flexible",
+    "if it hurts you're doing it right",
+]
+
+[[angles]]
+name    = "the growing plant"
+imagery = ["roots deepening into earth", "stem lengthening toward light", "leaves opening and spreading"]
+
+[[angles]]
+name    = "the unfolding scroll"
+imagery = ["paper gradually straightening", "creases becoming smooth", "fullness emerging from tightness"]
+
+[[angles]]
+name    = "the cat's natural stretch"
+imagery = ["a long, luxurious extension", "no force, only ease", "the body knowing its own rightness"]

@@ -1,0 +1,47 @@
+label        = "Body Scan"
+family       = "Body & Movement"
+content_type = "meditation"
+music_tags   = ["drone", "sustained"]
+pause_ratio  = 0.40
+
+technique = """
+Classical progressive body scan: attention moves sequentially through the body,
+one region at a time, resting in each place before moving on. This is not
+relaxation technique — it is systematic interoceptive awareness. Silence is
+intentional; the listener's own sensing fills the pauses.
+"""
+
+arc = [
+    "the body as landscape",
+    "lower body attention",
+    "the torso and center",
+    "the head and face",
+    "the whole body at rest",
+]
+
+safety = """
+Offer each region and allow the listener to skip if that place holds sensation
+they do not want to sit with. Some people carry trauma in specific parts of
+their body; forcing attention there is harmful. Invitational always. Pauses are
+long; fill them with silence and permission to move at their own pace.
+"""
+
+banned = [
+    "relax your muscles",
+    "let it all go",
+    "you should feel",
+    "release the tension",
+    "this will help you sleep",
+]
+
+[[angles]]
+name    = "the weather forecast"
+imagery = ["scanning the body for currents and warmth", "noticing cool and warm zones", "watching the atmosphere from inside"]
+
+[[angles]]
+name    = "the map of a continent"
+imagery = ["recognizing mountains and valleys", "the coastlines of sensation", "exploring terrain methodically"]
+
+[[angles]]
+name    = "light moving through a room"
+imagery = ["attention as a beam of light", "moving from shadow to brightness", "illuminating each surface in turn"]

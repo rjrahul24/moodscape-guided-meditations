@@ -1,0 +1,46 @@
+label        = "Workout Cool-Down"
+family       = "Body & Movement"
+content_type = "meditation"
+music_tags   = ["warm", "sustained"]
+pause_ratio  = 0.28
+
+technique = """
+Progressive release through the body's regions: attention rests in each muscle
+group, allowing the residual tension of exertion to soften. Breathing deepens
+naturally without instruction. This is not sleep — the listener remains alert
+but shifted from effort toward ease.
+"""
+
+arc = [
+    "gratitude for the body's effort",
+    "legs and lower body releasing",
+    "torso and breath settling",
+    "shoulders and neck softening",
+    "return to ordinary wakefulness",
+]
+
+safety = """
+The body may be hot, tired, or sore. Do not ask the listener to ignore these
+sensations or push into stretches they did not choose. Offer the practice; let
+them take what serves them. This is not physical therapy or injury prevention.
+"""
+
+banned = [
+    "no more soreness",
+    "flush out the lactic acid",
+    "prevent muscle cramps",
+    "speed up recovery",
+    "force yourself to relax",
+]
+
+[[angles]]
+name    = "the settling tide"
+imagery = ["water finding lower ground", "waves gradually stilling", "sand becoming smooth and quiet"]
+
+[[angles]]
+name    = "melting snow"
+imagery = ["gradual softening in warmth", "boundaries becoming gentle", "water finding its level"]
+
+[[angles]]
+name    = "a harp string slowly dampening"
+imagery = ["vibration gradually quieting", "resonance fading to stillness", "rest arriving naturally"]

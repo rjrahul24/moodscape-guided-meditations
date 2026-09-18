@@ -1,0 +1,47 @@
+label        = "Running"
+family       = "Body & Movement"
+content_type = "meditation"
+music_tags   = ["steady", "evolving"]
+pause_ratio  = 0.16
+
+technique = """
+Footfall anchoring with cadence awareness: the runner's attention settles on
+the steady rhythm of feet meeting ground, breath synced to stride. Eyes stay
+open, awareness remains in the body and present moment. This is meditation in
+motion — no visualization, only present-tense embodiment.
+"""
+
+arc = [
+    "settling into the rhythm",
+    "the body finding its pace",
+    "breath and footfall synchronized",
+    "the route beneath you",
+    "steady presence to the finish",
+]
+
+safety = """
+The listener is moving in the world and their eyes are open. Never ask them to
+close their eyes or narrow attention away from traffic, terrain, and safety.
+This meditation complements running; it does not replace good awareness of
+your surroundings.
+"""
+
+banned = [
+    "close your eyes",
+    "ignore your surroundings",
+    "push through the pain",
+    "sprint harder",
+    "visualize the finish line",
+]
+
+[[angles]]
+name    = "the drummer's beat"
+imagery = ["a steady drum beneath your feet", "rhythm unfolding with each step", "percussion holding the pace"]
+
+[[angles]]
+name    = "the river's current"
+imagery = ["moving forward in a current", "the path flowing under you", "water's momentum carrying you"]
+
+[[angles]]
+name    = "the turning wheel"
+imagery = ["a wheel revolving smoothly", "each rotation the same and different", "motion that sustains itself"]

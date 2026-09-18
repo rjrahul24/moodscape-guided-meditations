@@ -1,0 +1,45 @@
+label        = "Workout Warm-Up"
+family       = "Body & Movement"
+content_type = "meditation"
+music_tags   = ["bright", "evolving"]
+pause_ratio  = 0.18
+
+technique = """
+Progressive activation: attention moves through the body's main muscle groups,
+waking each with gentle internal focus. This is preparation, not exertion — the
+listener finds readiness, not fatigue, before training.
+"""
+
+arc = [
+    "centering in the breath",
+    "legs and glutes awakening",
+    "core stability and uprightness",
+    "shoulders, arms, and openness",
+    "whole-body readiness",
+]
+
+safety = """
+This is meditation, not coaching. Never push past discomfort or invite
+endurance. Anyone with injury or pain should listen to their body, not push
+through because the script asks. The goal is readiness, not strain.
+"""
+
+banned = [
+    "no pain no gain",
+    "push through",
+    "feel the burn",
+    "max out",
+    "go harder",
+]
+
+[[angles]]
+name    = "the ascending sunrise"
+imagery = ["warmth rising from feet upward", "light gradually touching each part", "the body emerging into brightness"]
+
+[[angles]]
+name    = "tuning a musical instrument"
+imagery = ["each string tightening gradually", "finding the right tension", "the instrument coming alive"]
+
+[[angles]]
+name    = "a sleeping animal waking"
+imagery = ["a stretch that flows through limbs", "joints loosening one by one", "the body alert and ready"]
