@@ -40,3 +40,6 @@ docs/temp/
 
 # Subagent-driven-development scratch (ledger, briefs, review packages)
 .superpowers/
+
+# Originality corpus: machine-local generated state.
+var/
