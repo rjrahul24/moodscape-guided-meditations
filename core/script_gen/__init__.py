@@ -27,6 +27,7 @@ from core.script_gen.duration import (
 from core.script_gen.rules import (
     build_generator_system_prompt,
     build_judge_system_prompt,
+    build_planner_system_prompt,
     load_guide,
     load_safety_rules,
 )
@@ -38,6 +39,7 @@ from core.script_gen.engine import (
 )
 from core.script_gen.generator import draft, strip_wrapper
 from core.script_gen.judge import parse_judge_response, repair, review
+from core.script_gen.planner import plan
 
 __all__ = [
     "ADVISORY",
@@ -58,6 +60,7 @@ __all__ = [
     "log_estimate_accuracy",
     "build_generator_system_prompt",
     "build_judge_system_prompt",
+    "build_planner_system_prompt",
     "load_guide",
     "load_safety_rules",
     "FakeScriptEngine",
@@ -69,4 +72,5 @@ __all__ = [
     "parse_judge_response",
     "repair",
     "review",
+    "plan",
 ]

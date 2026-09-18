@@ -86,5 +86,32 @@ class TestRuleLoading(unittest.TestCase):
         self.assertTrue((GUIDES_DIR / "content_safety_rules.md").is_file())
 
 
+class PlannerSystemPromptTest(unittest.TestCase):
+    def test_includes_the_safety_rules_and_the_duration_window(self):
+        from core.script_gen.rules import build_planner_system_prompt
+
+        prompt = build_planner_system_prompt("meditation", 360.0, 600.0)
+        self.assertIn("6", prompt)
+        self.assertIn("10", prompt)
+        self.assertIn("safety", prompt.lower())
+
+    def test_omits_the_engine_formatting_guide(self):
+        """The planner writes a brief, not a script -- the 3,000-word TTS
+        formatting contract would be pure wasted prefill on every run."""
+        from core.script_gen.rules import (
+            build_planner_system_prompt,
+            load_guide,
+        )
+
+        prompt = build_planner_system_prompt("meditation", 360.0, 600.0)
+        guide = load_guide("f5", "meditation")
+        self.assertNotIn(guide[:200], prompt)
+
+    def test_says_the_output_is_a_brief_not_a_script(self):
+        from core.script_gen.rules import build_planner_system_prompt
+
+        self.assertIn("brief", build_planner_system_prompt("meditation", 360.0, 600.0).lower())
+
+
 if __name__ == "__main__":
     unittest.main()

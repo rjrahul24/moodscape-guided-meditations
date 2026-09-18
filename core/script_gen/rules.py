@@ -99,3 +99,35 @@ def build_judge_system_prompt(
             "</changelog>",
         ]
     )
+
+
+def build_planner_system_prompt(
+    content_type: str,
+    target_min_sec: float,
+    target_max_sec: float,
+    guides_dir: Path | None = None,
+) -> str:
+    """System prompt for pass 0 — turning a genre pack into a creative brief.
+
+    Deliberately omits the engine formatting guide. The planner produces a
+    brief for the writer, not a script for the TTS engine, so the ~3,000-word
+    marker contract would be wasted prefill on every run. The writer's own
+    system prompt still carries it.
+    """
+    noun = "sleep story" if content_type == "sleep_story" else "guided meditation"
+    return "\n\n".join(
+        [
+            f"You are a creative director for {noun} audio. You are given a "
+            "genre's established technique, session arc and imagery, and you "
+            "write a short creative brief that a writer will turn into a "
+            "finished script. You do not write the script yourself.",
+            "The brief must be specific: name the images, the order of the "
+            "sections, and the emotional movement. A vague brief produces a "
+            "generic meditation. Work within the material you are given "
+            "rather than inventing a different practice.",
+            _duration_clause(target_min_sec, target_max_sec),
+            "# Content safety rules\n\n" + load_safety_rules(guides_dir),
+            "Output the brief as plain prose, 150-250 words. No headings, no "
+            "bullet lists, no preamble, and no script text.",
+        ]
+    )
