@@ -13,104 +13,132 @@ For how the tab itself is wired into `app.py`, see
 [app_wiring.md](app_wiring.md). This document covers the generation
 subsystem underneath the tab.
 
-## What it does
+## What it does — Genre path
 
-1. The user types a natural-language request ("I'm feeling anxious and my
-   chest is tight").
-2. A generator model drafts a full script against the same formatting guide
-   and safety rules a human writer would follow.
-3. An independent judge model reviews that draft and returns a corrected
-   version plus a changelog — it revises, it does not grade.
-4. A deterministic linter and duration estimator check the result. Anything
-   fatal goes back to the judge as a targeted repair instruction, bounded by
-   a repair budget.
-5. Once the script is clean (or advisory-only), a background track is picked
-   at random from `assets/backgrounds/` and the whole thing renders through
-   the existing, unmodified pipeline.
-6. The audio, the final script, and a metadata file are written as siblings
-   on disk.
+The "Auto-Generate" tab is **not** a prompt box. Instead:
 
-No step here requires the user to look at anything until the finished file
-is ready.
+1. User picks a **genre** from a dropdown (46 total, grouped by family: Sleep & Rest, Stress & Anxiety, Breathwork, etc.).
+2. User picks a **length band**: 3–6 min, 6–10 min, or 10–15 min.
+3. User clicks **Generate**.
 
-## The four layers
+Behind the scenes:
 
-The subsystem is built as four layers, each catching a different class of
-problem:
+- Preflight check: verify all LLM models exist (Ollama `/api/tags` check, fail in 2s not 5 min).
+- Load the genre pack (deterministic TOML file in `docs/genre_packs/<genre_slug>.toml`), validate it.
+- Rotate an angle: pick one of 3 distinct metaphorical frames (imagery, pacing) from the pack, excluding the last N used.
+- Extract an avoid-list: scan the 100 most recent same-genre scripts in `var/originality/`, pull out distinctive 1–3-grams, TF-IDF weighted.
+- **Planner** (Pass 0): generator model reads the pack's technique, arc, angle, music tags, pause ratio, safety caveats, plus the avoid-list and duration band. Outputs a prose creative brief (no JSON, no parsing).
+- **Writer** (Pass 1): same generator model (already resident) reads the brief, the formatting guide, safety rules, and duration band. Outputs a full script with tags (`[pause:Xs]`, `[breath]`, etc.), formatted and ready to parse.
+- **Judge** (Pass 2): independent judge model reviews the script, returns a revised version plus a changelog.
+- **Validate** → `linter.check()` (format + safety + originality + banned phrases per genre) + `duration.estimate_duration_sec()`.
+- **Repair loop** (if needed, up to 2 repairs): fatal violations go back to the judge with targeted instructions.
+- **Pick music** by genre tags: `background_picker.pick_background(prefer_tags=pack.music_tags)` filters the background pool, excluding recently used tracks.
+- **Render**: `MeditationPipeline.generate()` unchanged (F5 + uploaded background + full FX stack).
+- **Persist**: audio, script, metadata (including `actual_sec` duration for future calibration).
+- **Append corpus**: record the rendered script in `var/originality/` for the next run's avoid-list.
 
-1. **Prose rules (LLM-enforced).** `docs/prompting_guides/content_safety_rules.md`
-   plus the per-engine, per-content-type formatting guides
-   (`vocal_{content_type}_{engine}_instructions.md`) are assembled into the
-   generator's and judge's system prompts by `script_gen/rules.py`. These are
-   read at call time, not import time — see the Gotchas note below.
-2. **Linter (code-enforced).** `script_gen/linter.py` re-checks the same
-   rules deterministically: markup, tags, pause bounds, and the mental-health
-   hard-blocks. This never depends on the model having followed instructions
-   correctly.
-3. **Generator.** `script_gen/generator.py :: draft()` — one call, one draft.
-4. **Judge.** `script_gen/judge.py :: review()` / `repair()` — an
-   independent second model that revises the draft, and later repairs it
-   against named violations.
+The audio, the final script, and a metadata file are written as siblings on disk. No step requires the user to intervene until the finished file is ready.
 
-**Why the split exists.** Format and safety rules living only in the prompt
-would cost a token (and a chance of being ignored) on every single
-generation, and a model that ignores them has no backstop. Putting the same
-rules in `content_safety_rules.md` *and* in `linter.py` means the prompt does
-the persuading — cheaply, since it's plain text with no extra inference — and
-the linter does the enforcing, for free, without spending a single token.
-That deterministic backstop is what makes a weaker or cheaper model usable
-at all: a small local model that gets the format wrong occasionally is fine,
-because the linter catches it and the judge repairs it, instead of a bad
-script silently reaching the TTS engine.
+## Genre Packs
+
+A genre pack is a TOML file in `docs/genre_packs/<slug>.toml` that curates all the creative and deterministic material for one genre. Read it at call time (not import time), so edits take effect on the next generation with no restart. Full contract: [docs/genre_packs/README.md](../genre_packs/README.md).
+
+**Fields that do work downstream:**
+- `content_type` ("meditation" or "sleep_story") → routed to `content_profiles.py`
+- `music_tags` (exactly 2, one measured + one measured, or measured + declared) → passed to `background_picker.pick_background(prefer_tags=…)`
+- `pause_ratio` (0.0–0.6) → tells the planner how to split runtime between words and silence
+- `technique`, `arc`, `safety` → rendered into the planner's prompt to shape the brief
+- `angles` (exactly 3) → rotation pool; one per run, excluding the last N
+- `banned` (3–8 phrases, optional) → matched by substring in the linter; hard-fail if found
+
+The pack decides `content_type` and `music_tags` deterministically, so the planner's output stays plain prose (no structured schema, no parse failures).
+
+### Music Tagging — Two Tiers
+
+**Measured tags** (feature-extracted, regenerable): `dark` / `warm` / `bright`, `drone` / `evolving`, `sparse` / `busy`, `tonal` / `textured`, `struck` / `sustained`, `steady` / `dynamic`. Extracted from the 25%-in point of each background track using `librosa` spectral/temporal analysis (`core/background_tags.py`). Cached by `(filename, size, mtime)` so a newly dropped file is tagged once on first use (~2s), unchanged files are never re-analysed, and replacements are re-tagged automatically.
+
+**Declared tags** (human-written, never overwritten): `piano`, `flute`, `strings`, `nature`, `voice`, `bells`. Keyed by filename in `assets/backgrounds/tags.toml` and survive every re-analysis.
+
+**Matching** (conjunctive): a genre's two tags must both match the background for it to rank. If no background matches both, the full pool is used ("variety is a preference, not a reason to fail"). The manual tab's dropdown uses the unfiltered pool and stays fast.
+
+---
+
+## The Originality Layer
+
+Two-tier system: proactive (prevents bad stories from being written) + reactive (catches regeneration). No two meditations from the same genre are verbatim duplicates. Repeated storylines are defended by angle rotation and avoid-lists, not by a lexical ceiling (cosine similarity cannot distinguish a reworded storyline from a different story at scale).
+
+### Proactive
+
+1. **Angle rotation**: Each genre has 3 angles (distinct metaphorical frames). Each run picks one while excluding the last N (default 2) used for this genre. Two runs therefore use different imagery.
+2. **Avoid-list**: Extract from the 100 most recent same-genre scripts. Pull 1–3-grams (word sequences), weight them by TF-IDF *over the entire corpus* (so "notice your breath" gets near-zero weight, distinctive phrases keep full weight), render into the planner's prompt as "do not use".
+
+### Reactive
+
+`linter.check_originality()` measures:
+
+1. **Cosine similarity** (1–3-gram TF-IDF) against the same genre's 100 most recent scripts:
+   - **Cosine ≥ 0.80 = FATAL**: Near-verbatim regeneration (0.936 at "lightly edited repeat"). Repair loop.
+   - **Cosine 0.65–0.80 = ADVISORY**: Close enough to concern (feeds the next run's avoid-list). Renders anyway.
+   - **Cosine < 0.65**: No signal (genuine stories score 0.467, reworded storylines score 0.409 — the bands overlap).
+
+2. **Rare-n-gram overlap**: Longest shared run of 5-grams with document frequency ≤ 2 across the entire corpus. Catches a lifted passage inside an otherwise-different script.
+
+**What cosine cannot do** (calibrated 2026-09-18 against 158-word same-genre scripts): Distinguish a reworded storyline (cosine 0.409) from a genuinely different meditation (0.467). The ordering inverts — rewording destroys n-gram overlap; different stories share stock openings/closings. This is a lexical-vs-semantic limit, not a tuning problem. Answer: defend storyline repetition **proactively** (angle rotation + avoid-list), not reactively. Embedding similarity is deferred.
+
+### Corpus
+
+`var/originality/` (gitignored): On success, `add_to_corpus(script, genre, angle)` records:
+- `scripts/{script_id}.txt` — full rendered script (~6 KB each; 1,000 meditations is 6 MB)
+- `index.json` — metadata: genre, angle, timestamp, max-similarity (for threshold calibration)
+
+Cold start: With < ~10 scripts, IDF is meaningless; cosine check disabled, only rare-n-gram overlap runs.
+
+---
+
+## The Five Validation Layers
+
+The subsystem is built as five layers, each catching a different class of problem:
+
+0. **Genre pack validation** (`genres.load_pack`): Required fields present, `content_type` is valid, `music_tags` are in the known vocabulary, `angles` count and distinctness, exact 2–3 tags. Malformed pack raises at call time.
+1. **Prose rules (LLM-enforced).** `docs/prompting_guides/content_safety_rules.md` plus the per-engine, per-content-type formatting guides (`vocal_{content_type}_{engine}_instructions.md`) are assembled into the planner's and writer's and judge's system prompts by `script_gen/rules.py`. These are read at call time, not import time — see the Gotchas note below.
+2. **Linter (code-enforced).** `script_gen/linter.py` re-checks the same rules deterministically: markup, tags, pause bounds, mental-health hard-blocks, originality scoring, banned phrases. This never depends on the model having followed instructions correctly.
+3. **Generator + Planner.** `script_gen/planner.py :: draft()` (pass 0: brief only), then `script_gen/generator.py :: draft()` (pass 1: full script).
+4. **Judge.** `script_gen/judge.py :: review()` / `repair()` — an independent second model that revises the draft, and later repairs it against named violations.
+
+**Why the split exists.** Format and safety rules living only in the prompt would cost a token (and a chance of being ignored) on every generation, and a model that ignores them has no backstop. Putting the same rules in `content_safety_rules.md` *and* in `linter.py` means the prompt does the persuading — cheaply, since it's plain text with no extra inference — and the linter does the enforcing, for free, without spending a single token. That deterministic backstop is what makes a weaker or cheaper model usable at all: a small local model that gets the format wrong occasionally is fine, because the linter catches it and the judge repairs it, instead of a bad script silently reaching the TTS engine. Genre packs add a fourth layer before any inference: if the pack is malformed, the job fails before the LLM budget is spent.
 
 ## Configuration
 
-All of these are read from the environment. `AutoConfig.from_env()`
-(`core/auto_generate.py`) reads the numeric ones; `run()` reads the model
-specs directly.
+All of these are read from the environment. `AutoConfig.from_env()` (`core/auto_generate.py`) reads the numeric ones; `run()` reads the model specs directly.
 
 | Env var | Default | Read by |
 |---|---|---|
-| `MOODSCAPE_SCRIPT_GENERATOR` | `ollama:llama3.2:3b` | `auto_generate.py :: run()` |
-| `MOODSCAPE_SCRIPT_JUDGE` | `ollama:llama3.2:3b` | `auto_generate.py :: run()` |
+| `MOODSCAPE_SCRIPT_PLANNER` | `ollama:qwen3.8:27b` | `auto_generate.py :: run()` |
+| `MOODSCAPE_SCRIPT_GENERATOR` | `ollama:qwen3.8:27b` | `auto_generate.py :: run()` (same model as planner) |
+| `MOODSCAPE_SCRIPT_JUDGE` | `ollama:gemma4:31b` | `auto_generate.py :: run()` |
+| `MOODSCAPE_ORIGINALITY` | `1` | `linter.check_originality()` kill-switch |
+| `MOODSCAPE_ORIGINALITY_FATAL` | `0.80` | `linter.check_originality()` cosine threshold (≥ = FATAL violation) |
+| `MOODSCAPE_ORIGINALITY_ADVISORY` | `0.65` | `linter.check_originality()` cosine threshold (≥ = ADVISORY, feeds next avoid-list) |
+| `MOODSCAPE_GENRE_PACKS_DIR` | `docs/genre_packs` | `genres.load_pack()` directory |
 | `MOODSCAPE_SCRIPT_MAX_REPAIRS` | `2` | `AutoConfig.from_env()` |
 | `MOODSCAPE_SCRIPT_MAX_RETRIES` | `3` (total attempts) | Both `script_gen/adapters/openai_compat.py` and `script_gen/adapters/anthropic_api.py` — see "Retrying a flaky provider" below |
-| `MOODSCAPE_TARGET_MIN_SEC` | `300.0` (5 min) | `AutoConfig.from_env()` |
-| `MOODSCAPE_TARGET_MAX_SEC` | `420.0` (7 min) | `AutoConfig.from_env()` |
+| `MOODSCAPE_TARGET_MIN_SEC` (for a given band) | `180` / `360` / `600` | `AutoConfig.from_env()` duration band → seconds mapping |
+| `MOODSCAPE_TARGET_MAX_SEC` (for a given band) | `360` / `600` / `900` | `AutoConfig.from_env()` duration band → seconds mapping |
 
-A malformed numeric value (e.g. `MOODSCAPE_SCRIPT_MAX_REPAIRS=abc`) raises
-`ScriptGenerationError` naming the variable, rather than silently falling
-back to the default.
+A malformed numeric value (e.g. `MOODSCAPE_SCRIPT_MAX_REPAIRS=abc`) raises `ScriptGenerationError` naming the variable, rather than silently falling back to the default.
 
-### What the default engine actually produces
+### Default models and why they matter
 
-The defaults (`ollama:llama3.2:3b` for **both** generator and judge) exist so
-the tab runs with no API key and no configuration. They are a starting point,
-not a recommendation. Measured on 2026-09-17, prompt *"I am feeling anxious.
-I need a relaxing meditation."*, n=3:
+The genre path ships with better defaults than the old prompt path, and they **must be pulled** on first run (unlike the prompt path, which fell back to `llama3.2:3b` that was already in Ollama's default model list). A **preflight check** runs before the planner, querying Ollama's `/api/tags` and failing immediately with an actionable message (`ollama pull qwen3.8:27b`) if a model is missing. Failing in 2 seconds beats failing 5 minutes into generation.
 
-| | Result |
-|---|---|
-| Completed the script stage | 2 of 3 (the third failed on `MARKDOWN_PRESENT`) |
-| Script length | 174 and 247 words |
-| Estimated runtime | 165 s and 208 s — **under** the 300–420 s target |
-| Advisory on every run | `DURATION_OUT_OF_WINDOW` |
-| Wall clock | 46–61 s per attempt |
+| Model | Size | Rationale | Source |
+|---|---|---|---|
+| Planner + Writer: `ollama:qwen3.8:27b` | 18 GB | EQ-Bench Creative Writing v3: slop **1.7** (best-in-class), rubric **77.50**, Elo **1668.4**. Judgemark **67.44**. Apache-2.0 license, 256K context. One load, reused for both stages. | Read 2026-09-17 |
+| Judge: `ollama:gemma4:31b` | 19 GB | Judgemark **72.31** — 13th overall, above gpt-5.4 and claude-sonnet-5. Best local judge by 5 points. Google Gemma Terms of Use (mutable, unlike Apache-2.0; see section 13.1 of the design spec). | Read 2026-09-17 |
 
-Two consequences worth knowing before a first end-to-end run:
+**Two-model independence is load-bearing:** If both planner and judge point to the same model, the judge is grading its own homework. Defaults ensure the property the design is built on. You can swap either one independently via its env var (e.g. `MOODSCAPE_SCRIPT_JUDGE=ollama:qwen3.8:27b` gives an all-Apache-2.0 stack at Judgemark 67.44, or `MOODSCAPE_SCRIPT_GENERATOR=groq:mixtral-8x7b` cuts LLM time to ~15 seconds and frees 18 GB).
 
-1. **A 3B model writes short.** `DURATION_OUT_OF_WINDOW` is advisory, so the
-   job renders anyway — you get a ~3-minute meditation, not the 5–7 minutes
-   the target window asks for. Raising the target does not help; the model
-   has to be told to write more, or replaced.
-2. **The judge is not independent by default.** Both specs point at the same
-   model, so pass 2 is the same weights reviewing their own output. The
-   two-pass design assumes an *independent* reviewer. Point
-   `MOODSCAPE_SCRIPT_JUDGE` at a different model — another local one, or a
-   hosted provider — to get the property the design is built on.
-
-Both are configuration choices, not code defects; the defaults are tuned for
-"runs out of the box", not for output quality.
+**Originality thresholds** (0.80 fatal, 0.65 advisory) are provisional and calibrated on 158-word same-genre scripts. Every run logs the max-similarity score; after a batch of renders, recalibrate if measured values consistently drift from 1.0. The advisory band closes the loop: a near-miss today (0.65–0.80) becomes tomorrow's proactive constraint (avoided in the next run's brief).
 
 Provider API keys, from `script_gen/engine.py :: PROVIDER_KEY_ENV`:
 
@@ -243,7 +271,11 @@ codes except the two advisory ones below are **FATAL**.
 | `INVALIDATING` | FATAL | Safety | Instructions like "don't feel anxious" or "there's nothing wrong with you" that dismiss the listener's actual state. |
 | `DISSOCIATION` | FATAL | Safety | Dissociation-adjacent imagery ("leave your body", "float away from yourself") — contraindicated for trauma survivors. |
 | `BREATH_HOLD` | FATAL | Safety | An instructed breath hold longer than 7 seconds — a real risk for listeners with panic disorder or asthma. |
-| `DURATION_OUT_OF_WINDOW` | ADVISORY | Duration | The estimated runtime falls outside `target_min_sec`–`target_max_sec`. Only emitted when an estimate is supplied. |
+| `ORIGINALITY_COSINE_HIGH` | FATAL | Originality | Cosine similarity to same-genre corpus ≥ `MOODSCAPE_ORIGINALITY_FATAL` (default 0.80) — near-verbatim regeneration. |
+| `ORIGINALITY_RARE_NGRAM` | FATAL | Originality | A lifted 5-gram passage (document frequency ≤ 2 across entire corpus) found in the script. |
+| `ORIGINALITY_COSINE_MID` | ADVISORY | Originality | Cosine similarity to same-genre corpus ≥ `MOODSCAPE_ORIGINALITY_ADVISORY` (default 0.65, < fatal threshold) — close enough to concern, seeded into next run's avoid-list. |
+| `BANNED_PHRASE` | FATAL | Originality | A genre's `banned` list contains this substring (case-insensitive match). |
+| `DURATION_OUT_OF_WINDOW` | ADVISORY | Duration | The estimated runtime falls outside the selected duration band's range. |
 
 The safety patterns are matched case-insensitively against tag-stripped
 prose, with typographic apostrophes (U+2019, U+2018, U+02BC, U+00B4, U+0060)
@@ -357,21 +389,31 @@ that manual step.
 
 | Responsibility | File |
 |---|---|
+| Genre pack loader, validator, angle rotation | `core/genres.py` |
+| Corpus management, TF-IDF scoring, avoid-list extraction | `core/originality.py` |
+| Lazy background music tagging (measured + declared) | `core/background_tags.py` |
+| Planner: genre pack + angle → prose brief (pass 0) | `core/script_gen/planner.py` |
 | Provider registry + `ScriptEngine` ABC | `core/script_gen/engine.py` |
 | Prompt assembly from the on-disk guides | `core/script_gen/rules.py` |
 | Draft generation (pass 1) | `core/script_gen/generator.py` |
 | Review and repair (pass 2) | `core/script_gen/judge.py` |
-| Format + safety linting | `core/script_gen/linter.py` |
+| Format + safety + originality + banned-phrase linting | `core/script_gen/linter.py` |
 | Duration estimation | `core/script_gen/duration.py` |
 | OpenAI-compatible adapter (ollama, openrouter, together, fireworks, groq) | `core/script_gen/adapters/openai_compat.py` |
 | Anthropic adapter | `core/script_gen/adapters/anthropic_api.py` |
-| Orchestrator | `core/auto_generate.py` |
-| Random background selection | `core/background_picker.py` |
+| Orchestrator: genre + band → finished audio | `core/auto_generate.py` |
+| Tag-filtered background selection | `core/background_picker.py` |
 | Model-pairing benchmark harness | `core/bench.py`, `scripts/bench_script_models.py` |
+| Background tagger (bulk or forced re-tag) | `scripts/tag_backgrounds.py` |
+| Genre evaluation harness (matrix of genres × model configs) | `scripts/eval_genres.py` |
 | Threaded progress streaming for the UI | `core/streaming_run.py` |
-| Gradio "Auto-Generate" tab | `core/auto_tab.py` |
+| Gradio "Auto-Generate" tab (genre dropdown, band radio, steer accordion) | `core/auto_tab.py` |
+| 46 genre packs (TOML) | `docs/genre_packs/*.toml` |
+| Genre pack field contract, tag vocabulary, prose guidelines | `docs/genre_packs/README.md` |
 | Safety rules text | `docs/prompting_guides/content_safety_rules.md` |
 | Per-engine, per-content-type formatting guides | `docs/prompting_guides/vocal_{content_type}_{engine}_instructions.md` |
+| Planner system prompt builder | `core/script_gen/rules.py :: build_planner_system_prompt()` |
+| Originality corpus (machine-local, gitignored) | `var/originality/` |
 
 For app.py wiring details, see [app_wiring.md](app_wiring.md). For the full
 pipeline this subsystem renders through unmodified, see
