@@ -634,6 +634,85 @@ class GenrePathTest(unittest.TestCase):
         )
         self.assertEqual(shared.unload_calls, 1)
 
+    def test_default_construction_shares_one_engine_for_matching_specs(self):
+        """run()'s own (non-injected) construction path must reuse one
+        engine for planner + writer when their specs match -- the default
+        config's whole reason to exist. build_engine() does no caching, so
+        building both separately would hand generate_script() two distinct
+        objects even for identical specs, silently defeating the `is not`
+        unload check (always true) and paying a full model reload between
+        planning and writing on every real run."""
+        from core.auto_generate import DEFAULT_GENERATOR, DEFAULT_PLANNER
+        from core.genres import load_pack
+
+        self.assertEqual(DEFAULT_PLANNER, DEFAULT_GENERATOR)  # the case under test
+
+        built: dict[str, list] = {}
+
+        def fake_build_engine(spec):
+            engine = FakeScriptEngine(["A generated brief.", CLEAN_SCRIPT])
+            built.setdefault(spec, []).append(engine)
+            return engine
+
+        config = AutoConfig.from_genre(
+            load_pack("grief_and_loss"),
+            corpus_dir=self.dir / "corpus",
+            background_scan=lambda: [("Bed — 10:00", "/bg/a.mp3")],
+        )
+        with patch("core.auto_generate.build_engine", fake_build_engine):
+            result = run(
+                "",
+                genre="grief_and_loss",
+                config=config,
+                pipeline=StubPipeline(self.dir),
+                judge_engine=FakeScriptEngine([judged(CLEAN_SCRIPT)]),
+            )
+
+        self.assertTrue(result.audio_path)
+        # Exactly one engine built for the shared spec -- not one per role.
+        self.assertEqual(len(built[DEFAULT_GENERATOR]), 1)
+        shared_engine = built[DEFAULT_GENERATOR][0]
+        # One unload after writing; none between planning and writing.
+        self.assertEqual(shared_engine.unload_calls, 1)
+
+    def test_default_construction_builds_two_engines_for_differing_specs(self):
+        """When the planner and generator specs differ, run() must build two
+        distinct engines and unload the planner separately -- the other half
+        of the branch the shared-spec test above does not exercise."""
+        from core.auto_generate import DEFAULT_GENERATOR
+        from core.genres import load_pack
+
+        other_spec = "ollama:some-other-model:7b"
+        built: dict[str, list] = {}
+
+        def fake_build_engine(spec):
+            engine = FakeScriptEngine(["A generated brief.", CLEAN_SCRIPT])
+            built.setdefault(spec, []).append(engine)
+            return engine
+
+        config = AutoConfig.from_genre(
+            load_pack("grief_and_loss"),
+            corpus_dir=self.dir / "corpus",
+            background_scan=lambda: [("Bed — 10:00", "/bg/a.mp3")],
+        )
+        with patch.dict(os.environ, {"MOODSCAPE_SCRIPT_PLANNER": other_spec}):
+            with patch("core.auto_generate.build_engine", fake_build_engine):
+                result = run(
+                    "",
+                    genre="grief_and_loss",
+                    config=config,
+                    pipeline=StubPipeline(self.dir),
+                    judge_engine=FakeScriptEngine([judged(CLEAN_SCRIPT)]),
+                )
+
+        self.assertTrue(result.audio_path)
+        self.assertEqual(len(built[other_spec]), 1)
+        self.assertEqual(len(built[DEFAULT_GENERATOR]), 1)
+        planner_engine = built[other_spec][0]
+        generator_engine = built[DEFAULT_GENERATOR][0]
+        self.assertIsNot(planner_engine, generator_engine)
+        self.assertEqual(planner_engine.unload_calls, 1)
+
     def test_the_brief_and_genre_land_in_the_metadata(self):
         result, _config = self._run()
         meta = json.loads(Path(result.meta_path).read_text())

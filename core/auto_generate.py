@@ -498,15 +498,28 @@ def run(
             rng=rng,
         )
         config.angle = angle.name
-        if planner_engine is None:
-            planner_engine = build_engine(
-                os.environ.get("MOODSCAPE_SCRIPT_PLANNER", DEFAULT_PLANNER)
-            )
 
     if generator_engine is None:
         generator_engine = build_engine(
             os.environ.get("MOODSCAPE_SCRIPT_GENERATOR", DEFAULT_GENERATOR)
         )
+
+    # Reuse the generator's engine for the planner when both specs name the
+    # same model -- the default config does, and build_engine() does no
+    # caching of its own, so two separate calls would hand generate_script()
+    # two distinct objects even though they load identical weights. That
+    # would make the `planner_engine is not generator_engine` unload check
+    # always true, defeating the whole point: the planner would be unloaded
+    # only to have the writer immediately reload the same 18 GB model.
+    if genre and planner_engine is None:
+        planner_spec = os.environ.get("MOODSCAPE_SCRIPT_PLANNER", DEFAULT_PLANNER)
+        generator_spec = os.environ.get("MOODSCAPE_SCRIPT_GENERATOR", DEFAULT_GENERATOR)
+        planner_engine = (
+            generator_engine
+            if planner_spec == generator_spec
+            else build_engine(planner_spec)
+        )
+
     if judge_engine is None:
         judge_engine = build_engine(
             os.environ.get("MOODSCAPE_SCRIPT_JUDGE", DEFAULT_JUDGE)
