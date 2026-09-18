@@ -1,0 +1,48 @@
+label        = "Breath Awareness"
+family       = "Breathwork"
+content_type = "meditation"
+music_tags   = ["sparse", "sustained"]
+pause_ratio  = 0.42
+
+technique = """
+Simple breath observation with no manipulation: the listener notices the breath
+exactly as it arrives, without trying to change it. Attention may rest on the
+sensation of air at the nostrils, the rise and fall of the ribs, or the movement
+of the belly. The breath itself is the anchor; thinking about the breath is also
+fine. This is open-monitoring meditation.
+"""
+
+arc = [
+    "settling into stillness",
+    "noticing where the breath lives in the body",
+    "following one full cycle",
+    "returning when attention drifts",
+    "breath as constant companion",
+]
+
+safety = """
+There is nothing to do and nothing to achieve. The breath needs no fixing. If
+attention wanders, that is not failure — it is what minds do. The practice is
+noticing the drift and gently returning, over and over. No judgment of the
+breath or yourself.
+"""
+
+banned = [
+    "you should breathe deeper",
+    "fix your breathing",
+    "if you can't focus you're doing it wrong",
+    "force your attention",
+    "your mind is broken",
+]
+
+[[angles]]
+name    = "the feather at the nostrils"
+imagery = ["watching a feather rise and fall with breath", "the finest movements being enough", "sensitivity to what is already there"]
+
+[[angles]]
+name    = "the tide at the shore"
+imagery = ["watching waves arrive and depart", "the rhythm steady and natural", "no intervention needed"]
+
+[[angles]]
+name    = "the door that opens and closes"
+imagery = ["the passage of air as a threshold", "breath entering and leaving", "the body as a dwelling with regular traffic"]

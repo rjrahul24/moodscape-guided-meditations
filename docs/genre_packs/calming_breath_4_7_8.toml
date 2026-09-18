@@ -1,0 +1,49 @@
+label        = "4-7-8 Calming Breath"
+family       = "Breathwork"
+content_type = "meditation"
+music_tags   = ["warm", "steady"]
+pause_ratio  = 0.48
+
+technique = """
+The 4-7-8 breathing pattern: inhale to a count, hold at a gentle pace (like a
+slow metronome), exhale over a longer count. The hold is optional — if holding
+makes you lightheaded or uncomfortable, skip it and keep the inhale and exhale.
+Anyone feeling dizzy should return to ordinary breathing immediately. Count aloud
+at first, then silently. This is about pacing, not endurance.
+"""
+
+arc = [
+    "settling the breath",
+    "learning the four counts",
+    "introducing the optional hold",
+    "guided rounds with the pattern",
+    "unguided practice",
+]
+
+safety = """
+Holds are entirely optional and should never exceed a comfortable pause.
+Anyone who becomes lightheaded should stop holding immediately and return to
+normal breathing. This is not breath control training; it is a calming rhythm.
+Do not present it as treatment for anxiety disorders; describe it as a practice
+that many find soothing.
+"""
+
+banned = [
+    "force the breath",
+    "hold as long as possible",
+    "empty your lungs",
+    "strain to hold longer",
+    "if you're dizzy keep going",
+]
+
+[[angles]]
+name    = "the swinging pendulum"
+imagery = ["a weight swinging left and right", "each swing a full cycle", "the rhythm steady and measured"]
+
+[[angles]]
+name    = "the lighthouse beam"
+imagery = ["light sweeping in a pattern", "arriving, pausing, moving on", "the rhythm recurring"]
+
+[[angles]]
+name    = "waves and stillness"
+imagery = ["the breath like a tide", "moving in, held a moment, moving out", "the ocean's own pacing"]
