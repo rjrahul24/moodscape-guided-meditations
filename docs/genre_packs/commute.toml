@@ -1,0 +1,47 @@
+label        = "Commute"
+family       = "Morning & Energy"
+content_type = "meditation"
+music_tags   = ["steady", "evolving"]
+pause_ratio  = 0.24
+
+technique = """
+Mobile body-anchoring: the listener in transit (bus, train, car, walking) rests
+attention on the steady rhythm of travel — motion, sounds, sensations — while
+remaining alert to their environment. Eyes are open. Awareness is integrated,
+not withdrawn. This turns commute time into presence rather than dead time.
+"""
+
+arc = [
+    "arriving where you are",
+    "the body in motion",
+    "the rhythm of travel itself",
+    "sounds and sensations of transit",
+    "arriving with presence",
+]
+
+safety = """
+The listener is moving through public space and traffic. Never ask them to close
+their eyes or narrow attention away from their surroundings. Safety awareness
+is essential. This is meditation in the real world — alert, present, aware.
+Attention can settle inward while remaining attuned to the environment.
+"""
+
+banned = [
+    "close your eyes",
+    "escape into yourself",
+    "forget your surroundings",
+    "tune everything out",
+    "visualize being somewhere else",
+]
+
+[[angles]]
+name    = "the river of travelers"
+imagery = ["you as one among many in motion", "a current of people and vehicles", "everyone moving toward their own shore"]
+
+[[angles]]
+name    = "the train's own rhythm"
+imagery = ["steel wheels on track", "the regular beat of movement", "a predictable pulse carrying you"]
+
+[[angles]]
+name    = "the everyday pilgrimage"
+imagery = ["a sacred route traveled daily", "the same path each day new", "arrival and departure held together"]

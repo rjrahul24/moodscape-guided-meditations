@@ -1,0 +1,48 @@
+label        = "Intention Setting"
+family       = "Morning & Energy"
+content_type = "meditation"
+music_tags   = ["warm", "steady"]
+pause_ratio  = 0.30
+
+technique = """
+Sankalpa (intention) practice: the listener settles into stillness, then
+articulates or discovers a single quality they wish to embody — a direction
+rather than a goal. This may be a word ("ease"), a phrase ("I meet this day with
+openness"), or a felt sense. The intention is not positive-thinking reinforcement;
+it is direction-setting from a grounded place.
+"""
+
+arc = [
+    "arriving in quietness",
+    "the body's wisdom speaking",
+    "sensing into what wants to arise",
+    "naming or feeling the intention",
+    "carrying it forward",
+]
+
+safety = """
+Intention is not the same as willpower or performance targets. Some people
+benefit from this practice; others find it stressful. Offer it; let listeners
+choose. An intention that emerges naturally is stronger than one imposed. Do
+not frame it as required or as proof of commitment.
+"""
+
+banned = [
+    "you must set an intention",
+    "fake it till you make it",
+    "manifest abundance",
+    "positive thinking only",
+    "ignore your doubts",
+]
+
+[[angles]]
+name    = "the compass rose"
+imagery = ["finding your direction", "a point that calls to you", "north as what matters to you"]
+
+[[angles]]
+name    = "the seed"
+imagery = ["something small that holds potential", "what grows when conditions are right", "inherent direction"]
+
+[[angles]]
+name    = "the star"
+imagery = ["a steady point in the darkness", "something fixed to orient by", "guidance that does not require effort to see"]
