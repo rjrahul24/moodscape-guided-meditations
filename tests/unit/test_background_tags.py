@@ -139,5 +139,93 @@ class TagsFromFeaturesTest(unittest.TestCase):
         self.assertEqual(MEASURED_VOCAB & DECLARED_VOCAB, frozenset())
 
 
+from core.background_tags import load_tags, tags_for, write_tags
+
+
+class FakeExtractor:
+    """Stands in for extract_features; counts how often each path is analysed."""
+
+    def __init__(self, features: dict):
+        self._features = features
+        self.calls: list[str] = []
+
+    def __call__(self, path: str) -> dict:
+        self.calls.append(path)
+        return dict(self._features)
+
+
+class TagCacheTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.tags_path = self.root / "tags.toml"
+        self.track = self.root / "track.mp3"
+        self.track.write_bytes(b"not really audio")
+        self.extractor = FakeExtractor(_features(centroid=300.0, flux=0.3))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_missing_file_loads_as_empty(self):
+        self.assertEqual(load_tags(self.tags_path), {})
+
+    def test_first_use_analyses_and_caches(self):
+        result = tags_for(
+            [str(self.track)], tags_path=self.tags_path, extractor=self.extractor
+        )
+        self.assertEqual(len(self.extractor.calls), 1)
+        self.assertIn("dark", result[str(self.track)])
+        self.assertTrue(self.tags_path.is_file())
+
+    def test_second_use_reads_the_cache(self):
+        for _ in range(2):
+            tags_for(
+                [str(self.track)], tags_path=self.tags_path, extractor=self.extractor
+            )
+        self.assertEqual(len(self.extractor.calls), 1)
+
+    def test_changed_file_is_reanalysed(self):
+        tags_for([str(self.track)], tags_path=self.tags_path, extractor=self.extractor)
+        self.track.write_bytes(b"different content entirely")
+        tags_for([str(self.track)], tags_path=self.tags_path, extractor=self.extractor)
+        self.assertEqual(len(self.extractor.calls), 2)
+
+    def test_declared_tags_survive_reanalysis(self):
+        tags_for([str(self.track)], tags_path=self.tags_path, extractor=self.extractor)
+        entries = load_tags(self.tags_path)
+        entries["track.mp3"]["declared"] = ["piano"]
+        write_tags(entries, self.tags_path)
+
+        self.track.write_bytes(b"changed so it re-analyses")
+        result = tags_for(
+            [str(self.track)], tags_path=self.tags_path, extractor=self.extractor
+        )
+
+        self.assertIn("piano", result[str(self.track)])
+        self.assertIn("piano", load_tags(self.tags_path)["track.mp3"]["declared"])
+
+    def test_extraction_failure_yields_no_tags_and_does_not_raise(self):
+        """One unreadable file must not break tagging for the rest."""
+
+        def boom(path: str) -> dict:
+            raise RuntimeError("corrupt file")
+
+        result = tags_for(
+            [str(self.track)], tags_path=self.tags_path, extractor=boom
+        )
+        self.assertEqual(result[str(self.track)], [])
+
+    def test_roundtrip_through_toml(self):
+        write_tags(
+            {"a.mp3": {"measured": ["dark", "drone"], "declared": ["piano"],
+                       "size": 12, "mtime": 34.5}},
+            self.tags_path,
+        )
+        entries = load_tags(self.tags_path)
+        self.assertEqual(entries["a.mp3"]["measured"], ["dark", "drone"])
+        self.assertEqual(entries["a.mp3"]["declared"], ["piano"])
+        self.assertEqual(entries["a.mp3"]["size"], 12)
+
+
 if __name__ == "__main__":
     unittest.main()
