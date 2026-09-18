@@ -4,6 +4,68 @@ Full technical reference. For quick navigation use `CLAUDE.md` tables first; com
 
 ---
 
+## Script Generation Stages (`core/auto_generate.py` entry point)
+
+The genre path uses **three LLM stages** to ensure independence between generation and review, and to separate content creation from safety verification.
+
+### Stage 0 — Planner (`script_gen/planner.py`, model: `MOODSCAPE_SCRIPT_PLANNER`)
+
+**Input:** Genre pack (technique, arc, 3 imagery angles, safety rules, music tags, pause ratio), selected angle, avoid-list (distinctive terms from the 100 most recent same-genre scripts), duration band (3–6 min, 6–10 min, 10–15 min).
+
+**Output:** Prose creative brief (100–150 words), plain text — no JSON, no parsing.
+
+**Purpose:** Shape the writer's direction with genre-specific material before a word of the script is written. The brief tells the writer how the technique should unfold, what imagery to lean on, what the arc looks like, how much breathing room to leave, and what themes to avoid.
+
+### Stage 1 — Writer (`script_gen/generator.py`, model: `MOODSCAPE_SCRIPT_GENERATOR`)
+
+**Input:** Creative brief (from planner), formatting guide (from `docs/prompting_guides/`), safety rules, duration band.
+
+**Output:** Full meditation script, formatted with tags (`[pause:Xs]`, `[breath]`, `[voice:phase]`), ready to parse.
+
+**Constraint:** Same model as the planner — they are loaded once, reused. Switching the planner to a different model (`MOODSCAPE_SCRIPT_PLANNER` env var) changes only the brief writer; both still use the same generation model until `MOODSCAPE_SCRIPT_GENERATOR` is changed.
+
+### Stage 2 — Judge (`script_gen/judge.py`, model: `MOODSCAPE_SCRIPT_JUDGE`)
+
+**Input:** Generated script, formatting guide, safety rules, linter violations (if in repair loop).
+
+**Output:** Revised script, changelog (prose list of changes), reformatted.
+
+**Independence:** Must be a **different model family** than the writer — if both point to the same weights, the judge is grading its own homework. Defaults: planner+writer `ollama:qwen3.8:27b` (18 GB, ~14 tok/s), judge `ollama:gemma4:31b` (19 GB, Judgemark 72.31 — best local judge by 5 points).
+
+### Repair Loop
+
+Fatal linter violations (malformed tags, safety hard-blocks, originality near-duplicates) go back to the judge with a targeted repair prompt showing what failed. The loop is bounded by `MOODSCAPE_SCRIPT_MAX_REPAIRS` (default 2). Advisory violations (duration drift, style issues) do not block render but are logged and seeded into the next run's avoid-list.
+
+---
+
+## Originality Layer
+
+Two-tier proactive (prevents bad stories from being written) + reactive (flags regeneration) guarantee that no two meditations from the same genre are verbatim duplicates, and that storyline repetition is defended by angle rotation and avoid-lists rather than by a lexical ceiling.
+
+### Proactive
+
+1. **Angle rotation** (`genres.pick_angle`, `originality.recent_angles`): Three distinct angles per genre (e.g., "the empty chair", "tidal", "carrying" for Grief & Loss). Each run picks one while excluding the last N (default 2) used for this genre. Ensures two runs use different sensory frames.
+2. **Avoid-list** (`originality.avoid_terms`): Extract distinctive 1–3-grams from the 100 most recent same-genre scripts (TF-IDF weighting, over the entire corpus so generic "notice your breath" terms get zero weight). Render this list into the planner's prompt as an explicit "do not use" block.
+
+### Reactive
+
+`linter.check_originality()` measures two signals:
+
+1. **Cosine similarity** over 1–3-grams against the same genre's 100 most recent scripts. Calibrated against 158-word scripts: cosine 0.80+ flags near-verbatim rewording (0.936 at "lightly edited repeat"); cosine 0.65–0.80 is advisory (feeds the avoid-list for the next run). Below 0.65, no signal (genuine stories can score 0.467).
+2. **Rare-n-gram overlap**: Longest shared run of 5-grams whose document frequency is ≤ 2 across the entire corpus. Catches a lifted passage inside an otherwise-different script.
+
+**What cosine can and cannot do** (calibrated 2026-09-18): Separates near-verbatim (0.94–1.00) from everything else (≤ 0.47) with a wide gap. Cannot distinguish a reworded storyline (0.409) from a different story (0.467) — the ordering inverts. Storyline repetition is prevented **proactively** (angle rotation + avoid-list), not reactively (cosine check). Embedding similarity is deferred for future work.
+
+### Corpus
+
+`var/originality/` (gitignored): Machine-local state, survives output files being moved or deleted. On success, `add_to_corpus(script, genre, angle)` records:
+- `scripts/{script_id}.txt` — the full rendered script
+- `index.json` — metadata: genre, angle, timestamp, max-similarity (for calibration)
+
+Cold start: With fewer than ~10 scripts, IDF is meaningless; cosine check is disabled, only rare-n-gram overlap runs.
+
+---
+
 ## Pipeline Phase Breakdown
 
 ### Phase 1 — Script Parsing
