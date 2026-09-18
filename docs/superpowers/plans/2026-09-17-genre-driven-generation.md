@@ -1845,7 +1845,7 @@ class CheckOriginalityTest(unittest.TestCase):
         return OriginalityReport(**base)
 
     def test_an_original_script_produces_no_violations(self):
-        from core.script_gen.linter import check_banned_phrases, check_originality
+        from core.script_gen.linter import check_originality
 
         self.assertEqual(check_originality(self._report(max_cosine=0.2)), [])
 
@@ -1874,7 +1874,7 @@ class CheckOriginalityTest(unittest.TestCase):
         self.assertIn("narrow copper staircase", violations[0].message)
 
     def test_a_short_shared_run_is_ignored(self):
-        from core.script_gen.linter import check_banned_phrases, check_originality
+        from core.script_gen.linter import check_originality
 
         self.assertEqual(
             check_originality(self._report(shared_span=8, shared_text="and let it go")),
@@ -1883,7 +1883,7 @@ class CheckOriginalityTest(unittest.TestCase):
 
     def test_a_small_corpus_uses_a_higher_run_threshold(self):
         """With few documents the df filter cannot tell rare from stock."""
-        from core.script_gen.linter import check_banned_phrases, check_originality
+        from core.script_gen.linter import check_originality
 
         small = self._report(
             corpus_size=3, cosine_available=False, shared_span=14,
@@ -1895,7 +1895,7 @@ class CheckOriginalityTest(unittest.TestCase):
         self.assertEqual([v.code for v in check_originality(large)], ["PASSAGE_LIFTED"])
 
     def test_cosine_is_ignored_when_unavailable(self):
-        from core.script_gen.linter import check_banned_phrases, check_originality
+        from core.script_gen.linter import check_originality
 
         report = self._report(max_cosine=0.99, cosine_available=False, corpus_size=2)
         self.assertEqual(check_originality(report), [])
@@ -2319,7 +2319,7 @@ In `core/auto_generate.py`:
 
 ```python
 from core.originality import add_to_corpus, assess, load_corpus
-from core.script_gen.linter import check_banned_phrases, check_originality
+from core.script_gen.linter import check_originality
 ```
 
 2. Add these fields to `AutoConfig` (after `content_type`):
@@ -3491,7 +3491,7 @@ class PlanTest(unittest.TestCase):
         engine, _brief = self._plan(steer="for a night shift worker")
         self.assertIn("night shift worker", engine.calls[0]["user"])
 
-    def test_the_pause_budget_is_expressed_in_seconds(self):
+    def test_the_pause_budget_is_expressed_as_a_percentage(self):
         engine, _brief = self._plan()
         user = engine.calls[0]["user"]
         # 34% of the 360-600s window is roughly 122-204 seconds of silence.
@@ -3873,9 +3873,11 @@ DURATION_BANDS: dict[str, tuple[float, float]] = {
 }
 ```
 
-2. Add imports:
+2. Add imports, and extend the linter import Task 9 added — `check_banned_phrases`
+   is called for the first time in this task:
 
 ```python
+from core.script_gen.linter import check_banned_phrases, check_originality
 from core.genres import load_pack, pick_angle
 from core.originality import avoid_terms, recent_angles
 from core.script_gen.planner import plan
