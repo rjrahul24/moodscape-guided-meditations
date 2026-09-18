@@ -1,0 +1,51 @@
+label        = "Loving-Kindness"
+family       = "Presence"
+content_type = "meditation"
+music_tags   = ["warm", "sustained"]
+pause_ratio  = 0.33
+
+technique = """
+Metta or loving-kindness practice (traditional): directing phrases of well-being
+toward yourself, then progressively widening to benefactors, neutral persons,
+difficult persons, and all beings. Starting with yourself can feel uncomfortable
+or even resistive — that is normal and valid. You can begin elsewhere if that
+serves you better.
+"""
+
+arc = [
+    "gathering phrases of kindness",
+    "beginning with someone or someplace easy",
+    "allowing the phrases to find their rhythm",
+    "gently widening the circle",
+    "resting in the warmth of goodwill",
+]
+
+safety = """
+Loving-kindness toward yourself is not self-indulgence; it is a foundation for
+extending genuine warmth to others. If turning loving-kindness toward the self
+feels forced, it is fine to start with a benefactor or even an animal. Difficult
+people are optional, and if the practice becomes strain, ease off. Metta is an
+invitation to softness, not a performance — meet yourself where you are.
+"""
+
+banned = [
+    "force yourself to feel",
+    "you must include everyone",
+    "loving-kindness should feel good",
+    "make peace with your enemy",
+    "love everyone equally",
+    "toxic positivity",
+    "bypass your real feelings",
+]
+
+[[angles]]
+name    = "the warm light"
+imagery = ["beginning at your heart", "spreading outward like sunrise", "touching all it reaches"]
+
+[[angles]]
+name    = "the gesture of hands"
+imagery = ["hands in a gesture of offering or receiving", "meeting the person in front of you", "the simple exchange of care"]
+
+[[angles]]
+name    = "the widening ripple"
+imagery = ["one stone dropped in still water", "concentric circles expanding outward", "each circle carrying the original kindness"]

@@ -1,0 +1,50 @@
+label        = "Evening Wind-Down"
+family       = "Presence"
+content_type = "meditation"
+music_tags   = ["dark", "sustained"]
+pause_ratio  = 0.32
+
+technique = """
+Transition into evening: releasing the day's activation through gentle body
+awareness, slowing the pace of language and breath. Settling the nervous system
+not through force but through slow, present attention. A threshold between doing
+and being.
+"""
+
+arc = [
+    "acknowledging the day that has passed",
+    "releasing the grip of what is done",
+    "noticing the shift from activity to rest",
+    "the body finding ease",
+    "stepping into the threshold of evening",
+]
+
+safety = """
+This practice is an invitation to pause, not a command to sleep. Restlessness or
+racing thoughts do not mean this practice is failing. Some people need more time
+to transition; some need movement. If lying down feels vulnerable or unsafe,
+sitting is equally valid. The goal is gentle transition, not enforced sleep or
+relaxation — that will follow in its own time.
+"""
+
+banned = [
+    "you should be tired by now",
+    "calm down for sleep",
+    "quiet your mind",
+    "this will help you sleep",
+    "let the day go",
+    "relax into sleep",
+    "you need to rest",
+]
+
+[[angles]]
+name    = "the sunset fading"
+imagery = ["light gradually leaving the sky", "colours deepening into dusk", "the day becoming memory"]
+
+[[angles]]
+name    = "the body settling"
+imagery = ["each part of you finding rest", "muscles releasing held tension", "heaviness as ease, not burden"]
+
+[[angles]]
+name    = "the threshold at dusk"
+imagery = ["the space between day and night", "the world quieting around you", "your own pace of turning inward"]

@@ -1,0 +1,50 @@
+label        = "Mindfulness Basics"
+family       = "Presence"
+content_type = "meditation"
+music_tags   = ["warm", "steady"]
+pause_ratio  = 0.34
+
+technique = """
+Foundational meditation: anchoring attention in the breath, returning gently
+each time the mind wanders — without judgment, without commentary. A simple
+practice of noticing and returning. Each time you notice you have drifted and
+come back is the practice itself, not a failure of focus.
+"""
+
+arc = [
+    "settling into a comfortable position",
+    "the breath is your anchor",
+    "noticing when attention drifts",
+    "returning with gentleness, not force",
+    "continuing the gentle return",
+]
+
+safety = """
+This is not about clearing the mind or achieving silence. A busy mind is not a
+failed practice. Thoughts, sounds, sensations will arise — they are all welcome.
+The "return" is the core of the practice, not an exception. If sitting is
+uncomfortable, movement or lying down is equally valid. Mindfulness is
+accessible to everyone, and every breath is a new beginning.
+"""
+
+banned = [
+    "clear your mind",
+    "empty your thoughts",
+    "quiet your mind",
+    "focus harder",
+    "meditate correctly",
+    "perfect meditation",
+    "meditation should feel",
+]
+
+[[angles]]
+name    = "the breath at the nostrils"
+imagery = ["cool air entering", "warm air leaving", "the steady rhythm unchanged"]
+
+[[angles]]
+name    = "the rising and falling belly"
+imagery = ["your breath moving your body", "the gentle expansion and contraction", "the automatic wisdom of breathing"]
+
+[[angles]]
+name    = "the breath and the room"
+imagery = ["the air you breathe is shared", "the space around you, alive with breath", "you and the room breathing together"]

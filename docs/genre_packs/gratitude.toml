@@ -1,0 +1,50 @@
+label        = "Gratitude"
+family       = "Presence"
+content_type = "meditation"
+music_tags   = ["warm", "evolving"]
+pause_ratio  = 0.30
+
+technique = """
+Savoring and noting (Seligman, Kabat-Zinn): bringing deliberate attention to
+what you already have — small or large — and sitting with it without trying to
+change your feelings. Gratitude is not positivity or ignoring difficulty; it is
+noticing the good that coexists with everything else.
+"""
+
+arc = [
+    "arriving without pretence",
+    "noticing one thing, no matter how small",
+    "staying with it for a moment",
+    "what else is present",
+    "the both/and of this life",
+]
+
+safety = """
+Gratitude practice is not forced positivity or spiritual bypass. You can feel
+grateful for small things while holding real pain or difficulty. This is not
+about suppressing sadness or denying injustice — it is about noticing the good
+that coexists. Gratitude that feels hollow or performative should be released
+without judgment. What you notice to be grateful for is your own.
+"""
+
+banned = [
+    "at least you have",
+    "gratitude will fix everything",
+    "just be grateful",
+    "others have it worse",
+    "you should feel better if you",
+    "toxic gratitude",
+    "count your blessings",
+]
+
+[[angles]]
+name    = "one small thing"
+imagery = ["a single object or sensation", "water, warmth, the chair beneath you", "noticing its particular reality"]
+
+[[angles]]
+name    = "the unexpected kindness"
+imagery = ["someone's gesture you did not see coming", "a word that landed right", "hands extended without asking"]
+
+[[angles]]
+name    = "the capacity to notice"
+imagery = ["the eyes that see", "the heart that can be moved", "the awareness that receives the world"]
