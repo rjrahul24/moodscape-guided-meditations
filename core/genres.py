@@ -78,6 +78,50 @@ def _resolve(packs_dir: Path | None) -> Path:
     return packs_dir if packs_dir is not None else GENRE_PACKS_DIR
 
 
+def _require_str(data: dict, key: str, path: Path) -> str:
+    """Validate that a field is a string."""
+    value = data[key]
+    if not isinstance(value, str):
+        raise GenrePackError(
+            f"{path}: field {key!r} must be a string, got "
+            f"{type(value).__name__} ({value!r})."
+        )
+    return value
+
+
+def _require_str_list(data: dict, key: str, path: Path) -> tuple[str, ...]:
+    """Validate that a field is an array of strings.
+
+    Rejects a bare string explicitly: tuple("abc") yields ('a','b','c'),
+    which would silently pass a length check and ship a corrupt pack.
+    """
+    value = data[key]
+    if isinstance(value, str) or not isinstance(value, (list, tuple)):
+        raise GenrePackError(
+            f"{path}: field {key!r} must be an array of strings, got "
+            f"{type(value).__name__} ({value!r}). Write it as "
+            f"{key} = [\"one\", \"two\"]."
+        )
+    for item in value:
+        if not isinstance(item, str):
+            raise GenrePackError(
+                f"{path}: every entry of {key!r} must be a string, got "
+                f"{type(item).__name__} ({item!r})."
+            )
+    return tuple(value)
+
+
+def _require_float(data: dict, key: str, path: Path) -> float:
+    """Validate that a field is a number."""
+    value = data[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise GenrePackError(
+            f"{path}: field {key!r} must be a number, got "
+            f"{type(value).__name__} ({value!r})."
+        )
+    return float(value)
+
+
 def load_pack(slug: str, packs_dir: Path | None = None) -> GenrePack:
     """Load and validate one pack.
 
@@ -103,14 +147,23 @@ def load_pack(slug: str, packs_dir: Path | None = None) -> GenrePack:
             f"{path} is missing required field(s): {', '.join(missing)}."
         )
 
-    content_type = data["content_type"]
+    # Type validation happens first, so type errors are never misreported.
+    label = _require_str(data, "label", path)
+    family = _require_str(data, "family", path)
+    content_type = _require_str(data, "content_type", path)
+    music_tags = _require_str_list(data, "music_tags", path)
+    pause_ratio = _require_float(data, "pause_ratio", path)
+    technique = _require_str(data, "technique", path)
+    arc = _require_str_list(data, "arc", path)
+    safety = _require_str(data, "safety", path)
+
+    # Membership and range checks now that types are guaranteed.
     if content_type not in CONTENT_PROFILES:
         raise GenrePackError(
             f"{path} names content_type {content_type!r}, which is not one of "
             f"{sorted(CONTENT_PROFILES)}."
         )
 
-    music_tags = tuple(data["music_tags"])
     unknown = sorted(set(music_tags) - _KNOWN_TAGS)
     if unknown:
         raise GenrePackError(
@@ -118,19 +171,23 @@ def load_pack(slug: str, packs_dir: Path | None = None) -> GenrePack:
             f"Known tags: {', '.join(sorted(_KNOWN_TAGS))}."
         )
 
-    pause_ratio = float(data["pause_ratio"])
     if not 0.0 <= pause_ratio <= MAX_PAUSE_RATIO:
         raise GenrePackError(
             f"{path} has pause_ratio {pause_ratio}, outside 0-{MAX_PAUSE_RATIO}."
         )
 
-    arc = tuple(data["arc"])
     if len(arc) < MIN_ARC_STEPS:
         raise GenrePackError(
             f"{path} has {len(arc)} arc step(s); at least {MIN_ARC_STEPS} are "
             "needed to shape a session."
         )
 
+    # Handle optional banned field
+    banned = ()
+    if "banned" in data:
+        banned = _require_str_list(data, "banned", path)
+
+    # Validate angles
     raw_angles = data.get("angles", [])
     if len(raw_angles) < MIN_ANGLES:
         raise GenrePackError(
@@ -138,25 +195,56 @@ def load_pack(slug: str, packs_dir: Path | None = None) -> GenrePack:
             "needed so repeated runs of this genre can differ."
         )
 
-    angles = tuple(
-        Angle(name=entry["name"], imagery=tuple(entry.get("imagery", [])))
-        for entry in raw_angles
-    )
+    angles = []
+    for idx, entry in enumerate(raw_angles):
+        if not isinstance(entry, dict):
+            raise GenrePackError(
+                f"{path}: angle at index {idx} must be a table, got "
+                f"{type(entry).__name__} ({entry!r})."
+            )
+        if "name" not in entry:
+            raise GenrePackError(
+                f"{path}: angle at index {idx} is missing required field 'name'."
+            )
+        angle_name = entry["name"]
+        if not isinstance(angle_name, str):
+            raise GenrePackError(
+                f"{path}: angle at index {idx}, field 'name' must be a string, got "
+                f"{type(angle_name).__name__} ({angle_name!r})."
+            )
+        imagery = ()
+        if "imagery" in entry:
+            imagery_value = entry["imagery"]
+            if isinstance(imagery_value, str) or not isinstance(imagery_value, (list, tuple)):
+                raise GenrePackError(
+                    f"{path}: angle {angle_name!r}, field 'imagery' must be an array of strings, got "
+                    f"{type(imagery_value).__name__} ({imagery_value!r})."
+                )
+            for img_idx, item in enumerate(imagery_value):
+                if not isinstance(item, str):
+                    raise GenrePackError(
+                        f"{path}: angle {angle_name!r}, imagery entry {img_idx} must be a string, got "
+                        f"{type(item).__name__} ({item!r})."
+                    )
+            imagery = tuple(imagery_value)
+        angles.append(Angle(name=angle_name, imagery=imagery))
+
+    angles = tuple(angles)
     names = [angle.name for angle in angles]
     if len(names) != len(set(names)):
         raise GenrePackError(f"{path} has duplicate angle names: {names}.")
 
     return GenrePack(
         slug=slug,
-        label=data["label"],
-        family=data["family"],
+        label=label,
+        family=family,
         content_type=content_type,
         music_tags=music_tags,
         pause_ratio=pause_ratio,
-        technique=data["technique"].strip(),
+        technique=technique.strip(),
         arc=arc,
-        safety=data["safety"].strip(),
-        banned=tuple(data.get("banned", [])),
+        safety=safety.strip(),
+        banned=banned,
         angles=angles,
     )
 
