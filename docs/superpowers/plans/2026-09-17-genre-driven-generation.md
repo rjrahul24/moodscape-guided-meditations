@@ -18,7 +18,9 @@
 - **Backward compatibility is mandatory.** `auto_generate.run(prompt, ...)` keeps its current positional signature. Every existing test in `tests/unit/` and `tests/integration/` must still pass after every task.
 - **Test style:** `unittest.TestCase` classes, matching `tests/unit/test_auto_generate.py`. Run with `.venv/bin/python -m pytest tests/unit/<file> -v`.
 - **Model defaults:** planner+writer `ollama:qwen3.8:27b`, judge `ollama:gemma4:31b`.
-- **Originality thresholds:** cosine > `0.72` FATAL, `0.55`–`0.72` ADVISORY.
+- **Originality thresholds:** cosine > `0.80` FATAL, `0.65`–`0.80` ADVISORY.
+  (Recalibrated after Task 6 from measurements on realistic-length scripts — see
+  the constants' docstring in Task 8 for the measured distribution.)
 - **Fatal vs advisory must not be flattened.** Safety hard-blocks and malformed markers are FATAL; duration drift and style are ADVISORY. See CLAUDE.md "Top Gotchas".
 - **`parse_judge_response()` stripping `<problems>` is load-bearing** for originality repair (commit `c372b18`). Do not remove or reorder it.
 - **Commit after every task** using Conventional Commits (`feat:`, `fix:`, `test:`, `docs:`, `chore:`). Commit to the current branch. **Never push.**
@@ -1787,7 +1789,7 @@ class AssessTest(unittest.TestCase):
             idf_texts=self._big_corpus([GENERIC_A, GENERIC_B]),
         )
         self.assertTrue(report.cosine_available)
-        self.assertGreater(report.max_cosine, 0.72)
+        self.assertGreater(report.max_cosine, 0.80)
         self.assertEqual(report.nearest_id, "dup")
 
     def test_generic_overlap_stays_below_the_advisory_band(self):
@@ -1797,7 +1799,7 @@ class AssessTest(unittest.TestCase):
             compare_against=[_entry(GENERIC_B)],
             idf_texts=self._big_corpus([GENERIC_A, GENERIC_B]),
         )
-        self.assertLess(report.max_cosine, 0.55)
+        self.assertLess(report.max_cosine, 0.65)
 
     def test_lifted_passage_is_reported_even_when_cosine_is_low(self):
         report = assess(
@@ -1852,14 +1854,14 @@ class CheckOriginalityTest(unittest.TestCase):
     def test_high_similarity_is_fatal(self):
         from core.script_gen.linter import FATAL, check_originality
 
-        violations = check_originality(self._report(max_cosine=0.80))
+        violations = check_originality(self._report(max_cosine=0.92))
         self.assertEqual([v.code for v in violations], ["SCRIPT_TOO_SIMILAR"])
         self.assertEqual(violations[0].severity, FATAL)
 
     def test_middling_similarity_is_advisory(self):
         from core.script_gen.linter import ADVISORY, check_originality
 
-        violations = check_originality(self._report(max_cosine=0.60))
+        violations = check_originality(self._report(max_cosine=0.70))
         self.assertEqual([v.code for v in violations], ["SCRIPT_ECHOES_RECENT"])
         self.assertEqual(violations[0].severity, ADVISORY)
 
@@ -2024,12 +2026,34 @@ Append to `core/script_gen/linter.py`:
 ```python
 # --- Originality --------------------------------------------------------
 #
-# Provisional thresholds, to be replaced with measured values once real runs
-# have logged their scores -- the same calibrate-from-data path
-# duration.py::log_estimate_accuracy() established for DEFAULT_WPM.
+# Calibrated 2026-09-18 against realistic-length (158-word) same-genre scripts
+# with a 20-document corpus:
+#
+#     verbatim regeneration                  1.000
+#     lightly edited repeat                  0.936
+#     heavily reworded, SAME storyline       0.409
+#     genuinely different story, same genre  0.467
+#     unrelated content                      0.103
+#
+# Two things follow. First, cosine separates near-verbatim repeats
+# (0.94-1.00) from everything else (<=0.47) with a wide empty gap, so the
+# bands below sit in the middle of that gap rather than near either edge.
+#
+# Second, and more important: cosine CANNOT distinguish "reworded, same
+# storyline" (0.409) from "genuinely different" (0.467) -- the ordering
+# actually inverts, because rewording destroys n-gram overlap while two
+# different meditations still share stock openings and closings. That is a
+# lexical-vs-semantic limit, not a tuning problem, and no threshold fixes it.
+#
+# So this check catches near-verbatim regeneration, and the rare-run check
+# below catches lifted passages. The defence against a repeated STORYLINE is
+# the proactive layer -- angle rotation plus the avoid-list fed to the planner
+# (core/originality.py::avoid_terms) -- which prevents the repeat being
+# written at all. Closing the paraphrase gap reactively would need embedding
+# similarity; see the spec's section 7 for why that is deferred.
 
-FATAL_COSINE = 0.72
-ADVISORY_COSINE = 0.55
+FATAL_COSINE = 0.80
+ADVISORY_COSINE = 0.65
 
 # A shared run this long is a lifted passage rather than coincidence.
 MIN_RUN_TOKENS = 12
@@ -2471,8 +2495,8 @@ class OriginalityEnvTest(unittest.TestCase):
     `core/script_gen/linter.py`, replace the two module constants with:
 
 ```python
-FATAL_COSINE = float(os.environ.get("MOODSCAPE_ORIGINALITY_FATAL", "0.72"))
-ADVISORY_COSINE = float(os.environ.get("MOODSCAPE_ORIGINALITY_ADVISORY", "0.55"))
+FATAL_COSINE = float(os.environ.get("MOODSCAPE_ORIGINALITY_FATAL", "0.80"))
+ADVISORY_COSINE = float(os.environ.get("MOODSCAPE_ORIGINALITY_ADVISORY", "0.65"))
 ```
 
     and add `import os` to `linter.py`. These are read at import time

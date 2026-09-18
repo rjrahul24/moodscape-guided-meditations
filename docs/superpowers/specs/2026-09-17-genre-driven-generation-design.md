@@ -335,8 +335,46 @@ Following the fatal/advisory principle CLAUDE.md says not to flatten:
 
 | Signal | Severity | Effect |
 |---|---|---|
-| cosine > 0.72, or a lifted rare passage | **FATAL** | Repair loop; job fails if unfixable within budget |
-| cosine 0.55 - 0.72 | **ADVISORY** | Renders, logs, **and feeds the next run's avoid-list** |
+| cosine > 0.80, or a lifted rare passage | **FATAL** | Repair loop; job fails if unfixable within budget |
+| cosine 0.65 - 0.80 | **ADVISORY** | Renders, logs, **and feeds the next run's avoid-list** |
+
+### What the cosine check can and cannot do
+
+Calibrated 2026-09-18 against realistic-length (158-word) same-genre scripts,
+corpus of 20:
+
+| case | cosine |
+|---|---|
+| verbatim regeneration | 1.000 |
+| lightly edited repeat | 0.936 |
+| heavily reworded, **same storyline** | 0.409 |
+| genuinely different story, same genre | 0.467 |
+| unrelated content | 0.103 |
+
+Cosine separates near-verbatim repeats (0.94-1.00) from everything else
+(<= 0.47) with a wide empty gap, and the bands above sit in the middle of it.
+The originally specified 0.55 advisory floor was only 0.08 above a legitimately
+different script and would have raised false advisories, poisoning the
+avoid-list with imagery that was never actually reused.
+
+**Cosine cannot distinguish a reworded storyline from a different one.** At
+0.409 versus 0.467 the ordering inverts: rewording destroys n-gram overlap,
+while two genuinely different meditations still share stock openings and
+closings. This is a lexical-versus-semantic limit, not a tuning problem, and
+no threshold fixes it.
+
+The layered answer therefore is:
+
+- **near-verbatim regeneration** -> cosine (reactive)
+- **a lifted passage** -> rare-n-gram run (reactive)
+- **a repeated storyline in fresh words** -> angle rotation and the avoid-list
+  (proactive), which stop it being written in the first place
+
+**Deferred: embedding similarity.** A sentence-embedding pass would close the
+paraphrase gap reactively, and Ollama already ships `qwen3-embedding`
+(0.6b/4b/8b). It is deferred because it adds a model load to every run and is
+a design change beyond this spec, not because it would not work. Revisit if
+repeated storylines survive the proactive layer in practice.
 
 The advisory band closes the loop: a near-miss today becomes tomorrow's
 proactive constraint.
@@ -409,8 +447,8 @@ MOODSCAPE_SCRIPT_PLANNER        ollama:qwen3.8:27b
 MOODSCAPE_SCRIPT_GENERATOR      ollama:qwen3.8:27b    # was ollama:llama3.2:3b
 MOODSCAPE_SCRIPT_JUDGE          ollama:gemma4:31b     # was ollama:llama3.2:3b
 MOODSCAPE_ORIGINALITY           1                     # kill switch
-MOODSCAPE_ORIGINALITY_FATAL     0.72
-MOODSCAPE_ORIGINALITY_ADVISORY  0.55
+MOODSCAPE_ORIGINALITY_FATAL     0.80
+MOODSCAPE_ORIGINALITY_ADVISORY  0.65
 MOODSCAPE_GENRE_PACKS_DIR       docs/genre_packs
 ```
 
@@ -519,7 +557,7 @@ configuration — is correct and is adopted here.
 | 2 | **46 packs is real authoring work**, and pack quality caps output quality. | Drafted up front, plain TOML, read at call time, editable without restart. |
 | 3 | **Gemma's terms are mutable** in a way Apache-2.0's are not, and distribution obligations attach if this is ever bundled and shipped. | Low impact today; reversible with one env var. Full analysis and revisit triggers in §13.1. |
 | 4 | **37 GB of models** on a volume at 91% capacity. | Preflight names what is missing; config C saves 19 GB. |
-| 5 | **Originality thresholds are provisional.** | Every run logs its score; calibrate as `DEFAULT_WPM` was. |
+| 5 | **Cosine cannot catch a reworded storyline** (0.409 vs 0.467 — the ordering inverts). | Storyline repetition is handled proactively by angle rotation and the avoid-list. Embedding similarity is the reactive fix if that proves insufficient; see §7. |
 | 6 | **The judge is the sloppiest local writer** (slop 4.1) and holds the pen last. | The judge prompt already says "preserve what works"; the banned-phrase and slop checks catch injected slop regardless of source. |
 | 7 | **~5.3 min of LLM time per run** may frustrate iteration. | Per-stage hosted override drops it to ~15 s without a code change. |
 
