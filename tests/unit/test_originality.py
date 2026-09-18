@@ -227,5 +227,85 @@ class LongestRareRunTest(unittest.TestCase):
         self.assertEqual(longest_rare_run(a, a, df), (0, ""))
 
 
+from core.originality import CorpusEntry, assess, avoid_terms
+
+
+def _entry(text: str, script_id: str = "x", angle: str = "") -> CorpusEntry:
+    return CorpusEntry(
+        script_id=script_id, genre="sleep", angle=angle, created="", text=text
+    )
+
+
+class AssessTest(unittest.TestCase):
+    def _big_corpus(self, extra: list[str]) -> list[str]:
+        """12 filler docs so the corpus clears the cold-start threshold."""
+        filler = [
+            f"Settle in and notice your breath. Today we rest with {word}."
+            for word in "alpha bravo charlie delta echo foxtrot golf hotel "
+                        "india juliet kilo lima".split()
+        ]
+        return filler + extra
+
+    def test_empty_corpus_reports_nothing(self):
+        report = assess("anything at all", compare_against=[], idf_texts=[])
+        self.assertEqual(report.max_cosine, 0.0)
+        self.assertEqual(report.shared_span, 0)
+        self.assertFalse(report.cosine_available)
+
+    def test_small_corpus_disables_cosine(self):
+        report = assess(
+            GENERIC_B,
+            compare_against=[_entry(GENERIC_B)],
+            idf_texts=[GENERIC_A, GENERIC_B],
+        )
+        self.assertFalse(report.cosine_available)
+        self.assertEqual(report.max_cosine, 0.0)
+
+    def test_large_corpus_enables_cosine(self):
+        report = assess(
+            GENERIC_B,
+            compare_against=[_entry(GENERIC_B, script_id="dup")],
+            idf_texts=self._big_corpus([GENERIC_A, GENERIC_B]),
+        )
+        self.assertTrue(report.cosine_available)
+        self.assertGreater(report.max_cosine, 0.80)
+        self.assertEqual(report.nearest_id, "dup")
+
+    def test_generic_overlap_stays_below_the_advisory_band(self):
+        """The requirement: shared stock phrasing must not read as a copy."""
+        report = assess(
+            GENERIC_A,
+            compare_against=[_entry(GENERIC_B)],
+            idf_texts=self._big_corpus([GENERIC_A, GENERIC_B]),
+        )
+        self.assertLess(report.max_cosine, 0.65)
+
+    def test_lifted_passage_is_reported_even_when_cosine_is_low(self):
+        report = assess(
+            LIFTED,
+            compare_against=[_entry(GENERIC_B)],
+            idf_texts=self._big_corpus([GENERIC_B, LIFTED]),
+        )
+        self.assertGreaterEqual(report.shared_span, 9)
+        self.assertIn("copper staircase", report.shared_text)
+
+
+class AvoidTermsTest(unittest.TestCase):
+    def test_returns_distinctive_multiword_terms_not_stock_phrases(self):
+        corpus = [
+            f"Settle in and notice your breath. Rest with {word}."
+            for word in "alpha bravo charlie delta echo foxtrot".split()
+        ]
+        terms = avoid_terms(
+            [_entry(GENERIC_B)], corpus + [GENERIC_B], top_n=6
+        )
+        joined = " | ".join(terms)
+        self.assertIn("copper staircase", joined)
+        self.assertNotIn("notice your breath", joined)
+
+    def test_empty_input_returns_empty(self):
+        self.assertEqual(avoid_terms([], []), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -279,6 +279,11 @@ def longest_rare_run(
     all appear in B is a lifted passage; the alternative (a full longest-common-
     substring over every corpus pair) is O(n*m) per pair and not worth the cost
     for the same answer.
+
+    CAUTION: `df` must have been built with `max_n >= n`. document_frequencies()
+    defaults to max_n=3 while this function defaults to n=5, so a caller using
+    both defaults would find no 5-gram in `df`, score every 5-gram as rare, and
+    silently defeat the filter. assess() passes max_n=RUN_NGRAM for this reason.
     """
     rare_b = {
         gram for gram in ngrams(tokens_b, n) if df.get(gram, 0) <= max_df
@@ -290,7 +295,7 @@ def longest_rare_run(
     best_start = 0
     run = 0
     for index, gram in enumerate(ngrams(tokens_a, n)):
-        if gram in rare_b and df.get(gram, 0) <= max_df:
+        if gram in rare_b:
             run += 1
             if run > best_len:
                 best_len = run
@@ -303,3 +308,122 @@ def longest_rare_run(
 
     span = best_len + n - 1
     return span, " ".join(tokens_a[best_start : best_start + span])
+
+
+# Below this many documents, IDF carries no signal: with three scripts every
+# phrase looks rare, so cosine would flag unrelated meditations as copies.
+SMALL_CORPUS_BELOW = 10
+
+
+@dataclass(frozen=True)
+class OriginalityReport:
+    """How much a candidate script resembles what has already been made."""
+
+    max_cosine: float
+    cosine_available: bool
+    nearest_id: str
+    shared_span: int
+    shared_text: str
+    corpus_size: int
+
+
+def assess(
+    script: str,
+    *,
+    compare_against: Sequence[CorpusEntry],
+    idf_texts: Sequence[str],
+) -> OriginalityReport:
+    """Measure a script against prior work.
+
+    Args:
+        script: The candidate script.
+        compare_against: Prior scripts to compare with -- SAME GENRE ONLY.
+            That is where collisions actually happen.
+        idf_texts: Every script in the corpus, ALL GENRES. This is what
+            teaches the weighting which phrases are generic meditation
+            vocabulary, so it must not be narrowed to one genre.
+    """
+    if not compare_against:
+        return OriginalityReport(
+            max_cosine=0.0,
+            cosine_available=False,
+            nearest_id="",
+            shared_span=0,
+            shared_text="",
+            corpus_size=len(idf_texts),
+        )
+
+    candidate_tokens = tokenize(script)
+    other_tokens = {entry.script_id: tokenize(entry.text) for entry in compare_against}
+
+    # df for the rare-run check is computed over every document available,
+    # candidate included, so a phrase the candidate shares with many prior
+    # scripts is correctly seen as common rather than lifted.
+    run_df = document_frequencies(
+        [candidate_tokens, *other_tokens.values()], max_n=RUN_NGRAM
+    )
+
+    best_span, best_text = 0, ""
+    for tokens in other_tokens.values():
+        span, text = longest_rare_run(candidate_tokens, tokens, run_df)
+        if span > best_span:
+            best_span, best_text = span, text
+
+    cosine_available = len(idf_texts) >= SMALL_CORPUS_BELOW
+    max_cosine, nearest_id = 0.0, ""
+
+    if cosine_available:
+        idf, default_idf = build_idf([tokenize(text) for text in idf_texts])
+        candidate_vector = tfidf_vector(candidate_tokens, idf, default_idf)
+        for script_id, tokens in other_tokens.items():
+            score = cosine(
+                candidate_vector, tfidf_vector(tokens, idf, default_idf)
+            )
+            if score > max_cosine:
+                max_cosine, nearest_id = score, script_id
+
+    return OriginalityReport(
+        max_cosine=max_cosine,
+        cosine_available=cosine_available,
+        nearest_id=nearest_id,
+        shared_span=best_span,
+        shared_text=best_text,
+        corpus_size=len(idf_texts),
+    )
+
+
+def avoid_terms(
+    entries: Sequence[CorpusEntry],
+    idf_texts: Sequence[str],
+    *,
+    top_n: int = 12,
+) -> list[str]:
+    """The most distinctive phrases in recent scripts, for the planner to avoid.
+
+    Only multi-word terms are returned: single words ("staircase") over-
+    constrain the writer, while phrases ("copper staircase descending") name
+    the specific image that should not recur.
+    """
+    if not entries or not idf_texts:
+        return []
+
+    idf, default_idf = build_idf([tokenize(text) for text in idf_texts])
+    weights: Counter[tuple[str, ...]] = Counter()
+    for entry in entries:
+        vector = tfidf_vector(tokenize(entry.text), idf, default_idf)
+        for term, value in vector.items():
+            if len(term) >= 2:
+                weights[term] += value
+
+    # TF-IDF weight alone ties constantly: every term unique to one entry
+    # gets the same maximal weight, whether it is a content phrase ("copper
+    # staircase") or a run of function words ("it picture a"). Break ties by
+    # character length rather than insertion order -- a longer phrase is
+    # disproportionately likely to be the specific, informative one, and
+    # this needs no hand-maintained stoplist, just the term itself.
+    ranked = sorted(
+        weights.items(),
+        key=lambda item: (item[1], sum(len(word) for word in item[0])),
+        reverse=True,
+    )
+    return [" ".join(term) for term, _ in ranked[:top_n]]

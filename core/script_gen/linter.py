@@ -10,7 +10,10 @@ unusable; treating none as fatal would let a safety failure reach audio.
 """
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
+
+from core.originality import SMALL_CORPUS_BELOW
 
 FATAL = "fatal"
 ADVISORY = "advisory"
@@ -388,3 +391,143 @@ def format_for_repair(violations: list[Violation]) -> str:
         for i, v in enumerate(violations, start=1)
     ]
     return "\n".join(lines)
+
+
+# --- Originality --------------------------------------------------------
+#
+# Calibrated 2026-09-18 against realistic-length (158-word) same-genre scripts
+# with a 20-document corpus:
+#
+#     verbatim regeneration                  1.000
+#     lightly edited repeat                  0.936
+#     heavily reworded, SAME storyline       0.409
+#     genuinely different story, same genre  0.467
+#     unrelated content                      0.103
+#
+# Two things follow. First, cosine separates near-verbatim repeats
+# (0.94-1.00) from everything else (<=0.47) with a wide empty gap, so the
+# bands below sit in the middle of that gap rather than near either edge.
+#
+# Second, and more important: cosine CANNOT distinguish "reworded, same
+# storyline" (0.409) from "genuinely different" (0.467) -- the ordering
+# actually inverts, because rewording destroys n-gram overlap while two
+# different meditations still share stock openings and closings. That is a
+# lexical-vs-semantic limit, not a tuning problem, and no threshold fixes it.
+#
+# So this check catches near-verbatim regeneration, and the rare-run check
+# below catches lifted passages. The defence against a repeated STORYLINE is
+# the proactive layer -- angle rotation plus the avoid-list fed to the planner
+# (core/originality.py::avoid_terms) -- which prevents the repeat being
+# written at all. Closing the paraphrase gap reactively would need embedding
+# similarity; see the spec's section 7 for why that is deferred.
+
+FATAL_COSINE = 0.80
+ADVISORY_COSINE = 0.65
+
+# A shared run this long is a lifted passage rather than coincidence.
+MIN_RUN_TOKENS = 12
+# With a small corpus the document-frequency filter cannot distinguish a
+# genuinely rare phrase from a stock one, and stock meditation phrasing can
+# legitimately run past 12 tokens. Require most of a sentence before calling
+# it a lift.
+MIN_RUN_TOKENS_SMALL_CORPUS = 20
+
+
+def check_originality(
+    report,
+    *,
+    fatal_cosine: float = FATAL_COSINE,
+    advisory_cosine: float = ADVISORY_COSINE,
+) -> list[Violation]:
+    """Turn an originality.OriginalityReport into Violations.
+
+    Pure policy: all measurement lives in core/originality.py, so severity
+    bands can be retuned here without touching the math.
+
+    The messages quote the offending text, because the judge cannot remove a
+    phrase it has not been shown. That relies on parse_judge_response()
+    stripping the <problems> block before anything else (commit c372b18) --
+    without it, quoting the overlap back to the judge re-injects it into the
+    script and the repair loop poisons itself.
+    """
+    violations: list[Violation] = []
+
+    run_threshold = (
+        MIN_RUN_TOKENS
+        if report.corpus_size >= SMALL_CORPUS_BELOW
+        else MIN_RUN_TOKENS_SMALL_CORPUS
+    )
+
+    if report.shared_span >= run_threshold:
+        violations.append(
+            Violation(
+                code="PASSAGE_LIFTED",
+                severity=FATAL,
+                message=(
+                    f"A {report.shared_span}-word passage is reused almost "
+                    f"verbatim from an earlier meditation: "
+                    f"{report.shared_text!r}. Rewrite that passage with "
+                    "different imagery and wording."
+                ),
+            )
+        )
+
+    if report.cosine_available:
+        if report.max_cosine > fatal_cosine:
+            violations.append(
+                Violation(
+                    code="SCRIPT_TOO_SIMILAR",
+                    severity=FATAL,
+                    message=(
+                        f"This script is {report.max_cosine:.0%} similar to an "
+                        "earlier meditation in the same genre. Change the "
+                        "imagery, the structure and the specific language — a "
+                        "reworded version of the same piece is not a new one."
+                    ),
+                )
+            )
+        elif report.max_cosine >= advisory_cosine:
+            violations.append(
+                Violation(
+                    code="SCRIPT_ECHOES_RECENT",
+                    severity=ADVISORY,
+                    message=(
+                        f"This script is {report.max_cosine:.0%} similar to an "
+                        "earlier meditation in the same genre. Acceptable, but "
+                        "its distinctive phrases will be added to the avoid-list "
+                        "for future runs."
+                    ),
+                )
+            )
+
+    return violations
+
+
+def check_banned_phrases(script: str, banned: Sequence[str]) -> list[Violation]:
+    """Flag phrasings a genre pack forbids outright.
+
+    FATAL rather than advisory: a pack's banned list is not a style
+    preference but an explicit "a good writer in this genre never says this"
+    ("in a better place" for grief, "push through the pain" for a workout).
+    Each one is a targeted single-phrase edit, so it is cheap to repair and
+    not the kind of violation that makes a weaker model unusable.
+
+    Matched case-insensitively against tag-stripped, apostrophe-normalised
+    prose, so a curly quote or a [pause:5s] marker mid-phrase cannot defeat it.
+    """
+    if not banned:
+        return []
+
+    prose = _normalize_apostrophes(_strip_tags(script)).lower()
+    return [
+        Violation(
+            code="BANNED_PHRASE",
+            severity=FATAL,
+            message=(
+                f"The phrase {phrase!r} is banned for this genre. Remove it "
+                "and say what you mean without it."
+            ),
+        )
+        for phrase in banned
+        if _normalize_apostrophes(phrase).lower() in prose
+    ]

@@ -342,5 +342,111 @@ class TestCombinedCheck(unittest.TestCase):
         self.assertEqual(format_for_repair([]), "")
 
 
+class CheckOriginalityTest(unittest.TestCase):
+    def _report(self, **overrides):
+        from core.originality import OriginalityReport
+
+        base = {
+            "max_cosine": 0.0,
+            "cosine_available": True,
+            "nearest_id": "prev-001",
+            "shared_span": 0,
+            "shared_text": "",
+            "corpus_size": 50,
+        }
+        base.update(overrides)
+        return OriginalityReport(**base)
+
+    def test_an_original_script_produces_no_violations(self):
+        from core.script_gen.linter import check_originality
+
+        self.assertEqual(check_originality(self._report(max_cosine=0.2)), [])
+
+    def test_high_similarity_is_fatal(self):
+        from core.script_gen.linter import FATAL, check_originality
+
+        violations = check_originality(self._report(max_cosine=0.92))
+        self.assertEqual([v.code for v in violations], ["SCRIPT_TOO_SIMILAR"])
+        self.assertEqual(violations[0].severity, FATAL)
+
+    def test_middling_similarity_is_advisory(self):
+        from core.script_gen.linter import ADVISORY, check_originality
+
+        violations = check_originality(self._report(max_cosine=0.70))
+        self.assertEqual([v.code for v in violations], ["SCRIPT_ECHOES_RECENT"])
+        self.assertEqual(violations[0].severity, ADVISORY)
+
+    def test_a_lifted_passage_is_fatal_and_quotes_the_text(self):
+        from core.script_gen.linter import FATAL, check_originality
+
+        violations = check_originality(
+            self._report(shared_span=14, shared_text="a narrow copper staircase")
+        )
+        self.assertEqual([v.code for v in violations], ["PASSAGE_LIFTED"])
+        self.assertEqual(violations[0].severity, FATAL)
+        self.assertIn("narrow copper staircase", violations[0].message)
+
+    def test_a_short_shared_run_is_ignored(self):
+        from core.script_gen.linter import check_originality
+
+        self.assertEqual(
+            check_originality(self._report(shared_span=8, shared_text="and let it go")),
+            [],
+        )
+
+    def test_a_small_corpus_uses_a_higher_run_threshold(self):
+        """With few documents the df filter cannot tell rare from stock."""
+        from core.script_gen.linter import check_originality
+
+        small = self._report(
+            corpus_size=3, cosine_available=False, shared_span=14,
+            shared_text="notice your breath and let your shoulders drop now",
+        )
+        self.assertEqual(check_originality(small), [])
+
+        large = self._report(shared_span=14, shared_text="a narrow copper staircase")
+        self.assertEqual([v.code for v in check_originality(large)], ["PASSAGE_LIFTED"])
+
+    def test_cosine_is_ignored_when_unavailable(self):
+        from core.script_gen.linter import check_originality
+
+        report = self._report(max_cosine=0.99, cosine_available=False, corpus_size=2)
+        self.assertEqual(check_originality(report), [])
+
+
+class CheckBannedPhrasesTest(unittest.TestCase):
+    def test_no_banned_list_means_no_violations(self):
+        from core.script_gen.linter import check_banned_phrases
+
+        self.assertEqual(check_banned_phrases("anything at all", []), [])
+
+    def test_a_banned_phrase_is_fatal(self):
+        from core.script_gen.linter import FATAL, check_banned_phrases
+
+        violations = check_banned_phrases(
+            "They are in a better place now.", ["in a better place"]
+        )
+        self.assertEqual([v.code for v in violations], ["BANNED_PHRASE"])
+        self.assertEqual(violations[0].severity, FATAL)
+
+    def test_matching_ignores_case(self):
+        from core.script_gen.linter import check_banned_phrases
+
+        self.assertEqual(
+            len(check_banned_phrases("Time Heals, they say.", ["time heals"])), 1
+        )
+
+    def test_a_curly_apostrophe_cannot_defeat_the_check(self):
+        from core.script_gen.linter import check_banned_phrases
+
+        script = "You’ll move on soon."
+        self.assertEqual(len(check_banned_phrases(script, ["you'll move on"])), 1)
+
+    def test_an_unused_phrase_is_not_flagged(self):
+        from core.script_gen.linter import check_banned_phrases
+
+        self.assertEqual(check_banned_phrases("Rest here.", ["move on"]), [])
+
+
 if __name__ == "__main__":
     unittest.main()

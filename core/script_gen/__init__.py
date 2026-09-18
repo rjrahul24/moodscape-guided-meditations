@@ -6,10 +6,14 @@ a deterministic linter and duration estimator that cost no tokens.
 
 from core.script_gen.linter import (
     ADVISORY,
+    ADVISORY_COSINE,
     FATAL,
+    FATAL_COSINE,
     Violation,
     check,
+    check_banned_phrases,
     check_format,
+    check_originality,
     check_safety,
     fatal_violations,
     format_for_repair,
@@ -37,10 +41,14 @@ from core.script_gen.judge import parse_judge_response, repair, review
 
 __all__ = [
     "ADVISORY",
+    "ADVISORY_COSINE",
     "FATAL",
+    "FATAL_COSINE",
     "Violation",
     "check",
+    "check_banned_phrases",
     "check_format",
+    "check_originality",
     "check_safety",
     "fatal_violations",
     "format_for_repair",
