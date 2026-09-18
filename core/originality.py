@@ -21,8 +21,11 @@ collisions actually happen.
 
 import json
 import logging
+import math
 import os
 import re
+from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -164,3 +167,88 @@ def recent_angles(
         if len(seen) >= limit:
             break
     return seen
+
+
+# Bracket markers ([pause:5s], [breath]) are contract syntax, not prose, and
+# appear in every script. Removing them keeps them out of the statistics.
+_MARKER = re.compile(r"\[[^\]]*\]")
+_WORD = re.compile(r"[a-z]+")
+
+MAX_NGRAM = 3
+
+
+def tokenize(text: str) -> list[str]:
+    """Lowercase word tokens, with bracket markers removed."""
+    return _WORD.findall(_MARKER.sub(" ", text.lower()))
+
+
+def ngrams(tokens: Sequence[str], n: int) -> list[tuple[str, ...]]:
+    """Overlapping n-grams. Empty when there are fewer than n tokens."""
+    if n <= 0 or len(tokens) < n:
+        return []
+    return [tuple(tokens[i : i + n]) for i in range(len(tokens) - n + 1)]
+
+
+def _all_terms(tokens: Sequence[str], max_n: int) -> list[tuple[str, ...]]:
+    terms: list[tuple[str, ...]] = []
+    for n in range(1, max_n + 1):
+        terms.extend(ngrams(tokens, n))
+    return terms
+
+
+def document_frequencies(
+    token_lists: Sequence[Sequence[str]], max_n: int = MAX_NGRAM
+) -> dict[tuple[str, ...], int]:
+    """How many documents each term appears in (not how many times)."""
+    df: Counter[tuple[str, ...]] = Counter()
+    for tokens in token_lists:
+        df.update(set(_all_terms(tokens, max_n)))
+    return dict(df)
+
+
+def build_idf(
+    token_lists: Sequence[Sequence[str]], max_n: int = MAX_NGRAM
+) -> tuple[dict[tuple[str, ...], float], float]:
+    """Smoothed inverse document frequency over the whole corpus.
+
+    Returns (idf_map, default_idf). The default applies to terms absent from
+    the corpus, which are by definition maximally distinctive, so it is the
+    largest weight the formula can produce.
+    """
+    n_docs = len(token_lists)
+    df = document_frequencies(token_lists, max_n)
+    idf = {
+        term: math.log((n_docs + 1) / (count + 1)) + 1.0
+        for term, count in df.items()
+    }
+    default_idf = math.log(n_docs + 1) + 1.0
+    return idf, default_idf
+
+
+def tfidf_vector(
+    tokens: Sequence[str],
+    idf: dict[tuple[str, ...], float],
+    default_idf: float,
+    max_n: int = MAX_NGRAM,
+) -> dict[tuple[str, ...], float]:
+    """L2-normalised TF-IDF vector. Pre-normalising makes cosine a dot product."""
+    counts = Counter(_all_terms(tokens, max_n))
+    if not counts:
+        return {}
+    vector = {
+        term: count * idf.get(term, default_idf) for term, count in counts.items()
+    }
+    norm = math.sqrt(sum(value * value for value in vector.values()))
+    if norm == 0.0:
+        return {}
+    return {term: value / norm for term, value in vector.items()}
+
+
+def cosine(a: dict[tuple[str, ...], float], b: dict[tuple[str, ...], float]) -> float:
+    """Cosine similarity of two L2-normalised vectors, in [0, 1]."""
+    if not a or not b:
+        return 0.0
+    # Iterate the smaller vector; the result is symmetric.
+    if len(b) < len(a):
+        a, b = b, a
+    return sum(value * b.get(term, 0.0) for term, value in a.items())

@@ -74,6 +74,114 @@ class CorpusTest(unittest.TestCase):
         (self.dir / "scripts" / f"{script_id}.txt").unlink()
         self.assertEqual(load_corpus(genre="sleep", corpus_dir=self.dir), [])
 
+    def test_a_corrupt_index_is_treated_as_empty_not_fatal(self):
+        """The corpus is a cache; a truncated index must not stop a run."""
+        add_to_corpus("something", genre="sleep", corpus_dir=self.dir)
+        (self.dir / "index.json").write_text("{not json at all", encoding="utf-8")
+        self.assertEqual(load_corpus(corpus_dir=self.dir), [])
+
+
+from core.originality import (
+    build_idf,
+    cosine,
+    document_frequencies,
+    ngrams,
+    tfidf_vector,
+    tokenize,
+)
+
+# Two scripts that share only stock meditation language but say different
+# things. The check MUST NOT flag this pair -- it is the whole point.
+GENERIC_A = (
+    "Settle in and let your shoulders drop. Notice your breath without "
+    "changing it. When you are ready, let your eyes close. Feel the weight "
+    "of your hands resting in your lap. There is nowhere else to be."
+)
+GENERIC_B = (
+    "Settle in and let your shoulders drop. Notice your breath without "
+    "changing it. Picture a narrow copper staircase descending into warm "
+    "lamplight. Each step takes you further from the noise of the day."
+)
+# A near-duplicate of GENERIC_B: same storyline, lightly reworded.
+NEAR_DUPLICATE_B = (
+    "Settle in and let your shoulders relax. Notice your breathing without "
+    "changing it. Imagine a narrow copper staircase descending into warm "
+    "lamplight. Every step takes you further from the noise of the day."
+)
+
+
+class TokenizeTest(unittest.TestCase):
+    def test_lowercases_and_drops_punctuation(self):
+        self.assertEqual(tokenize("Breathe In, Slowly."), ["breathe", "in", "slowly"])
+
+    def test_strips_bracket_markers(self):
+        self.assertEqual(
+            tokenize("Rest. [pause:5s] [breath] Now rise."),
+            ["rest", "now", "rise"],
+        )
+
+    def test_empty_text_is_empty(self):
+        self.assertEqual(tokenize("   "), [])
+
+
+class NgramTest(unittest.TestCase):
+    def test_produces_overlapping_tuples(self):
+        self.assertEqual(
+            ngrams(["a", "b", "c"], 2), [("a", "b"), ("b", "c")]
+        )
+
+    def test_too_few_tokens_yields_nothing(self):
+        self.assertEqual(ngrams(["a"], 2), [])
+
+
+class IdfTest(unittest.TestCase):
+    def test_a_term_in_every_document_weighs_less_than_a_rare_one(self):
+        docs = [tokenize(t) for t in ["breath calm", "breath storm", "breath river"]]
+        idf, _default = build_idf(docs, max_n=1)
+        self.assertLess(idf[("breath",)], idf[("calm",)])
+
+    def test_unseen_terms_get_the_maximum_weight(self):
+        docs = [tokenize("breath calm"), tokenize("breath storm")]
+        idf, default = build_idf(docs, max_n=1)
+        self.assertGreaterEqual(default, max(idf.values()))
+
+    def test_document_frequency_counts_documents_not_occurrences(self):
+        docs = [tokenize("breath breath breath"), tokenize("river")]
+        df = document_frequencies(docs, max_n=1)
+        self.assertEqual(df[("breath",)], 1)
+
+
+class CosineTest(unittest.TestCase):
+    def _vectors(self, texts, target_a, target_b):
+        docs = [tokenize(t) for t in texts]
+        idf, default = build_idf(docs)
+        return (
+            tfidf_vector(tokenize(target_a), idf, default),
+            tfidf_vector(tokenize(target_b), idf, default),
+        )
+
+    def test_identical_text_scores_one(self):
+        a, b = self._vectors([GENERIC_A, GENERIC_B], GENERIC_A, GENERIC_A)
+        self.assertAlmostEqual(cosine(a, b), 1.0, places=6)
+
+    def test_disjoint_text_scores_zero(self):
+        a, b = self._vectors(["alpha beta", "gamma delta"], "alpha beta", "gamma delta")
+        self.assertAlmostEqual(cosine(a, b), 0.0, places=6)
+
+    def test_empty_vector_scores_zero_without_dividing_by_zero(self):
+        self.assertEqual(cosine({}, {("a",): 1.0}), 0.0)
+
+    def test_near_duplicates_score_higher_than_generic_overlap(self):
+        """The central requirement, as a single ordering assertion.
+
+        Two scripts sharing only stock meditation phrasing must be measurably
+        less similar than a pair that shares an actual storyline.
+        """
+        corpus = [GENERIC_A, GENERIC_B, NEAR_DUPLICATE_B]
+        generic_pair = self._vectors(corpus, GENERIC_A, GENERIC_B)
+        duplicate_pair = self._vectors(corpus, GENERIC_B, NEAR_DUPLICATE_B)
+        self.assertLess(cosine(*generic_pair), cosine(*duplicate_pair))
+
 
 if __name__ == "__main__":
     unittest.main()
