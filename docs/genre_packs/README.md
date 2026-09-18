@@ -88,9 +88,9 @@ As of 2026-09-17, the background library's actual tag distribution across measur
 
 | Feature | Band | Count | Coverage |
 |---------|------|-------|----------|
-| **Brightness** | Dark (< 600 Hz) | 4 | 20% |
-| | Warm (600–1050 Hz) | 9 | 45% |
-| | Bright (> 1050 Hz) | 7 | 35% |
+| **Brightness** | Dark (< 600 Hz) | 3 | 15% |
+| | Warm (600–1050 Hz) | 11 | 55% |
+| | Bright (> 1050 Hz) | 6 | 30% |
 | **Motion** | Drone (< 0.6) | 3 | 15% |
 | | Middle (0.6–1.9) | 9 | 45% |
 | | Evolving (> 1.9) | 8 | 40% |
@@ -99,7 +99,7 @@ As of 2026-09-17, the background library's actual tag distribution across measur
 | | Busy (> 5.0/s) | 4 | 20% |
 | | Not qualified (flux < 0.6) | 3 | 15% |
 | **Timbre** | Tonal (< 0.15) | 9 | 45% |
-| | Middle (0.15–1.5) | 8 | 40% |
+| | Middle (0.15–1.5) | 9 | 45% |
 | | Textured (> 1.5) | 2 | 10% |
 | **Articulation** | Sustained (< 1%) | 6 | 30% |
 | | Middle (1–4%) | 11 | 55% |
