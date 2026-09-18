@@ -1,15 +1,11 @@
 # Wiring the Auto-Generate tab into `app.py`
 
-**Status: applied** (originally 2026-09-17 on `dev-automate`, restructured
-2026-09-17 on `feat/ui-tabs-and-deferred-items`). The import + bare
-`build_auto_tab()` call landed first as a "two-line change" (see git history
-for the original text of this doc if you need it). That left the manual UI
-sitting directly in `gr.Blocks()` with `build_auto_tab()`'s own
-`gr.Tab("Auto-Generate")` appended below it — Gradio rendered the manual
-controls first and then a lone single-tab group underneath, which read as an
-afterthought rather than as one of two equal workflows. This doc now
-describes the structural fix: both workflows are explicit sibling tabs under
-one `gr.Tabs()` container.
+**Status: applied.** Both the tab layout and the UI controls within Auto-Generate have evolved:
+
+1. **Tab structure** (2026-09-17): both workflows as explicit siblings under `gr.Tabs()`.
+2. **Auto-Generate controls** (2026-09-18): replaced free-text prompt box with genre dropdown, length band radio, steer accordion.
+
+This doc covers both.
 
 ## Current layout
 
@@ -57,6 +53,58 @@ if __name__ == "__main__":
 - The `from core.auto_tab import build_auto_tab` import is unchanged, still
   near the other `core` imports (`app.py:66`, alongside
   `from core.pipeline import MeditationPipeline`).
+
+---
+
+## Auto-Generate UI Controls
+
+**Entry point:** Genre dropdown + Length band radio (2026-09-18). The free-text prompt box is gone.
+
+### Layout (inside `build_auto_tab()`)
+
+```
+[Genre]                                    # gr.Dropdown, 46 genres grouped by family
+[Length band radio]                        # 3–6 min / 6–10 min / 10–15 min
+[Content Type selector]                    # pre-filled from genre pack, still user-changeable
+[Voice Engine selector]                    # pre-filled from genre pack, still user-changeable
+[Steer this one (accordion)]               # Collapsed by default; empty text box for optional freetext
+[Generate button]
+```
+
+### Genre dropdown (`genre_dropdown`)
+
+- **Options:** 46 genres in alphabetical order within each of 8 families (Sleep & Rest, Stress & Anxiety, etc.)
+- **Source:** `genres.genre_choices()` — loads all packs, extracts labels grouped by family
+- **Event:** `genre_dropdown.change(on_genre_change)` → pre-fills Content Type and Voice Engine from the pack
+
+### Length band radio (`duration_band_radio`)
+
+- **Options:** "3–6 min", "6–10 min", "10–15 min" (radio buttons, not dropdown)
+- **Maps to:** `DURATION_BANDS` dict in `core/auto_generate.py` → `(target_min_sec, target_max_sec)`
+- **Used by:** planner and writer as the duration budget for `pause_ratio` calculations
+
+### Steer accordion (`steer_accordion`)
+
+- **Label:** "Steer this one (optional)"
+- **Content:** Single `gr.Textbox` (empty by default, multi-line)
+- **Behavior:** If text is provided, appended to the creative brief. Empty = no steer, pure genre-driven flow
+- **Use case:** Advanced users who want to nudge a particular run without redesigning the genre
+
+### Content Type & Voice Engine overrides
+
+Both are pre-filled from the genre pack (`pack.content_type`), and still user-editable in a dropdown:
+- **Content Type:** Allows switching meditation ↔ sleep_story at render time (bypasses pack, affects pauses and music bed)
+- **Voice Engine:** Allows overriding the TTS engine; the selected engine's `prepare_segments()` is still used (not the pack's choice)
+
+Both pre-fills are set by `on_genre_change()` callback when the genre dropdown changes.
+
+### Orchestration inside `auto_generate_handler()`
+
+1. Read `genre_dropdown.value` → `genres.load_pack(genre_slug)`
+2. Read `duration_band_radio.value` → `DURATION_BANDS[band]` → `(target_min_sec, target_max_sec)`
+3. Read `steer_accordion` text → append to brief if present
+4. Call `auto_generate.run(genre=pack, duration_min=target_min, duration_max=target_max, steer=steer_text, …)`
+5. Stream progress via `StreamingRun`, yield audio + script on success
 
 ## If you need to restructure this again
 
