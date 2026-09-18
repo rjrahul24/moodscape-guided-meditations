@@ -169,17 +169,6 @@ def build_auto_tab() -> dict:
                     )
 
                 with gr.Accordion(
-                    "Duration", open=True, elem_classes="accordion-section"
-                ):
-                    with gr.Row():
-                        target_min = gr.Slider(
-                            1, 20, value=5, step=1, label="Min minutes"
-                        )
-                        target_max = gr.Slider(
-                            1, 30, value=7, step=1, label="Max minutes"
-                        )
-
-                with gr.Accordion(
                     "Models", open=False, elem_classes="accordion-section"
                 ):
                     planner = gr.Textbox(
@@ -212,7 +201,6 @@ def build_auto_tab() -> dict:
     return {
         "genre": genre, "band": band, "steer": steer,
         "content_type": content_type, "tts_engine": tts_engine,
-        "target_min": target_min, "target_max": target_max,
         "planner": planner, "generator": generator, "judge": judge, "button": button,
         "audio": audio, "status": status, "script": script, "changelog": changelog,
     }

@@ -79,11 +79,10 @@ class TestBuildAutoTab(unittest.TestCase):
         self.assertEqual(components["tts_engine"].value, "f5")
         self.assertEqual(components["content_type"].value, "meditation")
 
-    def test_duration_defaults_are_five_to_seven_minutes(self):
+    def test_band_defaults_to_medium(self):
         with gr.Blocks():
             components = build_auto_tab()
-        self.assertEqual(components["target_min"].value, 5)
-        self.assertEqual(components["target_max"].value, 7)
+        self.assertEqual(components["band"].value, "medium")
 
 
 class _FakeEmptyErrorRun:
