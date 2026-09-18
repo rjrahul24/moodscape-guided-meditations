@@ -2384,9 +2384,6 @@ from core.script_gen.linter import check_originality
             target_max_sec=config.target_max_sec,
         )
 
-        if pack is not None:
-            violations = violations + check_banned_phrases(script, pack.banned)
-
         report = None
         if config.originality:
             # IDF over EVERY genre (that is what learns generic meditation
@@ -4019,7 +4016,17 @@ once no more repairs will run. The simplest correct placement is:
             engine.preflight()
 ```
 
-8. Update the `generate_script(...)` call inside `run()` to forward the new
+8. Add the per-genre banned-phrase check inside `generate_script`'s lint loop.
+   `pack` only exists in this task, which is why the call belongs here rather
+   than with the rest of the originality wiring. Insert it immediately after
+   the existing `violations = check(...)` call and before `report = None`:
+
+```python
+        if pack is not None:
+            violations = violations + check_banned_phrases(script, pack.banned)
+```
+
+9. Update the `generate_script(...)` call inside `run()` to forward the new
    arguments — without this the planner stage is dead code:
 
 ```python
@@ -4036,9 +4043,9 @@ once no more repairs will run. The simplest correct placement is:
     )
 ```
 
-9. Pass `prefer_tags=config.music_tags` to the `pick_background(...)` call.
+10. Pass `prefer_tags=config.music_tags` to the `pick_background(...)` call.
 
-10. Add `"brief": outcome.brief` to the metadata dict, and
+11. Add `"brief": outcome.brief` to the metadata dict, and
     `brief=outcome.brief, genre=config.genre, angle=config.angle` to the
     returned `AutoResult`.
 
