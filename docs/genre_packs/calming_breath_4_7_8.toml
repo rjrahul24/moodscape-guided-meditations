@@ -20,13 +20,7 @@ arc = [
     "unguided practice",
 ]
 
-safety = """
-Holds are entirely optional and should never exceed a comfortable pause.
-Anyone who becomes lightheaded should stop holding immediately and return to
-normal breathing. This is not breath control training; it is a calming rhythm.
-Do not present it as treatment for anxiety disorders; describe it as a practice
-that many find soothing.
-"""
+safety = """Holds never exceed seven counts at a gentle pace (approximately seven seconds). This is about rhythm, not breath endurance. The hold is entirely optional — if holding makes you lightheaded or uncomfortable, skip it. Anyone feeling dizzy should immediately return to ordinary breathing. Do not present this as a treatment for anxiety disorders; describe it as a calming practice."""
 
 banned = [
     "force the breath",

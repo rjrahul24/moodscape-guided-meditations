@@ -28,10 +28,11 @@ Never rush the rotation; silence between points is essential.
 """
 
 banned = [
-    "fall asleep",
+    "drift off to sleep",
+    "let yourself fall asleep",
     "the sleep of consciousness",
     "you will be unconscious",
-    "deep sleep",
+    "slipping into sleep",
     "relax completely",
     "let your body go limp",
 ]

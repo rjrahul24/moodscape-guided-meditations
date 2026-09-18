@@ -28,7 +28,9 @@ Panic is a body event, and grounding is the intervention.
 """
 
 banned = [
-    "relax",
+    "just relax",
+    "try to relax",
+    "you need to relax",
     "breathe deeply",
     "hold your breath",
     "this isn't real",
