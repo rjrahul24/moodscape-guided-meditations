@@ -252,3 +252,54 @@ def cosine(a: dict[tuple[str, ...], float], b: dict[tuple[str, ...], float]) -> 
     if len(b) < len(a):
         a, b = b, a
     return sum(value * b.get(term, 0.0) for term, value in a.items())
+
+
+RUN_NGRAM = 5
+RUN_MAX_DF = 2
+
+
+def longest_rare_run(
+    tokens_a: Sequence[str],
+    tokens_b: Sequence[str],
+    df: dict[tuple[str, ...], int],
+    *,
+    n: int = RUN_NGRAM,
+    max_df: int = RUN_MAX_DF,
+) -> tuple[int, str]:
+    """Longest run of consecutive rare n-grams from A that also occur in B.
+
+    Returns (shared_token_span, shared_text). A run of k consecutive
+    overlapping n-grams spans k + n - 1 tokens.
+
+    Only n-grams with document frequency <= max_df count, so stock meditation
+    phrasing -- which appears across the whole corpus -- cannot trigger this.
+
+    Approximation worth knowing: consecutive matching n-grams in A are not
+    proven contiguous in B. In practice a run of overlapping rare n-grams that
+    all appear in B is a lifted passage; the alternative (a full longest-common-
+    substring over every corpus pair) is O(n*m) per pair and not worth the cost
+    for the same answer.
+    """
+    rare_b = {
+        gram for gram in ngrams(tokens_b, n) if df.get(gram, 0) <= max_df
+    }
+    if not rare_b:
+        return 0, ""
+
+    best_len = 0
+    best_start = 0
+    run = 0
+    for index, gram in enumerate(ngrams(tokens_a, n)):
+        if gram in rare_b and df.get(gram, 0) <= max_df:
+            run += 1
+            if run > best_len:
+                best_len = run
+                best_start = index - run + 1
+        else:
+            run = 0
+
+    if best_len == 0:
+        return 0, ""
+
+    span = best_len + n - 1
+    return span, " ".join(tokens_a[best_start : best_start + span])

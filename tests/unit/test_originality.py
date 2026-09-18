@@ -85,6 +85,7 @@ from core.originality import (
     build_idf,
     cosine,
     document_frequencies,
+    longest_rare_run,
     ngrams,
     tfidf_vector,
     tokenize,
@@ -181,6 +182,49 @@ class CosineTest(unittest.TestCase):
         generic_pair = self._vectors(corpus, GENERIC_A, GENERIC_B)
         duplicate_pair = self._vectors(corpus, GENERIC_B, NEAR_DUPLICATE_B)
         self.assertLess(cosine(*generic_pair), cosine(*duplicate_pair))
+
+
+LIFTED = (
+    "A different opening entirely, about morning light on a kitchen floor. "
+    "Picture a narrow copper staircase descending into warm lamplight. "
+    "Then something else again, about the sound of a kettle."
+)
+
+
+class LongestRareRunTest(unittest.TestCase):
+    def test_no_shared_text_returns_zero(self):
+        a, b = tokenize("alpha beta gamma delta epsilon zeta"), tokenize(
+            "one two three four five six"
+        )
+        df = document_frequencies([a, b], max_n=5)
+        span, text = longest_rare_run(a, b, df)
+        self.assertEqual((span, text), (0, ""))
+
+    def test_a_lifted_passage_is_found_inside_different_surroundings(self):
+        a, b = tokenize(LIFTED), tokenize(GENERIC_B)
+        df = document_frequencies([a, b], max_n=5)
+        span, text = longest_rare_run(a, b, df)
+        self.assertGreaterEqual(span, 9)
+        self.assertIn("copper staircase descending", text)
+
+    def test_common_phrases_are_excluded_by_the_df_filter(self):
+        """A phrase appearing in many documents is not a lifted passage."""
+        shared = tokenize("notice your breath without changing it at all today")
+        corpus = [shared for _ in range(6)]
+        df = document_frequencies(corpus, max_n=5)
+        span, _text = longest_rare_run(shared, shared, df, max_df=2)
+        self.assertEqual(span, 0)
+
+    def test_identical_documents_return_their_full_length(self):
+        tokens = tokenize(GENERIC_B)
+        df = document_frequencies([tokens], max_n=5)
+        span, _text = longest_rare_run(tokens, tokens, df)
+        self.assertEqual(span, len(tokens))
+
+    def test_too_short_inputs_do_not_raise(self):
+        a = tokenize("only three words")
+        df = document_frequencies([a], max_n=5)
+        self.assertEqual(longest_rare_run(a, a, df), (0, ""))
 
 
 if __name__ == "__main__":
