@@ -15,11 +15,12 @@ from datetime import datetime
 from pathlib import Path
 
 from core.background_picker import pick_background
+from core.originality import add_to_corpus, assess, load_corpus
 from core.script_gen.duration import estimate_duration_sec, log_estimate_accuracy
 from core.script_gen.engine import ScriptEngine, build_engine
 from core.script_gen.generator import draft
 from core.script_gen.judge import repair, review
-from core.script_gen.linter import Violation, check, fatal_violations
+from core.script_gen.linter import Violation, check, check_originality, fatal_violations
 from core.script_gen.rules import (
     build_generator_system_prompt,
     build_judge_system_prompt,
@@ -66,11 +67,40 @@ def _parse_env_int(name: str, default: int) -> int:
         ) from exc
 
 
+def _parse_env_bool(name: str, default: bool) -> bool:
+    """Parse an env var as a flag. '0', 'false', 'no' and '' are false.
+
+    Mirrors _parse_env_float/_parse_env_int: a typo'd value is reported, not
+    silently treated as the default, because a silently-disabled originality
+    check is exactly the failure nobody notices.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    lowered = raw.strip().lower()
+    if lowered in {"0", "false", "no", ""}:
+        return False
+    if lowered in {"1", "true", "yes"}:
+        return True
+    raise ScriptGenerationError(
+        f"Environment variable {name}={raw!r} is not a valid boolean. "
+        "Use 1 or 0."
+    )
+
+
 @dataclass
 class AutoConfig:
     """Everything the auto path needs that is not the prompt itself."""
 
     content_type: str = "meditation"
+    # Genre partitions the originality corpus. The prompt-driven path leaves
+    # this empty, which is its own partition -- prompt runs share no genre
+    # with each other and should only be compared among themselves.
+    genre: str = ""
+    angle: str = ""
+    originality: bool = True
+    # None uses core.originality.CORPUS_DIR. Injected in tests.
+    corpus_dir: Path | None = None
     tts_engine: str = "f5"
     target_min_sec: float = 300.0
     target_max_sec: float = 420.0
@@ -112,6 +142,7 @@ class AutoConfig:
                 "MOODSCAPE_TARGET_MAX_SEC", 420.0
             ),
             "max_repairs": _parse_env_int("MOODSCAPE_SCRIPT_MAX_REPAIRS", 2),
+            "originality": _parse_env_bool("MOODSCAPE_ORIGINALITY", True),
         }
         values.update(overrides)
         return cls(**values)
@@ -127,6 +158,8 @@ class ScriptOutcome:
     violations: list[Violation]
     estimated_sec: float
     repairs_used: int
+    originality_cosine: float = 0.0
+    originality_shared_span: int = 0
 
 
 @dataclass
@@ -142,6 +175,7 @@ class AutoResult:
     background_path: str
     violations: list[Violation]
     estimated_sec: float
+    originality: float = 0.0
 
 
 def _violation_dicts(violations: list[Violation]) -> list[dict]:
@@ -242,6 +276,24 @@ def generate_script(
             target_min_sec=config.target_min_sec,
             target_max_sec=config.target_max_sec,
         )
+
+        report = None
+        if config.originality:
+            # IDF over EVERY genre (that is what learns generic meditation
+            # vocabulary); comparison within this genre only (that is where
+            # collisions happen). See core/originality.py.
+            same_genre = load_corpus(
+                genre=config.genre, limit=100, corpus_dir=config.corpus_dir
+            )
+            all_texts = [
+                entry.text
+                for entry in load_corpus(limit=500, corpus_dir=config.corpus_dir)
+            ]
+            report = assess(
+                script, compare_against=same_genre, idf_texts=all_texts
+            )
+            violations = violations + check_originality(report)
+
         fatal = fatal_violations(violations)
 
         if not fatal:
@@ -252,6 +304,8 @@ def generate_script(
                 violations=violations,
                 estimated_sec=estimated_sec,
                 repairs_used=repairs_used,
+                originality_cosine=report.max_cosine if report else 0.0,
+                originality_shared_span=report.shared_span if report else 0,
             )
 
         if repairs_used >= config.max_repairs:
@@ -374,6 +428,16 @@ def run(
         **pipeline_kwargs,
     )
 
+    if config.originality:
+        # Recorded only after a successful render: a script that never became
+        # audio should not constrain future runs.
+        add_to_corpus(
+            outcome.script,
+            genre=config.genre,
+            angle=config.angle,
+            corpus_dir=config.corpus_dir,
+        )
+
     # Record this background as recently used so a caller that reuses this
     # AutoConfig across multiple run() calls (batch/scripted use) gets
     # variety. See the recent_backgrounds field docstring for the caveat
@@ -398,6 +462,8 @@ def run(
             {
                 "prompt": prompt,
                 "content_type": config.content_type,
+                "genre": config.genre,
+                "angle": config.angle,
                 "tts_engine": config.tts_engine,
                 "generator": generator_engine.name,
                 "judge": judge_engine.name,
@@ -409,6 +475,8 @@ def run(
                 "actual_sec": actual_sec,
                 "estimate_ratio": estimate_ratio,
                 "repairs_used": outcome.repairs_used,
+                "originality_cosine": outcome.originality_cosine,
+                "originality_shared_span": outcome.originality_shared_span,
             },
             indent=2,
         ),
@@ -425,4 +493,5 @@ def run(
         background_path=background_path,
         violations=outcome.violations,
         estimated_sec=outcome.estimated_sec,
+        originality=outcome.originality_cosine,
     )

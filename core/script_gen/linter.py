@@ -9,6 +9,7 @@ Severity matters. Treating every violation as fatal would make a weaker model
 unusable; treating none as fatal would let a safety failure reach audio.
 """
 
+import os
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -421,8 +422,11 @@ def format_for_repair(violations: list[Violation]) -> str:
 # written at all. Closing the paraphrase gap reactively would need embedding
 # similarity; see the spec's section 7 for why that is deferred.
 
-FATAL_COSINE = 0.80
-ADVISORY_COSINE = 0.65
+# These are read at import time deliberately: they are a calibration knob
+# set before a batch, not a per-run setting, and check_originality() already
+# takes explicit overrides for tests.
+FATAL_COSINE = float(os.environ.get("MOODSCAPE_ORIGINALITY_FATAL", "0.80"))
+ADVISORY_COSINE = float(os.environ.get("MOODSCAPE_ORIGINALITY_ADVISORY", "0.65"))
 
 # A shared run this long is a lifted passage rather than coincidence.
 MIN_RUN_TOKENS = 12

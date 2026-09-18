@@ -4,6 +4,7 @@ Uses fake engines and a stub pipeline — no model, no network, no audio.
 """
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -436,6 +437,97 @@ class TestAutoConfigFromEnv(unittest.TestCase):
             with self.assertRaises(ScriptGenerationError) as ctx:
                 AutoConfig.from_env()
         self.assertIn("MOODSCAPE_TARGET_MAX_SEC", str(ctx.exception))
+
+
+class OriginalityIntegrationTest(unittest.TestCase):
+    """The core requirement: the same script twice must be caught."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _config(self, **overrides):
+        values = {
+            "corpus_dir": self.dir / "corpus",
+            "background_scan": lambda: [("Bed — 10:00", "/bg/a.mp3")],
+            "genre": "sleep",
+        }
+        values.update(overrides)
+        return AutoConfig(**values)
+
+    def _run_once(self, script: str, config):
+        pipeline = StubPipeline(self.dir)
+        return run(
+            "a prompt",
+            config=config,
+            pipeline=pipeline,
+            generator_engine=FakeScriptEngine([script]),
+            judge_engine=FakeScriptEngine([judged(script)]),
+        )
+
+    def test_a_successful_run_is_added_to_the_corpus(self):
+        from core.originality import load_corpus
+
+        config = self._config()
+        self._run_once(CLEAN_SCRIPT, config)
+        entries = load_corpus(genre="sleep", corpus_dir=config.corpus_dir)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].text, CLEAN_SCRIPT)
+
+    def test_regenerating_an_identical_script_is_fatal(self):
+        config = self._config()
+        self._run_once(CLEAN_SCRIPT, config)
+
+        with self.assertRaises(ScriptGenerationError) as ctx:
+            self._run_once(CLEAN_SCRIPT, config)
+
+        self.assertIn("PASSAGE_LIFTED", str(ctx.exception))
+
+    def test_originality_can_be_switched_off(self):
+        config = self._config(originality=False)
+        self._run_once(CLEAN_SCRIPT, config)
+        result = self._run_once(CLEAN_SCRIPT, config)
+        self.assertTrue(result.audio_path)
+
+    def test_metadata_records_the_similarity_score(self):
+        config = self._config()
+        result = self._run_once(CLEAN_SCRIPT, config)
+        meta = json.loads(Path(result.meta_path).read_text())
+        self.assertIn("originality_cosine", meta)
+        self.assertIn("originality_shared_span", meta)
+        self.assertEqual(meta["genre"], "sleep")
+
+    def test_a_different_script_in_the_same_genre_passes(self):
+        config = self._config()
+        self._run_once(CLEAN_SCRIPT, config)
+        other = (
+            "Let the day set itself down for a moment.\n\n"
+            "[pause:5s]\n\n"
+            "Copper light moves slowly along the far wall.\n\n"
+            "[pause:5s]\n\n"
+            "Nothing here needs deciding tonight."
+        )
+        result = self._run_once(other, config)
+        self.assertTrue(result.audio_path)
+
+
+class OriginalityEnvTest(unittest.TestCase):
+    def test_default_is_on(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MOODSCAPE_ORIGINALITY", None)
+            self.assertTrue(AutoConfig.from_env().originality)
+
+    def test_zero_disables_it(self):
+        with patch.dict(os.environ, {"MOODSCAPE_ORIGINALITY": "0"}):
+            self.assertFalse(AutoConfig.from_env().originality)
+
+    def test_a_typo_is_reported_not_silently_defaulted(self):
+        with patch.dict(os.environ, {"MOODSCAPE_ORIGINALITY": "maybe"}):
+            with self.assertRaises(ScriptGenerationError):
+                AutoConfig.from_env()
 
 
 if __name__ == "__main__":
