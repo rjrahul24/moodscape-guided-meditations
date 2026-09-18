@@ -37,13 +37,13 @@ banned = [
 ]
 
 [[angles]]
-name    = "the vast sky"
-imagery = ["clouds rising and passing", "the sky unchanged by what moves through it", "room for all weather"]
-
-[[angles]]
-name    = "the still pond"
-imagery = ["ripples forming and fading", "each disturbance temporary", "stillness underneath"]
-
-[[angles]]
 name    = "the listening ear"
 imagery = ["sound arriving without effort", "near and far sounds at once", "ears open and receiving"]
+
+[[angles]]
+name    = "the body as space"
+imagery = ["your body as a room that sensations move through", "tingling, warmth, pressure arising and fading", "awareness touching each point as it appears"]
+
+[[angles]]
+name    = "the room around you"
+imagery = ["the walls holding the space", "the volume of air you sit in", "nothing forced, simply allowing what is present"]

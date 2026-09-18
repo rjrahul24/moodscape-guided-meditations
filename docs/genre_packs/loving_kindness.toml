@@ -39,13 +39,13 @@ banned = [
 ]
 
 [[angles]]
-name    = "the warm light"
-imagery = ["beginning at your heart", "spreading outward like sunrise", "touching all it reaches"]
-
-[[angles]]
 name    = "the gesture of hands"
 imagery = ["hands in a gesture of offering or receiving", "meeting the person in front of you", "the simple exchange of care"]
 
 [[angles]]
-name    = "the widening ripple"
-imagery = ["one stone dropped in still water", "concentric circles expanding outward", "each circle carrying the original kindness"]
+name    = "the threshold at dawn"
+imagery = ["the moment between night and day", "light arriving gradually", "standing at the opening of something new"]
+
+[[angles]]
+name    = "the face of a benefactor"
+imagery = ["someone who showed you kindness", "the shape of their expression", "kindness you received becoming kindness you extend"]
