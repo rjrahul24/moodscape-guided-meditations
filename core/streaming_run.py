@@ -29,8 +29,19 @@ class ProgressUpdate:
 class StreamingRun:
     """Iterate for progress; read .result or .error when iteration ends."""
 
-    def __init__(self, prompt: str, *, config=None, runner=None, **kwargs):
+    def __init__(
+        self,
+        prompt: str = "",
+        *,
+        genre: str | None = None,
+        steer: str = "",
+        config=None,
+        runner=None,
+        **kwargs,
+    ):
         self._prompt = prompt
+        self._genre = genre
+        self._steer = steer
         self._config = config
         self._runner = runner if runner is not None else default_run
         self._kwargs = kwargs
@@ -39,8 +50,8 @@ class StreamingRun:
         self.invalid_input: bool = False
 
     def __iter__(self):
-        if not self._prompt or not self._prompt.strip():
-            self.error = "Enter a prompt first."
+        if not self._genre and not (self._prompt or "").strip():
+            self.error = "Pick a genre, or enter a prompt first."
             self.invalid_input = True
             return
 
@@ -53,6 +64,8 @@ class StreamingRun:
             try:
                 self.result = self._runner(
                     self._prompt,
+                    genre=self._genre,
+                    steer=self._steer,
                     config=self._config,
                     progress_cb=progress_cb,
                     **self._kwargs,

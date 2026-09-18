@@ -9,47 +9,81 @@ import os
 
 import gradio as gr
 
-from core.auto_generate import DEFAULT_GENERATOR, DEFAULT_JUDGE, AutoConfig
+from core.auto_generate import (
+    DEFAULT_GENERATOR,
+    DEFAULT_JUDGE,
+    DEFAULT_PLANNER,
+    DURATION_BANDS,
+    AutoConfig,
+)
+from core.genres import genre_choices, load_pack
 from core.streaming_run import StreamingRun
+
+BAND_CHOICES = [
+    ("3–6 min", "short"),
+    ("6–10 min", "medium"),
+    ("10–15 min", "long"),
+]
+
+
+def genre_dropdown_choices() -> list[tuple[str, str]]:
+    """Flatten the family grouping into Gradio's (label, value) pairs.
+
+    Gradio dropdowns have no option groups, so the family is folded into the
+    visible label. Sorting by family keeps 46 entries scannable.
+    """
+    return [
+        (f"{family} — {label}", slug)
+        for family, entries in genre_choices()
+        for label, slug in entries
+    ]
+
+
+def content_type_for_genre(slug: str) -> str:
+    """The audio profile a genre renders as — used to pre-fill the dropdown."""
+    return load_pack(slug).content_type
 
 
 def auto_generate_handler(
-    prompt,
+    genre,
+    band,
+    steer,
     content_type,
     tts_engine,
-    target_min_min,
-    target_max_min,
+    planner_spec,
     generator_spec,
     judge_spec,
 ):
-    """Prompt -> finished meditation, streaming progress to the UI."""
+    """Genre + length -> finished meditation, streaming progress to the UI."""
+    os.environ["MOODSCAPE_SCRIPT_PLANNER"] = planner_spec
     os.environ["MOODSCAPE_SCRIPT_GENERATOR"] = generator_spec
     os.environ["MOODSCAPE_SCRIPT_JUDGE"] = judge_spec
 
-    config = AutoConfig(
-        content_type=content_type,
+    if not genre:
+        yield None, "", "", "Pick a genre first."
+        return
+
+    # content_type comes from the dropdown, which the genre change handler
+    # pre-filled from the pack. The user's override, if any, wins -- run()
+    # never re-derives it.
+    config = AutoConfig.from_genre(
+        load_pack(genre), band=band, content_type=content_type,
         tts_engine=tts_engine,
-        target_min_sec=float(target_min_min) * 60.0,
-        target_max_sec=float(target_max_min) * 60.0,
     )
 
-    run = StreamingRun(prompt, config=config)
+    run = StreamingRun("", genre=genre, steer=steer, config=config)
     for update in run:
         yield None, "", "", update.message
 
     if run.result is None:
-        # Guard on result, not on the truthiness of run.error: an exception
-        # with an EMPTY message sets run.error = "", which is falsy, so a
-        # truthiness check here would fall through to `run.result` (still
-        # None) and raise AttributeError inside this Gradio generator
-        # instead of reporting the failure.
         message = run.error if run.invalid_input else f"Failed: {run.error}"
         yield None, "", "", message
         return
 
     result = run.result
     status = (
-        f"Done. Background: {result.background}. "
+        f"Done. {result.genre} / {result.angle}. "
+        f"Background: {result.background}. "
         f"Estimated {result.estimated_sec / 60:.1f} min."
     )
     advisories = "\n".join(f"- [{v.code}] {v.message}" for v in result.violations)
@@ -68,18 +102,32 @@ def build_auto_tab() -> dict:
     """
     with gr.Tab("Auto-Generate"):
         gr.Markdown(
-            "Describe how you feel. A script is written, independently "
+            "Pick a genre and length. A script is written, independently "
             "reviewed, checked, and rendered with a random background track — "
             "no further input needed."
         )
         with gr.Row():
             # ── Left column: Creative Canvas ──────────────────────────────
             with gr.Column(scale=3, elem_classes="canvas-zone"):
-                prompt = gr.Textbox(
-                    label="What do you need?",
-                    placeholder="I'm feeling anxious. I need a relaxing meditation.",
-                    lines=3,
+                genre = gr.Dropdown(
+                    choices=genre_dropdown_choices(),
+                    value="stress_relief",
+                    label="Genre",
+                    elem_classes="dropdown-container",
                 )
+                band = gr.Radio(
+                    choices=BAND_CHOICES,
+                    value="medium",
+                    label="Length",
+                )
+                with gr.Accordion(
+                    "Steer this one", open=False, elem_classes="accordion-section"
+                ):
+                    steer = gr.Textbox(
+                        label="Anything else? (optional)",
+                        placeholder="by the ocean · for a night shift",
+                        lines=2,
+                    )
                 button = gr.Button(
                     "Generate", variant="primary", elem_classes="primary-btn"
                 )
@@ -130,6 +178,12 @@ def build_auto_tab() -> dict:
                 with gr.Accordion(
                     "Models", open=False, elem_classes="accordion-section"
                 ):
+                    planner = gr.Textbox(
+                        label="Planner model",
+                        value=os.environ.get(
+                            "MOODSCAPE_SCRIPT_PLANNER", DEFAULT_PLANNER
+                        ),
+                    )
                     generator = gr.Textbox(
                         label="Generator model",
                         value=os.environ.get(
@@ -141,16 +195,20 @@ def build_auto_tab() -> dict:
                         value=os.environ.get("MOODSCAPE_SCRIPT_JUDGE", DEFAULT_JUDGE),
                     )
 
+        genre.change(
+            fn=content_type_for_genre, inputs=[genre], outputs=[content_type]
+        )
         button.click(
             fn=auto_generate_handler,
-            inputs=[prompt, content_type, tts_engine, target_min, target_max,
-                    generator, judge],
+            inputs=[genre, band, steer, content_type, tts_engine,
+                    planner, generator, judge],
             outputs=[audio, script, changelog, status],
         )
 
     return {
-        "prompt": prompt, "content_type": content_type, "tts_engine": tts_engine,
+        "prompt": None, "genre": genre, "band": band, "steer": steer,
+        "content_type": content_type, "tts_engine": tts_engine,
         "target_min": target_min, "target_max": target_max,
-        "generator": generator, "judge": judge, "button": button,
+        "planner": planner, "generator": generator, "judge": judge, "button": button,
         "audio": audio, "status": status, "script": script, "changelog": changelog,
     }

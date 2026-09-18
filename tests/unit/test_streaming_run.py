@@ -92,13 +92,13 @@ class TestStreamingRun(unittest.TestCase):
         run = StreamingRun("   ", runner=runner)
         list(run)
         self.assertEqual(called, [])
-        self.assertEqual(run.error, "Enter a prompt first.")
+        self.assertEqual(run.error, "Pick a genre, or enter a prompt first.")
         self.assertTrue(run.invalid_input)
 
     def test_empty_prompt_sets_invalid_input(self):
         run = StreamingRun("", runner=lambda *a, **k: make_result())
         list(run)
-        self.assertEqual(run.error, "Enter a prompt first.")
+        self.assertEqual(run.error, "Pick a genre, or enter a prompt first.")
         self.assertTrue(run.invalid_input)
 
     def test_iteration_terminates_even_with_no_progress_calls(self):
@@ -106,6 +106,37 @@ class TestStreamingRun(unittest.TestCase):
             return make_result()
 
         self.assertIsInstance(list(StreamingRun("p", runner=runner)), list)
+
+
+class GenreModeTest(unittest.TestCase):
+    def test_an_empty_prompt_is_fine_when_a_genre_is_given(self):
+        seen = {}
+
+        def runner(prompt, **kwargs):
+            seen.update({"prompt": prompt, **kwargs})
+            return make_result()
+
+        stream = StreamingRun("", genre="fall_asleep", runner=runner)
+        list(stream)
+        self.assertEqual(stream.result.audio_path, "/out/m.wav")
+        self.assertFalse(stream.invalid_input)
+        self.assertEqual(seen["genre"], "fall_asleep")
+
+    def test_no_prompt_and_no_genre_is_still_rejected(self):
+        stream = StreamingRun("", runner=lambda *a, **k: None)
+        list(stream)
+        self.assertTrue(stream.invalid_input)
+        self.assertIn("genre", stream.error.lower())
+
+    def test_steer_text_is_forwarded(self):
+        seen = {}
+
+        def runner(prompt, **kwargs):
+            seen.update(kwargs)
+            return make_result()
+
+        list(StreamingRun("", genre="fall_asleep", steer="by the sea", runner=runner))
+        self.assertEqual(seen["steer"], "by the sea")
 
 
 if __name__ == "__main__":

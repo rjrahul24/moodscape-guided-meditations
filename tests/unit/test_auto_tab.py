@@ -12,6 +12,38 @@ import gradio as gr
 from core.auto_tab import auto_generate_handler, build_auto_tab
 
 
+class GenreControlsTest(unittest.TestCase):
+    def test_dropdown_choices_cover_every_pack_and_name_the_family(self):
+        from core.auto_tab import genre_dropdown_choices
+
+        choices = genre_dropdown_choices()
+        self.assertEqual(len(choices), 46)
+        labels = [label for label, _slug in choices]
+        self.assertTrue(any("Sleep & Rest — Fall Asleep" == l for l in labels))
+        self.assertEqual(len(set(labels)), len(labels))
+
+    def test_every_choice_value_is_a_loadable_slug(self):
+        from core.auto_tab import genre_dropdown_choices
+        from core.genres import load_pack
+
+        for _label, slug in genre_dropdown_choices():
+            load_pack(slug)
+
+    def test_the_tab_exposes_the_genre_band_and_steer_controls(self):
+        from core.auto_tab import build_auto_tab
+
+        with gr.Blocks():
+            components = build_auto_tab()
+        for key in ("genre", "band", "steer"):
+            self.assertIn(key, components)
+
+    def test_changing_genre_prefills_the_content_type(self):
+        from core.auto_tab import content_type_for_genre
+
+        self.assertEqual(content_type_for_genre("fall_asleep"), "sleep_story")
+        self.assertEqual(content_type_for_genre("grief_and_loss"), "meditation")
+
+
 class TestBuildAutoTab(unittest.TestCase):
     def test_builds_inside_a_blocks_context(self):
         with gr.Blocks():
@@ -60,11 +92,12 @@ class TestAutoGenerateHandlerErrorGuard(unittest.TestCase):
         with patch("core.auto_tab.StreamingRun", _FakeEmptyErrorRun):
             outputs = list(
                 auto_generate_handler(
-                    "I feel anxious",
+                    "stress_relief",
+                    "medium",
+                    "",
                     "meditation",
                     "f5",
-                    5,
-                    7,
+                    "ollama:llama3.2:3b",
                     "ollama:llama3.2:3b",
                     "ollama:llama3.2:3b",
                 )
@@ -83,8 +116,9 @@ class TestAutoGenerateHandlerErrorGuard(unittest.TestCase):
         with patch("core.auto_tab.StreamingRun", FakeInvalidInputRun):
             outputs = list(
                 auto_generate_handler(
-                    "", "meditation", "f5", 5, 7,
-                    "ollama:llama3.2:3b", "ollama:llama3.2:3b",
+                    "stress_relief", "medium", "",
+                    "meditation", "f5",
+                    "ollama:llama3.2:3b", "ollama:llama3.2:3b", "ollama:llama3.2:3b",
                 )
             )
         self.assertEqual(outputs[-1][3], "")
