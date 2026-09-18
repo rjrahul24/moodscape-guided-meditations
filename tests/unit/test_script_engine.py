@@ -95,5 +95,27 @@ class TestFakeEngine(unittest.TestCase):
             FakeScriptEngine([])
 
 
+class UnloadAndPreflightTest(unittest.TestCase):
+    def test_fake_engine_counts_unloads(self):
+        engine = FakeScriptEngine(["x"])
+        self.assertEqual(engine.unload_calls, 0)
+        engine.unload()
+        engine.unload()
+        self.assertEqual(engine.unload_calls, 2)
+
+    def test_fake_engine_counts_preflights(self):
+        engine = FakeScriptEngine(["x"])
+        engine.preflight()
+        self.assertEqual(engine.preflight_calls, 1)
+
+    def test_anthropic_engine_unload_is_a_harmless_no_op(self):
+        """Hosted providers have nothing to unload; the call must not fail."""
+        from core.script_gen.adapters.anthropic_api import AnthropicEngine
+
+        engine = AnthropicEngine("claude-opus-5", api_key_env="ANTHROPIC_API_KEY")
+        engine.unload()
+        engine.preflight()
+
+
 if __name__ == "__main__":
     unittest.main()

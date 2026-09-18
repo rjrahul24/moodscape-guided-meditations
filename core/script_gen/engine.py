@@ -62,6 +62,26 @@ class ScriptEngine(ABC):
                 naming the provider and how to fix it.
         """
 
+    def unload(self) -> None:
+        """Release backend resources held by this model.
+
+        Default: no-op. Hosted providers hold nothing locally, so only the
+        local Ollama adapter overrides this.
+
+        Called between pipeline stages. On a 32 GB machine an 18 GB model
+        left resident while F5-TTS and Demucs load means swap, and swap under
+        Metal is where this project's deallocation bus errors live.
+        """
+
+    def preflight(self) -> None:
+        """Fail fast if this engine cannot serve its model.
+
+        Default: no-op.
+
+        Raises:
+            RuntimeError: Naming the model and the exact command to fix it.
+        """
+
     @property
     @abstractmethod
     def name(self) -> str:
@@ -81,6 +101,8 @@ class FakeScriptEngine(ScriptEngine):
         self._responses = list(responses)
         self._index = 0
         self.calls: list[dict] = []
+        self.unload_calls = 0
+        self.preflight_calls = 0
 
     def complete(
         self,
@@ -101,6 +123,12 @@ class FakeScriptEngine(ScriptEngine):
         response = self._responses[min(self._index, len(self._responses) - 1)]
         self._index += 1
         return response
+
+    def unload(self) -> None:
+        self.unload_calls += 1
+
+    def preflight(self) -> None:
+        self.preflight_calls += 1
 
     @property
     def name(self) -> str:

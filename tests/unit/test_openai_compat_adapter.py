@@ -341,5 +341,71 @@ class TestOpenAICompatEngine(unittest.TestCase):
         self.assertIn("1 attempt", str(ctx.exception))
 
 
+class OllamaUnloadTest(unittest.TestCase):
+    def _engine(self, handler, provider="ollama"):
+        return OpenAICompatEngine(
+            provider=provider,
+            model="qwen3.8:27b",
+            base_url="http://localhost:11434/v1",
+            api_key_env=None,
+            transport=httpx.MockTransport(handler),
+        )
+
+    def test_unload_posts_keep_alive_zero_to_the_native_endpoint(self):
+        seen = {}
+
+        def handler(request):
+            seen["url"] = str(request.url)
+            seen["body"] = json.loads(request.content)
+            return httpx.Response(200, json={"status": "ok"})
+
+        self._engine(handler).unload()
+        self.assertEqual(seen["url"], "http://localhost:11434/api/generate")
+        self.assertEqual(seen["body"]["keep_alive"], 0)
+        self.assertEqual(seen["body"]["model"], "qwen3.8:27b")
+
+    def test_unload_is_a_no_op_for_hosted_providers(self):
+        def handler(request):
+            raise AssertionError("hosted providers must not be called on unload")
+
+        self._engine(handler, provider="groq").unload()
+
+    def test_a_failing_unload_never_raises(self):
+        """A model that will not unload is a memory problem, not a job failure."""
+
+        def handler(request):
+            return httpx.Response(500, text="boom")
+
+        self._engine(handler).unload()
+
+    def test_preflight_passes_when_the_model_is_present(self):
+        def handler(request):
+            return httpx.Response(
+                200, json={"models": [{"name": "qwen3.8:27b"}, {"name": "gemma4:31b"}]}
+            )
+
+        self._engine(handler).preflight()
+
+    def test_preflight_names_the_pull_command_when_the_model_is_missing(self):
+        def handler(request):
+            return httpx.Response(200, json={"models": [{"name": "llama3.2:3b"}]})
+
+        with self.assertRaises(RuntimeError) as ctx:
+            self._engine(handler).preflight()
+        self.assertIn("ollama pull qwen3.8:27b", str(ctx.exception))
+
+    def test_preflight_is_silent_when_ollama_is_unreachable(self):
+        """Preflight is an early warning, not a second connectivity check.
+
+        complete() already reports an unreachable Ollama with a good message;
+        failing here too would just replace it with a worse one.
+        """
+
+        def handler(request):
+            raise httpx.ConnectError("refused")
+
+        self._engine(handler).preflight()
+
+
 if __name__ == "__main__":
     unittest.main()

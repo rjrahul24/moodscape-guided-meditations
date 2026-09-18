@@ -99,6 +99,66 @@ class OpenAICompatEngine(ScriptEngine):
         self._transport = transport
         self._sleep = sleep
 
+    def _native_base(self) -> str:
+        """Ollama's native API root.
+
+        base_url points at the OpenAI-compatible surface
+        (http://host:11434/v1), but keep_alive and the model list are only
+        available on the native API one level up.
+        """
+        return self._base_url[: -len("/v1")] if self._base_url.endswith("/v1") else self._base_url
+
+    def unload(self) -> None:
+        """Ask Ollama to evict this model immediately.
+
+        No-op for every other provider. Failures are logged and swallowed: a
+        model that will not unload is a memory-pressure problem for the next
+        stage, not a reason to fail a job that has already produced a script.
+        """
+        if self._provider != "ollama":
+            return
+        url = f"{self._native_base()}/api/generate"
+        try:
+            with httpx.Client(timeout=30.0, transport=self._transport) as client:
+                client.post(url, json={"model": self._model, "keep_alive": 0})
+        except Exception:
+            logger.warning(
+                "Could not unload %s from Ollama; the next stage may be "
+                "memory-constrained.",
+                self._model,
+                exc_info=True,
+            )
+
+    def preflight(self) -> None:
+        """Check the model is pulled before a long run begins.
+
+        No-op for every provider but Ollama. An unreachable server is NOT
+        reported here: complete() already produces a good message for that,
+        and duplicating it would only make the error worse.
+
+        Raises:
+            RuntimeError: If Ollama is reachable and the model is absent.
+        """
+        if self._provider != "ollama":
+            return
+        url = f"{self._native_base()}/api/tags"
+        try:
+            with httpx.Client(timeout=10.0, transport=self._transport) as client:
+                response = client.get(url)
+            names = {
+                entry.get("name", "")
+                for entry in response.json().get("models", [])
+            }
+        except Exception:
+            logger.debug("Preflight could not reach %s; skipping.", url, exc_info=True)
+            return
+
+        if self._model not in names:
+            raise RuntimeError(
+                f"Ollama does not have model {self._model!r}. Pull it first:\n"
+                f"    ollama pull {self._model}"
+            )
+
     @property
     def name(self) -> str:
         return f"{self._provider}:{self._model}"
