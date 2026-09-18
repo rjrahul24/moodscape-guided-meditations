@@ -1,0 +1,48 @@
+label        = "Pre-Meeting Calm"
+family       = "Focus & Work"
+content_type = "meditation"
+music_tags   = ["warm", "steady"]
+pause_ratio  = 0.28
+
+technique = """
+Embodied confidence: grounding the listener in the physical stance and breath
+of confidence (shoulders open, voice in the chest, exhale slightly longer than
+inhale) without forcing positive thinking. The body leads the mind; when the
+body knows it is capable, the mind follows.
+"""
+
+arc = [
+    "arriving with whatever you are feeling",
+    "settling into your body",
+    "the stance of someone who knows their ground",
+    "the voice you will use",
+    "stepping in ready",
+]
+
+safety = """
+Do not deny nervousness or suggest it should disappear. Nervousness and readiness
+can coexist. Never invoke perfectionism or suggest the outcome determines your
+worth. Frame the meeting as a conversation, not a performance. Avoid any language
+that suggests the other people are judges.
+"""
+
+banned = [
+    "you should not be nervous",
+    "everyone is judging you",
+    "this meeting will determine your future",
+    "you must be perfect",
+    "fake it till you make it",
+    "smile even if you don't feel it",
+]
+
+[[angles]]
+name    = "the oak tree in wind"
+imagery = ["roots deep and unseen", "branches moving but trunk steady", "the tree giving to the wind and holding"]
+
+[[angles]]
+name    = "the trained athlete before the event"
+imagery = ["the body warm and ready", "the breath steady and known", "confidence from preparation, not certainty of outcome"]
+
+[[angles]]
+name    = "the performer who has rehearsed"
+imagery = ["knowing your lines but not controlling the audience", "the stage a place of conversation", "your part real even if not scripted"]

@@ -1,0 +1,49 @@
+label        = "Decision Clarity"
+family       = "Focus & Work"
+content_type = "meditation"
+music_tags   = ["steady", "tonal"]
+pause_ratio  = 0.30
+
+technique = """
+Somatic knowing access: using the body's wisdom to inform decision-making,
+especially when the mind is caught in analysis. Invites the listener to notice
+what happens in the body when they imagine each path — the quality of the breath,
+the openness or closure in the chest — without forcing an answer. The body often
+knows before the mind can articulate.
+"""
+
+arc = [
+    "holding the decision lightly",
+    "noticing the paths that are possible",
+    "the body's response to each",
+    "what wants to move forward",
+    "trusting what emerges",
+]
+
+safety = """
+Do not suggest there is a single "right" choice. Most decisions have tradeoffs,
+and both paths may be valid. Avoid telling the listener what to decide; this is
+about accessing their own knowing, not receiving instruction. Normalize that good
+decisions sometimes feel uncertain.
+"""
+
+banned = [
+    "you know what you should do",
+    "there is a right answer",
+    "just go with your gut",
+    "this choice will define you",
+    "if you choose wrong you will regret it",
+    "stop overthinking",
+]
+
+[[angles]]
+name    = "a fork in a path"
+imagery = ["both directions forward and unknown", "the step beyond the fork committing the walk", "each path real, each unexplored"]
+
+[[angles]]
+name    = "two doors you might open"
+imagery = ["you standing in the threshold", "light from both but different colors", "no locked doors, just different thresholds"]
+
+[[angles]]
+name    = "currents meeting in a river"
+imagery = ["each current moving with its own force", "the water choosing its own course", "all movement downstream"]

@@ -1,0 +1,49 @@
+label        = "Creative Flow"
+family       = "Focus & Work"
+content_type = "meditation"
+music_tags   = ["warm", "evolving"]
+pause_ratio  = 0.28
+
+technique = """
+Neural priming for emergence: loosening the grip of the conscious planner so
+that intuition and generative surprise can arise. Uses images of water, fire,
+and growth to suggest that creating is not forcing but allowing. The listener
+remains open to what wants to emerge rather than controlling toward a
+preconceived goal.
+"""
+
+arc = [
+    "releasing the grip of intention",
+    "opening to what wants to come through",
+    "trusting the materials and the process",
+    "stepping out of the way",
+    "working with what arrives",
+]
+
+safety = """
+Do not promise results or inspiration. Do not frame creative blocks as personal
+failure. Acknowledge that creativity has rhythms and that fallow periods are
+real and sometimes necessary. Avoid perfectionism language; creation is play
+and experimentation first.
+"""
+
+banned = [
+    "force your creativity",
+    "think harder",
+    "you are blocked",
+    "it has to be perfect",
+    "inspiration will strike if you wait",
+    "you are not creative enough",
+]
+
+[[angles]]
+name    = "clay on a wheel"
+imagery = ["wet and formless and responsive", "your hands guiding but not controlling", "the shape emerging from play"]
+
+[[angles]]
+name    = "a fire that feeds itself"
+imagery = ["each spark catching what is near", "the flame moving where it will", "heat and light without planning"]
+
+[[angles]]
+name    = "seeds planted in darkness"
+imagery = ["roots reaching before the shoot", "growth happening unseen", "the shoot arriving without warning"]

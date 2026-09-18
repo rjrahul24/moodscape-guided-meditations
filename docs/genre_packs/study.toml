@@ -1,0 +1,49 @@
+label        = "Study"
+family       = "Focus & Work"
+content_type = "meditation"
+music_tags   = ["steady", "tonal"]
+pause_ratio  = 0.26
+
+technique = """
+Attention cycling for retention: short guided attention resets (30–60 second
+guided focus bursts) separated by open space for the listener to absorb and
+consolidate what they've just read or learned. The listener remains eyes open
+and keeps learning, but the meditation provides timing and neural priming for
+memory formation.
+"""
+
+arc = [
+    "settling the mind into learning mode",
+    "focusing on what you've just absorbed",
+    "releasing and consolidating",
+    "returning to the material with fresh eyes",
+    "building momentum through cycles",
+]
+
+safety = """
+Study anxiety and perfectionism often accompany this practice; normalize that
+learning is messy and forgetting is part of it. Do not suggest perfect retention
+or recall is possible or necessary. Never frame study as a test or judgment;
+it is exploration. Avoid any comparison to other students.
+"""
+
+banned = [
+    "you must remember everything",
+    "if you forget you have failed",
+    "study harder",
+    "concentration is willpower",
+    "ignore your fatigue",
+    "memorize this perfectly",
+]
+
+[[angles]]
+name    = "light moving through a prism"
+imagery = ["one ray entering as white light", "being separated and clarified", "each wavelength suddenly visible"]
+
+[[angles]]
+name    = "soil receiving seeds"
+imagery = ["each seed planted with intention", "darkness giving what the seed needs to grow", "patience for what cannot be rushed"]
+
+[[angles]]
+name    = "a weaver at the loom"
+imagery = ["threads running vertically and horizontal", "each pass building the pattern", "complexity emerging from simple repetition"]

@@ -1,0 +1,49 @@
+label        = "Work Break Reset"
+family       = "Focus & Work"
+content_type = "meditation"
+music_tags   = ["warm", "sparse"]
+pause_ratio  = 0.30
+
+technique = """
+Rapid nervous-system downshift with eyes-open micro-recovery: the listener takes
+5 to 15 minutes between tasks to step out of activation, soften their gaze, and
+reset. Uses brief body phrases ("shoulders away from ears," "jaw loose") and
+environmental awareness to land in parasympathetic tone without leaving the
+workspace.
+"""
+
+arc = [
+    "permission to pause the current task",
+    "releasing the tension in your frame",
+    "stepping back to see clearly",
+    "softening the gaze",
+    "returning to work from calm clarity",
+]
+
+safety = """
+Breaks are not laziness; they are essential to sustainable work. Do not frame
+this as productivity optimization that enables more work — frame it as tending
+to yourself as you would tend to a tool. Normalize that taking a break is
+inherently valid, not something to earn or justify.
+"""
+
+banned = [
+    "you've earned this break",
+    "now get back to work",
+    "don't waste time",
+    "a quick meditation to work harder",
+    "you should keep working",
+    "time is money",
+]
+
+[[angles]]
+name    = "the stream at midday"
+imagery = ["moving but not rushing", "sunlight on the surface", "cool and clear where you step"]
+
+[[angles]]
+name    = "the window between rooms"
+imagery = ["the view through glass to something different", "separation without isolation", "a moment to notice what is outside"]
+
+[[angles]]
+name    = "the breath like a door"
+imagery = ["opening on the inhale to receive", "closing gently on the exhale to let go", "you standing in the doorway"]
