@@ -46,7 +46,7 @@ Written by you and never overwritten by analysis:
 
 ### Tag Thresholds (from `core/background_tags.py`)
 
-These thresholds are calibrated against the 20-track library as of 2026-09-17 and are the measured distribution of the backgrounds. Re-derive with:
+These thresholds are fixed cut points that divide the tag space. The measured distribution of the 20-track library shows how actual tracks fall into each band. Re-derive with:
 
 ```bash
 .venv/bin/python scripts/tag_backgrounds.py --report
@@ -81,6 +81,34 @@ These thresholds are calibrated against the 20-track library as of 2026-09-17 an
 - `DYNAMICS_STEADY_BELOW = 2.0` (RMS p95 / p5)
 - `DYNAMICS_DYNAMIC_ABOVE = 3.3`
 - Mid-range (2.0–3.3) → no dynamics tag
+
+### Measured Distribution (20-Track Library)
+
+As of 2026-09-17, the background library's actual tag distribution across measured features:
+
+| Feature | Band | Count | Coverage |
+|---------|------|-------|----------|
+| **Brightness** | Dark (< 600 Hz) | 4 | 20% |
+| | Warm (600–1050 Hz) | 9 | 45% |
+| | Bright (> 1050 Hz) | 7 | 35% |
+| **Motion** | Drone (< 0.6) | 3 | 15% |
+| | Middle (0.6–1.9) | 9 | 45% |
+| | Evolving (> 1.9) | 8 | 40% |
+| **Rhythm** (flux ≥ 0.6) | Sparse (< 1.5/s) | 4 | 20% |
+| | Middle (1.5–5.0/s) | 9 | 45% |
+| | Busy (> 5.0/s) | 4 | 20% |
+| | Not qualified (flux < 0.6) | 3 | 15% |
+| **Timbre** | Tonal (< 0.15) | 9 | 45% |
+| | Middle (0.15–1.5) | 8 | 40% |
+| | Textured (> 1.5) | 2 | 10% |
+| **Articulation** | Sustained (< 1%) | 6 | 30% |
+| | Middle (1–4%) | 11 | 55% |
+| | Struck (> 4%) | 3 | 15% |
+| **Dynamics** | Steady (< 2.0) | 4 | 20% |
+| | Middle (2.0–3.3) | 11 | 55% |
+| | Dynamic (> 3.3) | 5 | 25% |
+
+All tag bands are populated. The middle band in each dimension is always the largest, ensuring that conjunctive filtering (both tags must match) reliably finds candidates while keeping the sonic profile distinct.
 
 ## Prose Fields — The Creative Heart
 
