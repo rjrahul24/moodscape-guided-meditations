@@ -1,0 +1,48 @@
+label        = "Overwhelm"
+family       = "Stress & Anxiety"
+content_type = "meditation"
+music_tags   = ["warm", "sparse"]
+pause_ratio  = 0.33
+
+technique = """
+Breaking overwhelm into singular focus: the listener names one small task or
+priority, places all others temporarily aside (not forgotten, just paused),
+and rests in the clarity of what can be done *right now*. Uses the phrase
+"for this moment" to prevent future-thinking from reactivating the overwhelm.
+"""
+
+arc = [
+    "acknowledging the feeling of too much",
+    "permission to pause the rest",
+    "finding one thing that matters now",
+    "releasing the urgency of the others",
+    "returning to the moment with less weight",
+]
+
+safety = """
+Do not suggest the listener is not actually overwhelmed or that the work is
+less than it seems. Overwhelm is real and often accurate. Frame this as
+temporary reprieve and focus, not denial or time-management. Make clear that
+what is paused can be returned to; nothing is forgotten.
+"""
+
+banned = [
+    "you can do it all",
+    "just one more thing",
+    "stop overthinking",
+    "manage your time better",
+    "you just need to prioritize",
+    "take a deep breath and push through",
+]
+
+[[angles]]
+name    = "the candle flame in the dark"
+imagery = ["one point of light in vast shadow", "everything else outside the glow receding", "the flame steady if the candle does not move"]
+
+[[angles]]
+name    = "a single note from an instrument"
+imagery = ["one pure tone cutting through silence", "all other sounds fading around it", "clarity in simplicity"]
+
+[[angles]]
+name    = "the next step on a staircase"
+imagery = ["the rest of the stairs invisible above and below", "only the step beneath your foot is visible", "the journey continues one step at a time"]

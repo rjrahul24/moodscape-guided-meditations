@@ -1,0 +1,49 @@
+label        = "Anxiety Relief"
+family       = "Stress & Anxiety"
+content_type = "meditation"
+music_tags   = ["warm", "sustained"]
+pause_ratio  = 0.34
+
+technique = """
+Grounding through the senses (5-4-3-2-1): progressively focusing on what the
+listener can see, hear, feel, taste, and smell in the present moment. Each
+sense brings the mind from abstraction back to the immediate and real. Named
+sensations, not assumed ones — the listener chooses what to notice.
+"""
+
+arc = [
+    "naming the anxiety without judgment",
+    "gathering the senses one by one",
+    "anchoring in what is real right now",
+    "the mind settling with the body",
+    "returning to the present, grounded",
+]
+
+safety = """
+Grounding is not about comfort — it is about presence. Do not force positive
+thinking or dismiss the listener's concern; instead, anchor them in what they can
+directly perceive. If the listener has trauma or dissociation history, offer the
+senses as invitation, not mandate. Anxiety is real; grounding is how we live with
+it rather than be taken by it.
+"""
+
+banned = [
+    "your anxiety is irrational",
+    "you are overreacting",
+    "just think positive thoughts",
+    "this will pass",
+    "you have nothing to worry about",
+    "calm down",
+]
+
+[[angles]]
+name    = "the beach at tide's turn"
+imagery = ["where the water meets the sand", "watching waves arrive and retreat", "your feet planted in one place"]
+
+[[angles]]
+name    = "the crowded room where nothing demands your attention"
+imagery = ["sounds and movement around you", "you are separate and just watching", "no one needs anything from you"]
+
+[[angles]]
+name    = "the wall behind your back"
+imagery = ["something solid you can lean against", "cool against your skin", "holding you up without asking"]

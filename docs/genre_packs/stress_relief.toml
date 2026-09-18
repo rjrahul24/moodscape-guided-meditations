@@ -1,0 +1,48 @@
+label        = "Stress Relief"
+family       = "Stress & Anxiety"
+content_type = "meditation"
+music_tags   = ["warm", "steady"]
+pause_ratio  = 0.32
+
+technique = """
+Body-based stress release with slow exhalation: long, audible exhales (4-5 seconds)
+paired with a body phrase ("shoulders softening," "jaw unclenching"). The listener
+follows the exhalation rhythm, using breath as the tool to signal the nervous system
+that effort can stop.
+"""
+
+arc = [
+    "arrival and permission to pause",
+    "finding the places holding stress",
+    "exhale and release, cycle by cycle",
+    "noticing the shift in the body",
+    "integration into calm action",
+]
+
+safety = """
+Do not dismiss the stressor or suggest it will disappear. Frame this as a break
+from activation, not a cure. If the listener has medical anxiety or trauma history,
+avoid any sensation-focusing that might trigger dissociation — keep attention
+light and voluntary. Stress relief is not treatment; it is permission to recover.
+"""
+
+banned = [
+    "don't worry about it",
+    "just relax",
+    "let it go",
+    "everything will be fine",
+    "your stress is not real",
+    "you shouldn't feel this way",
+]
+
+[[angles]]
+name    = "melting snow in spring"
+imagery = ["ice becoming liquid and flowing downward", "what was rigid becoming free", "the ground reappearing beneath"]
+
+[[angles]]
+name    = "the exhaust leaving a kettle"
+imagery = ["heat and vapor rising and dispersing", "the pressure releasing visibly", "the air cleaner as it rises"]
+
+[[angles]]
+name    = "a knot in rope slowly loosening"
+imagery = ["each exhale pulling gently on one strand", "the twisted fibers gradually separating", "flexibility returning"]

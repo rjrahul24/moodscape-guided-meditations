@@ -1,0 +1,48 @@
+label        = "Worry & Rumination"
+family       = "Stress & Anxiety"
+content_type = "meditation"
+music_tags   = ["steady", "tonal"]
+pause_ratio  = 0.32
+
+technique = """
+Cognitive defusion with worry postponement: the listener names the worry ("this
+is the worry about X"), creates psychological distance from it (not "I am worried,"
+but "I am noticing worry"), and postpones it to a specific later time. The brain
+treats postponement as resolution, interrupting the rumination loop.
+"""
+
+arc = [
+    "recognizing the rumination cycle",
+    "stepping back to observe the worry",
+    "naming it without becoming it",
+    "setting it aside for a later time",
+    "returning to the present moment",
+]
+
+safety = """
+Do not tell the listener to stop thinking or that the worry is unfounded. The
+worry is real; the technique is learning to hold it differently. Never suggest
+worry is wasted or shameful. Avoidance and distraction fail; this method
+acknowledges the worry while interrupting its grip.
+"""
+
+banned = [
+    "stop worrying",
+    "don't think about it",
+    "these thoughts are irrational",
+    "you should know better",
+    "everyone worries, just let it go",
+    "focus on something happy instead",
+]
+
+[[angles]]
+name    = "watching thoughts from a high bridge"
+imagery = ["water flowing beneath", "your thoughts like leaves on the current", "you steady on the bridge, the thoughts passing through"]
+
+[[angles]]
+name    = "a radio in another room"
+imagery = ["you can hear it but do not have to listen", "the voice and music continuing whether you attend or not", "tuning it down without silence"]
+
+[[angles]]
+name    = "clouds at different altitudes"
+imagery = ["storm clouds far below where you stand", "you in clear air above them", "the storms real but distant"]

@@ -1,0 +1,50 @@
+label        = "Panic SOS"
+family       = "Stress & Anxiety"
+content_type = "meditation"
+music_tags   = ["steady", "tonal"]
+pause_ratio  = 0.22
+
+technique = """
+Acute-distress body-anchoring: short, present-tense phrases rooting attention
+in the immediate physical environment and breath. No visualization, no breath
+holds (breath is already dysregulated), no instructions to relax. The voice is
+very close and matter-of-fact — a companion, not an instruction.
+"""
+
+arc = [
+    "naming what is happening right now",
+    "feeling the body in contact with the surface beneath",
+    "naming five things you can see",
+    "the breath as it is, not as it should be",
+    "steady return to the room",
+]
+
+safety = """
+Never use the word "relax" or any instruction that implies the body should do
+something different. Do not suggest breath holds or deep breathing if the listener
+is hyperventilating. No long pauses; fill the time with steady, grounded guidance.
+Never minimize the experience or suggest it is happening in the mind only.
+Panic is a body event, and grounding is the intervention.
+"""
+
+banned = [
+    "relax",
+    "breathe deeply",
+    "hold your breath",
+    "this isn't real",
+    "you're overreacting",
+    "calm down",
+    "try to sleep",
+]
+
+[[angles]]
+name    = "the four corners of the room"
+imagery = ["starting at the room you're in", "each corner a point to focus on", "the walls solid and present"]
+
+[[angles]]
+name    = "the temperature of your skin"
+imagery = ["where warm and cool meet on your body", "your hands touching your legs", "the physical boundary between inside and outside"]
+
+[[angles]]
+name    = "sounds in order of distance"
+imagery = ["the closest sound to your ear", "something in the room", "something outside", "each one real and distant"]
