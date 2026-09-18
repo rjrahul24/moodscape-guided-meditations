@@ -6,9 +6,8 @@ pause_ratio  = 0.48
 
 technique = """
 The 4-7-8 breathing pattern: count as you inhale, hold, and exhale (four counts,
-seven counts, eight counts). The counts are a rhythm you set by your own pace —
-at a brisk counting speed, seven counts take about three seconds. The hold is
-optional and should never exceed four seconds in actual time. Anyone feeling dizzy
+seven counts, eight counts). The counts are a rhythm you set by your own pace.
+The hold is optional and should never exceed four seconds. Anyone feeling dizzy
 should skip the hold and return to ordinary breathing immediately. Count aloud at
 first, then silently. This is about the shape of the breath, not endurance.
 """
