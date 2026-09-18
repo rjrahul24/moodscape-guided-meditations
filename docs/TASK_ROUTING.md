@@ -31,4 +31,15 @@ When you need to change something, start here. Locate the row that matches your 
 | Tune duration accuracy | `core/script_gen/duration.py :: DEFAULT_WPM` | `core/auto_generate.py :: run()` (auto-logs `actual_sec`/`estimate_ratio` into `meta.json` via `log_estimate_accuracy()`) |
 | Tune script-gen retry behaviour | `core/script_gen/adapters/openai_compat.py` (hand-rolled backoff loop) | `core/script_gen/adapters/anthropic_api.py` (SDK `max_retries`, no second loop) — both read `MOODSCAPE_SCRIPT_MAX_RETRIES` |
 | Add/adjust a script-format check | `core/script_gen/linter.py :: check_format()` | A case in `tests/unit/test_script_linter.py` |
-| Change the Manual / Auto-Generate tab layout | `app.py` (`gr.Tabs()` container) | `core/auto_tab.py` (Auto-Generate tab content + `elem_classes` styling) |
+| Add a genre | `docs/genre_packs/<slug>.toml` | Read [docs/genre_packs/README.md](../genre_packs/README.md); validate with `.venv/bin/python -c "from core.genres import load_all_packs; load_all_packs()"` |
+| Change a genre's angles or imagery | `docs/genre_packs/<slug>.toml` | Affects `genres.pick_angle()` and the planner's brief on next run (no restart needed) |
+| Retune originality thresholds | `MOODSCAPE_ORIGINALITY_FATAL`, `MOODSCAPE_ORIGINALITY_ADVISORY` env vars | Provisional; calibrate from `max_similarity` scores logged on every render (stored in `meta.json`) |
+| Retune genre music tags | `docs/genre_packs/<slug>.toml :: music_tags` | Affects `background_picker.pick_background(prefer_tags=…)` on next run |
+| Tag new background music | Drop `.wav` / `.mp3` etc. into `assets/backgrounds/` | Measured tags (dark/warm/bright, drone/evolving, sparse/busy, etc.) are auto-extracted on first use (~2s); declared tags keyed by filename in `assets/backgrounds/tags.toml` |
+| Force re-tag all backgrounds | `python scripts/tag_backgrounds.py --report` | Re-extract measured features, preserve declared tags |
+| Change the planner model | `MOODSCAPE_SCRIPT_PLANNER` env var | Planner + writer are loaded once; switching planner changes only the brief writer. Must be same provider protocol as writer (both Ollama, or both Anthropic, etc.). |
+| Change the writer model | `MOODSCAPE_SCRIPT_GENERATOR` env var | Shared load with planner; check `MOODSCAPE_SCRIPT_PLANNER` is compatible (or leave it to share the value from `_GENERATOR`) |
+| Change the judge model | `MOODSCAPE_SCRIPT_JUDGE` env var | **Must be independent** — a different model family than the writer, not the same weights. Affects quality of review/repair. |
+| Change the Manual / Auto-Generate tab layout | `app.py` (`gr.Tabs()` container) | `core/auto_tab.py` (Auto-Generate tab content + `elem_classes` styling) — see [app_wiring.md](auto_generation/app_wiring.md) |
+| Change the Auto-Generate UI controls (dropdown, radio, etc.) | `core/auto_tab.py` | Wiring lives in `auto_generate_handler()` callback; genre on-change handler calls `genres.load_pack()` to pre-fill voice engine and content type |
+| Benchmark a model pairing | `python scripts/eval_genres.py --pair writer:model judge:model ...` | Renders matrix of genres × model configs, writes metrics to comparison dir |
