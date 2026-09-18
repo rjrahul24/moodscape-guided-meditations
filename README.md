@@ -185,28 +185,40 @@ python scripts/generate.py my_script.txt \
 
 ## Usage — Auto-Generate
 
-Skip writing a script by hand: describe how you feel, and a script is
-drafted, independently reviewed, checked against the same safety rules as
-the manual path, and rendered with a random background track — no further
-input needed. This lives in the "Auto-Generate" tab and is built on
-`core/auto_generate.py`.
+Two clicks, one meditation: pick a **genre** from a dropdown, pick a **length
+band** (3–6 min, 6–10 min, 10–15 min), and press Generate. A local LLM
+pipeline drafts a script specific to the genre, an independent reviewer checks
+it, and the output renders with music and full audio processing — no hand
+writing, no further input needed. This lives in the "Auto-Generate" tab and is
+built on `core/auto_generate.py`.
 
-Minimum `.env` for the default configuration (a local Ollama model as both
-generator and judge):
+Each genre is a **genre pack** — a TOML file in `docs/genre_packs/` that holds
+curated creative material (meditation technique, narrative arc, sensory imagery
+angles, safety caveats for that genre) plus deterministic fields (content type,
+music tags, pause ratio) that drive downstream processing. Pick an angle, and
+the planner adapts the material into a unique creative brief; the writer then
+turns that brief into a full script. Two runs of the same genre with different
+angles produce genuinely different meditations.
+
+A **two-tier originality check** keeps every meditation distinct: angle rotation
+and avoid-lists prevent rewriting the same story in different words; a
+TF-IDF cosine check + rare-n-gram overlap catch near-verbatim regeneration. See
+[docs/genre_packs/README.md](docs/genre_packs/README.md) for the pack contract
+and [docs/auto_generation/README.md](docs/auto_generation/README.md) for the
+originality architecture.
+
+Minimum `.env` for the default configuration (local Ollama):
 
 ```bash
 HF_TOKEN=hf_...           # Required — same as the manual path
 ```
 
-No extra key is needed for `ollama:*` specs — just have `ollama serve`
-running locally with the model pulled. Using a hosted model instead requires
-that provider's key (e.g. `ANTHROPIC_API_KEY` for `anthropic:*`,
-`OPENROUTER_API_KEY` for `openrouter:*`) — see
-[docs/auto_generation/README.md](docs/auto_generation/README.md#configuration)
-for the full list.
+No extra key for `ollama:*` — just have `ollama serve` running with the model
+pulled. Hosted providers (e.g. `anthropic:*`, `openrouter:*`) require their
+API key — see [docs/auto_generation/README.md](docs/auto_generation/README.md#configuration).
 
-Full subsystem reference — configuration, model spec format, the fatal/
-advisory violation split, and how to benchmark model pairings — lives in
+Full subsystem reference — genre taxonomy, pack contract, music tagging,
+originality thresholds, model choices with evidence, and benchmarking — lives in
 [docs/auto_generation/README.md](docs/auto_generation/README.md).
 
 ---
