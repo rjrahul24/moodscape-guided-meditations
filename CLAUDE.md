@@ -37,26 +37,36 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 │   ├── qa_monitor.py                 # output validation
 │   ├── stem_separator.py             # Demucs source separation
 │   ├── text_utils.py · breath_sounds.py · stereo_upmix.py · deepfilter_enhancer.py
+│   ├── genres.py                     # Genre pack loader, angle rotation, GenrePack dataclass
+│   ├── originality.py                # Corpus management, TF-IDF similarity scoring, avoid-lists
+│   ├── background_tags.py            # Lazy background music tagging (measured + declared)
 │   ├── kokoro_tts/  f5_tts/             # TTS engines (engine + preproc + postproc + voices)
 │   ├── lyria/                             # Lyria RealTime music generation (Google API)
 │   ├── upload_music/                      # Background instrumental (engine + arrange/length-fit)
-│   ├── script_gen/                    # prompt → validated script (generator + judge + linter)
-│   ├── auto_generate.py               # orchestrator: script → music → pipeline
-│   ├── background_picker.py           # random pick from assets/backgrounds/
+│   ├── script_gen/                    # prompt → validated script (planner + generator + judge + linter)
+│   │   └── planner.py                 # Pass 0: genre pack + angle → prose creative brief
+│   ├── auto_generate.py               # orchestrator: genre → planner → script → music → pipeline
+│   ├── background_picker.py           # tag-filtered pick from assets/backgrounds/
 │   ├── streaming_run.py               # threaded progress streaming for the UI
 │   └── auto_tab.py                    # Gradio "Auto-Generate" tab (peer of "Manual" under app.py's gr.Tabs())
-├── scripts/                          # generate.py · separate_worker.py · generate_breath_samples.py
+├── scripts/                          # generate.py · separate_worker.py · generate_breath_samples.py · tag_backgrounds.py · eval_genres.py
 ├── tests/unit/  tests/integration/
+│   └── conftest.py                   # pytest fixtures for genre tests
 ├── assets/                           # tracked in git
 │   ├── breath_sounds/                # [breath]/[inhale]/[exhale] samples
 │   ├── impulse_responses/            # convolution reverb IRs
+│   ├── backgrounds/                  # instrumental background tracks + tags.toml
 │   └── speakers/                     # F5-TTS voice pool
 │       ├── reference_audio/*.wav     #   speaker reference clips
 │       ├── reference_text/*.txt      #   transcripts (paired by slug)
 │       └── voices.toml               #   F5 multi-phase definitions
 ├── models/                           # gitignored; all model weights
 │   └── hf_cache/                     # project-local HF cache
-└── docs/                             # see Where to Look below
+├── var/                              # gitignored; machine-local state
+│   └── originality/                  # corpus index + scripts for originality checks
+├── docs/
+│   ├── genre_packs/                  # 46 TOML pack definitions + README (field contract, tag vocabulary, prose guidelines)
+│   └── ...                           # other docs (see Where to Look below)
 ```
 
 ## Pipeline Flow (`core/pipeline.py :: MeditationPipeline.generate()`)
@@ -78,29 +88,44 @@ Full breakdown with parameters: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Auto-Generation Flow (`core/auto_generate.py :: run()`)
 
-Prompt in, finished meditation out, with no human step.
+Genre and duration band in, finished meditation out, with no human step.
 
-1. **Assemble prompts** → `script_gen/rules.py` reads the engine- and
-   content-type-specific guide from `docs/prompting_guides/` at call time,
-   plus `content_safety_rules.md`
-2. **Draft** → generator model (`MOODSCAPE_SCRIPT_GENERATOR`)
-3. **Review** → an *independent* judge model (`MOODSCAPE_SCRIPT_JUDGE`)
-   returns a revised script plus a changelog — it revises, it does not score
-4. **Validate** → `script_gen/linter.py` (format + mental-health safety) and
-   `script_gen/duration.py` (runtime estimate, no rendering)
-5. **Repair** → fatal violations go back to the judge as targeted
-   instructions, bounded by `MOODSCAPE_SCRIPT_MAX_REPAIRS` (default 2)
-6. **Pick music** → `background_picker.pick_background()` reuses
-   `upload_music.scan_backgrounds()`, excluding recently used tracks
-7. **Render** → `MeditationPipeline.generate()`, unchanged, on the golden path
+0. **Preflight** → `preflight_check()` verifies all LLM models exist (Ollama
+   `/api/tags`) and names any missing model before planning starts (fail in 2s,
+   not 5 min)
+1. **Load pack + rotate angle** → `genres.load_pack()` validates the genre
+   pack (required fields, known tags, valid `content_type`), then
+   `genres.pick_angle()` selects one of 3 distinct angles, excluding recently
+   used ones for this genre; `originality.avoid_terms()` extracts a do-not-reuse
+   list from the 100 most recent same-genre scripts
+2. **Plan** (Pass 0) → `script_gen/planner.py :: draft()` takes the pack's
+   technique, arc, imagery angle, pause_ratio, and safety rules, plus the
+   avoid-list and duration band, and returns a **prose creative brief**
+   (plain text, no JSON) that shapes what the writer will generate
+3. **Write** (Pass 1) → `script_gen/generator.py :: draft()` ingests the brief,
+   the formatting guide, and safety rules, and returns a full script using
+   generator model (`MOODSCAPE_SCRIPT_GENERATOR` — shared load with planner)
+4. **Review** (Pass 2) → an *independent* judge model (`MOODSCAPE_SCRIPT_JUDGE`)
+   (`script_gen/judge.py :: review()`) returns a revised script plus a
+   changelog — it revises, it does not score
+5. **Validate** → `script_gen/linter.py :: check()` (format + mental-health
+   safety + originality + banned phrases) and `script_gen/duration.py`
+   (runtime estimate, no rendering)
+6. **Repair loop** → fatal violations go back to the judge as targeted
+   instructions, bounded by `MOODSCAPE_SCRIPT_MAX_REPAIRS` (default 2); advisory
+   violations render anyway and seed the next run's avoid-list
+7. **Pick music** → `background_picker.pick_background(prefer_tags=pack.music_tags)`
+   filters by the pack's two music tags, excluding recently used tracks
+8. **Render** → `MeditationPipeline.generate()`, unchanged, on the golden path
    (F5 + uploaded background)
-8. **Calibrate** → measures the rendered file's actual duration and calls
+9. **Calibrate** → measures the rendered file's actual duration and calls
    `script_gen/duration.py :: log_estimate_accuracy()`, closing the loop that
    calibrates `DEFAULT_WPM`; a failed duration read never fails a job that
    already produced audio
-9. **Persist** → `<name>.wav`, `<name>.script.txt`, `<name>.meta.json`
-   (now including `actual_sec` and `estimate_ratio` alongside
-   `estimated_sec`) as siblings
+10. **Append corpus** → `originality.add_to_corpus(script, genre=pack.slug, angle=selected_angle)`
+    records the rendered script for use in future avoid-lists
+11. **Persist** → `<name>.wav`, `<name>.script.txt`, `<name>.meta.json`
+    (including `actual_sec` and `estimate_ratio`) as siblings
 
 The UI exposes this as an "Auto-Generate" tab (`core/auto_tab.py`), a peer
 of the "Manual" tab under one `gr.Tabs()` in `app.py` (Manual first, so it
@@ -138,6 +163,21 @@ The six that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
   for duration drift and style issues. Treating every violation as fatal makes
   a weaker local model unusable; treating none as fatal lets a safety failure
   reach audio. Do not flatten this distinction.
+- **Ollama ignores `keep_alive` on `/v1`** → The `/v1/chat/completions` endpoint
+  silently disregards the `keep_alive` parameter; it is honoured only on
+  `/api/*` endpoints. `ScriptEngine.unload()` exists specifically to call the
+  native `/api/generate` with `keep_alive=0` for Ollama after each stage,
+  freeing 18 GB. Without this, an 18 GB planner/writer model stays resident
+  while F5-TTS (14 GB) loads, forcing 32 GB → swap, which is where the MPS bus
+  errors live. **Call `unload()` after each LLM stage.**
+- **Originality repair depends on `<problems>` stripping** → The judge repair
+  loop passes `check_originality()` violations into the prompt wrapped in
+  `<problems>…</problems>` so the model can see which phrases failed. But a weak
+  model frequently echoes that block verbatim, poisoning the script with the
+  violation report itself. `parse_judge_response()` strips `<problems>` *before*
+  anything else (commit `c372b18`). Removing that strip makes repair recursive
+  — violations compound, budget exhausts, and a fixable script fails. **This
+  behaviour is load-bearing and must not be removed.**
 
 ## Research Experiment Flags
 
@@ -161,6 +201,8 @@ Rejected research items (don't revisit): true-peak-limiter removal (false premis
 |------|-------|
 | Full pipeline, FX params, QA thresholds, memory patterns | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Engine internals (Kokoro, F5, Lyria, Pedalboard) | [docs/model_implementation_guides/](docs/model_implementation_guides/) |
+| Genre taxonomy, packs, music tagging, two-tier originality | [docs/auto_generation/README.md](docs/auto_generation/README.md) |
+| Genre pack field contract, tag vocabulary, prose guidelines | [docs/genre_packs/README.md](docs/genre_packs/README.md) |
 | Prompt writing per engine | [docs/prompting_guides/](docs/prompting_guides/) |
 | Mix / post-processing details | [docs/optimization_and_processing/](docs/optimization_and_processing/) |
 | Component & class map | [docs/COMPONENT_REGISTRY.md](docs/COMPONENT_REGISTRY.md) |
