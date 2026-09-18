@@ -1,0 +1,45 @@
+label        = "Box Breathing"
+family       = "Breathwork"
+content_type = "meditation"
+music_tags   = ["steady", "tonal"]
+pause_ratio  = 0.46
+
+technique = """
+Equal four-count box breathing: inhale four, hold four, exhale four, hold
+four. Count aloud for the first rounds, then let the listener keep the shape
+alone. Silence carries the counts, so most of this runtime is [pause] markers.
+"""
+
+arc = [
+    "posture & a first ordinary breath",
+    "learning the four counts",
+    "guided rounds",
+    "unguided rounds",
+    "release the count",
+]
+
+safety = """
+Holds never exceed four seconds, and every hold is optional — say so. Anyone
+lightheaded should return to ordinary breathing immediately, and the script
+must say that before the first hold. Do not present this as a treatment for
+panic disorder or asthma.
+"""
+
+banned = [
+    "force the breath",
+    "push through",
+    "as long as you can",
+    "empty your lungs completely",
+]
+
+[[angles]]
+name    = "the drawn square"
+imagery = ["a fingertip tracing a square", "four equal sides", "returning to the first corner"]
+
+[[angles]]
+name    = "the lantern room"
+imagery = ["a room with four windows", "light arriving at each in turn", "an even glow"]
+
+[[angles]]
+name    = "metronome"
+imagery = ["a slow pendulum", "an unhurried clock in another room", "a tide that keeps its own time"]

@@ -1,0 +1,47 @@
+label        = "Grief & Loss"
+family       = "Emotional"
+content_type = "meditation"
+music_tags   = ["warm", "sparse"]
+pause_ratio  = 0.34
+
+technique = """
+RAIN, held loosely: Recognise what is present, Allow it without fixing,
+Investigate with kindness, Nurture. Never resolve the grief — the practice is
+company, not repair.
+"""
+
+arc = [
+    "arrival & permission",
+    "the body's weather",
+    "one memory, held lightly",
+    "self-kindness",
+    "return",
+]
+
+safety = """
+No stage models of grief and no timelines. Never instruct the listener to let
+go of the person, or to feel better. Offer an exit at every turn — it is
+always fine to stop. Do not assume the relationship, the cause, or that the
+death was recent.
+"""
+
+banned = [
+    "everything happens for a reason",
+    "in a better place",
+    "time heals",
+    "move on",
+    "closure",
+    "at least",
+]
+
+[[angles]]
+name    = "the empty chair"
+imagery = ["a chair by a window", "afternoon light on the floor", "a cup gone cold"]
+
+[[angles]]
+name    = "tidal"
+imagery = ["a shoreline at dusk", "waves that arrive and withdraw", "wet sand holding a shape"]
+
+[[angles]]
+name    = "carrying"
+imagery = ["a stone warmed in a pocket", "a coat that still smells of someone", "a path walked many times"]
