@@ -370,13 +370,26 @@ class OllamaUnloadTest(unittest.TestCase):
 
         self._engine(handler, provider="groq").unload()
 
-    def test_a_failing_unload_never_raises(self):
-        """A model that will not unload is a memory problem, not a job failure."""
+    def test_a_failing_unload_logs_and_does_not_raise(self):
+        """A model that will not unload is a memory problem, not a job failure.
+        HTTP errors must be logged; the model name must appear in the log."""
 
         def handler(request):
             return httpx.Response(500, text="boom")
 
-        self._engine(handler).unload()
+        with self.assertLogs("core.script_gen.adapters.openai_compat", level="WARNING") as captured:
+            self._engine(handler).unload()
+        self.assertTrue(any("qwen3.8:27b" in line for line in captured.output))
+
+    def test_unload_logs_transport_errors_and_does_not_raise(self):
+        """Transport errors (connection refused, timeout) must be logged and swallowed."""
+
+        def handler(request):
+            raise httpx.ConnectError("refused", request=request)
+
+        with self.assertLogs("core.script_gen.adapters.openai_compat", level="WARNING") as captured:
+            self._engine(handler).unload()
+        self.assertTrue(any("qwen3.8:27b" in line for line in captured.output))
 
     def test_preflight_passes_when_the_model_is_present(self):
         def handler(request):
@@ -403,6 +416,18 @@ class OllamaUnloadTest(unittest.TestCase):
 
         def handler(request):
             raise httpx.ConnectError("refused")
+
+        self._engine(handler).preflight()
+
+    def test_preflight_is_silent_on_non_200_response(self):
+        """Non-200 responses (routing, 404, 500) are connectivity problems.
+
+        complete() will report the real issue with a better message, so
+        preflight must not replace it with a misleading "model not found".
+        """
+
+        def handler(request):
+            return httpx.Response(404, json={"error": "not found"})
 
         self._engine(handler).preflight()
 

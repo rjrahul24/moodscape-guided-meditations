@@ -120,7 +120,14 @@ class OpenAICompatEngine(ScriptEngine):
         url = f"{self._native_base()}/api/generate"
         try:
             with httpx.Client(timeout=30.0, transport=self._transport) as client:
-                client.post(url, json={"model": self._model, "keep_alive": 0})
+                response = client.post(url, json={"model": self._model, "keep_alive": 0})
+            if response.status_code >= 400:
+                logger.warning(
+                    "Could not unload %s from Ollama (HTTP %d); the next stage may be "
+                    "memory-constrained.",
+                    self._model,
+                    response.status_code,
+                )
         except Exception:
             logger.warning(
                 "Could not unload %s from Ollama; the next stage may be "
@@ -145,6 +152,16 @@ class OpenAICompatEngine(ScriptEngine):
         try:
             with httpx.Client(timeout=10.0, transport=self._transport) as client:
                 response = client.get(url)
+            # Treat any non-200 as "cannot determine model list" (connectivity
+            # problem, routing issue, etc.). complete() will report the real
+            # problem with a better message.
+            if response.status_code != 200:
+                logger.debug(
+                    "Preflight got HTTP %d from %s; skipping.",
+                    response.status_code,
+                    url,
+                )
+                return
             names = {
                 entry.get("name", "")
                 for entry in response.json().get("models", [])
