@@ -15,21 +15,43 @@ from datetime import datetime
 from pathlib import Path
 
 from core.background_picker import pick_background
-from core.originality import add_to_corpus, assess, load_corpus
+from core.genres import load_pack, pick_angle
+from core.originality import add_to_corpus, assess, avoid_terms, load_corpus, recent_angles
 from core.script_gen.duration import estimate_duration_sec, log_estimate_accuracy
 from core.script_gen.engine import ScriptEngine, build_engine
 from core.script_gen.generator import draft
 from core.script_gen.judge import repair, review
-from core.script_gen.linter import Violation, check, check_originality, fatal_violations
+from core.script_gen.linter import (
+    Violation,
+    check,
+    check_banned_phrases,
+    check_originality,
+    fatal_violations,
+)
+from core.script_gen.planner import plan
 from core.script_gen.rules import (
     build_generator_system_prompt,
     build_judge_system_prompt,
+    build_planner_system_prompt,
 )
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_GENERATOR = "ollama:llama3.2:3b"
-DEFAULT_JUDGE = "ollama:llama3.2:3b"
+# Benchmarked 2026-09-17 against EQ-Bench Creative Writing v3 and Judgemark v4.
+# qwen3.8:27b has the best slop score of any model that fits a 32 GB M1 Max
+# (1.7) and plans as well as it writes, so one load covers both stages.
+# gemma4:31b scores 72.31 on Judgemark -- the best local judge by five points
+# -- which is a different skill from writing well. See the spec's section 6.
+DEFAULT_PLANNER = "ollama:qwen3.8:27b"
+DEFAULT_GENERATOR = "ollama:qwen3.8:27b"
+DEFAULT_JUDGE = "ollama:gemma4:31b"
+
+# The three UI length options, in seconds.
+DURATION_BANDS: dict[str, tuple[float, float]] = {
+    "short": (180.0, 360.0),
+    "medium": (360.0, 600.0),
+    "long": (600.0, 900.0),
+}
 
 # Cap on how many recently-used background paths AutoConfig.recent_backgrounds
 # remembers. Bounded so a config reused across a long batch doesn't grow an
@@ -98,6 +120,10 @@ class AutoConfig:
     # with each other and should only be compared among themselves.
     genre: str = ""
     angle: str = ""
+    # Tags from the genre pack, forwarded to pick_background's prefer_tags so
+    # a running meditation does not land on a sleep drone. Empty for the
+    # prompt-driven path, which has no pack to draw tags from.
+    music_tags: tuple[str, ...] = ()
     originality: bool = True
     # None uses core.originality.CORPUS_DIR. Injected in tests.
     corpus_dir: Path | None = None
@@ -147,6 +173,31 @@ class AutoConfig:
         values.update(overrides)
         return cls(**values)
 
+    @classmethod
+    def from_genre(cls, pack, *, band: str = "medium", **overrides) -> "AutoConfig":
+        """Build a config from a genre pack and a duration band.
+
+        Copies the pack's deterministic fields explicitly. run() never infers
+        content_type at run time -- the caller owns it, so a UI that lets the
+        user override the pack's choice and a script that does not both behave
+        predictably.
+        """
+        if band not in DURATION_BANDS:
+            raise ScriptGenerationError(
+                f"Unknown duration band {band!r}. Expected one of "
+                f"{sorted(DURATION_BANDS)}."
+            )
+        target_min_sec, target_max_sec = DURATION_BANDS[band]
+        values = {
+            "genre": pack.slug,
+            "content_type": pack.content_type,
+            "music_tags": pack.music_tags,
+            "target_min_sec": target_min_sec,
+            "target_max_sec": target_max_sec,
+        }
+        values.update(overrides)
+        return cls(**values)
+
 
 @dataclass
 class ScriptOutcome:
@@ -160,6 +211,7 @@ class ScriptOutcome:
     repairs_used: int
     originality_cosine: float = 0.0
     originality_shared_span: int = 0
+    brief: str = ""
 
 
 @dataclass
@@ -176,6 +228,9 @@ class AutoResult:
     violations: list[Violation]
     estimated_sec: float
     originality: float = 0.0
+    brief: str = ""
+    genre: str = ""
+    angle: str = ""
 
 
 def _violation_dicts(violations: list[Violation]) -> list[dict]:
@@ -231,9 +286,13 @@ def generate_script(
     generator_engine: ScriptEngine,
     judge_engine: ScriptEngine,
     config: AutoConfig,
+    planner_engine: ScriptEngine | None = None,
+    pack=None,
+    angle=None,
+    steer: str = "",
     progress_cb=None,
 ) -> ScriptOutcome:
-    """Run generator -> judge -> lint -> bounded repair.
+    """Run [planner ->] generator -> judge -> lint -> bounded repair.
 
     Raises:
         ScriptGenerationError: If fatal violations survive the repair budget.
@@ -251,11 +310,40 @@ def generate_script(
         config.target_max_sec,
     )
 
+    brief = ""
+    if pack is not None and angle is not None and planner_engine is not None:
+        if progress_cb:
+            progress_cb(0.02, f"Planning a {pack.label} session")
+        planner_system = build_planner_system_prompt(
+            config.content_type, config.target_min_sec, config.target_max_sec
+        )
+        avoid = avoid_terms(
+            load_corpus(genre=config.genre, limit=5, corpus_dir=config.corpus_dir),
+            [e.text for e in load_corpus(limit=500, corpus_dir=config.corpus_dir)],
+        )
+        brief = plan(
+            planner_engine,
+            pack,
+            angle,
+            system=planner_system,
+            target_min_sec=config.target_min_sec,
+            target_max_sec=config.target_max_sec,
+            avoid=avoid,
+            steer=steer,
+        )
+        prompt = brief
+        # Only unload if the writer is a different model. The default config
+        # uses one model for both stages, where unloading would pay a full
+        # 18 GB reload to save nothing.
+        if planner_engine is not generator_engine:
+            planner_engine.unload()
+
     if progress_cb:
         progress_cb(0.05, "Writing draft script")
     draft_script = draft(
         generator_engine, prompt, gen_system, max_tokens=config.max_tokens
     )
+    generator_engine.unload()
 
     if progress_cb:
         progress_cb(0.12, "Reviewing script")
@@ -264,72 +352,78 @@ def generate_script(
     )
 
     repairs_used = 0
-    while True:
-        estimated_sec = estimate_duration_sec(
-            script,
-            engine=config.tts_engine,
-            content_type=config.content_type,
-        )
-        violations = check(
-            script,
-            estimated_sec=estimated_sec,
-            target_min_sec=config.target_min_sec,
-            target_max_sec=config.target_max_sec,
-        )
-
-        report = None
-        if config.originality:
-            # IDF over EVERY genre (that is what learns generic meditation
-            # vocabulary); comparison within this genre only (that is where
-            # collisions happen). See core/originality.py.
-            same_genre = load_corpus(
-                genre=config.genre, limit=100, corpus_dir=config.corpus_dir
-            )
-            all_texts = [
-                entry.text
-                for entry in load_corpus(limit=500, corpus_dir=config.corpus_dir)
-            ]
-            report = assess(
-                script, compare_against=same_genre, idf_texts=all_texts
-            )
-            violations = violations + check_originality(report)
-
-        fatal = fatal_violations(violations)
-
-        if not fatal:
-            return ScriptOutcome(
-                script=script,
-                draft_script=draft_script,
-                changelog=changelog,
-                violations=violations,
-                estimated_sec=estimated_sec,
-                repairs_used=repairs_used,
-                originality_cosine=report.max_cosine if report else 0.0,
-                originality_shared_span=report.shared_span if report else 0,
-            )
-
-        if repairs_used >= config.max_repairs:
-            codes = ", ".join(sorted({v.code for v in fatal}))
-            path = _write_failure_artifacts(
-                config,
-                prompt,
+    try:
+        while True:
+            estimated_sec = estimate_duration_sec(
                 script,
-                violations,
-                draft_script=draft_script,
-                changelog=changelog,
+                engine=config.tts_engine,
+                content_type=config.content_type,
             )
-            raise ScriptGenerationError(
-                f"Script still has fatal problems after {repairs_used} repair "
-                f"attempts: {codes}. Script saved to {path}.script.txt for review."
+            violations = check(
+                script,
+                estimated_sec=estimated_sec,
+                target_min_sec=config.target_min_sec,
+                target_max_sec=config.target_max_sec,
             )
+            if pack is not None:
+                violations = violations + check_banned_phrases(script, pack.banned)
 
-        repairs_used += 1
-        if progress_cb:
-            progress_cb(0.15, f"Repairing script (attempt {repairs_used})")
-        script, repair_log = repair(
-            judge_engine, script, fatal, judge_system, max_tokens=config.max_tokens
-        )
-        changelog = f"{changelog}\n{repair_log}".strip()
+            report = None
+            if config.originality:
+                # IDF over EVERY genre (that is what learns generic meditation
+                # vocabulary); comparison within this genre only (that is
+                # where collisions happen). See core/originality.py.
+                same_genre = load_corpus(
+                    genre=config.genre, limit=100, corpus_dir=config.corpus_dir
+                )
+                all_texts = [
+                    entry.text
+                    for entry in load_corpus(limit=500, corpus_dir=config.corpus_dir)
+                ]
+                report = assess(
+                    script, compare_against=same_genre, idf_texts=all_texts
+                )
+                violations = violations + check_originality(report)
+
+            fatal = fatal_violations(violations)
+
+            if not fatal:
+                return ScriptOutcome(
+                    script=script,
+                    draft_script=draft_script,
+                    changelog=changelog,
+                    violations=violations,
+                    estimated_sec=estimated_sec,
+                    repairs_used=repairs_used,
+                    originality_cosine=report.max_cosine if report else 0.0,
+                    originality_shared_span=report.shared_span if report else 0,
+                    brief=brief,
+                )
+
+            if repairs_used >= config.max_repairs:
+                codes = ", ".join(sorted({v.code for v in fatal}))
+                path = _write_failure_artifacts(
+                    config,
+                    prompt,
+                    script,
+                    violations,
+                    draft_script=draft_script,
+                    changelog=changelog,
+                )
+                raise ScriptGenerationError(
+                    f"Script still has fatal problems after {repairs_used} repair "
+                    f"attempts: {codes}. Script saved to {path}.script.txt for review."
+                )
+
+            repairs_used += 1
+            if progress_cb:
+                progress_cb(0.15, f"Repairing script (attempt {repairs_used})")
+            script, repair_log = repair(
+                judge_engine, script, fatal, judge_system, max_tokens=config.max_tokens
+            )
+            changelog = f"{changelog}\n{repair_log}".strip()
+    finally:
+        judge_engine.unload()
 
 
 def _measure_actual_duration_sec(audio_path: str) -> float | None:
@@ -358,10 +452,13 @@ def _measure_actual_duration_sec(audio_path: str) -> float | None:
 
 
 def run(
-    prompt: str,
+    prompt: str = "",
     *,
+    genre: str | None = None,
+    steer: str = "",
     config: AutoConfig | None = None,
     pipeline=None,
+    planner_engine: ScriptEngine | None = None,
     generator_engine: ScriptEngine | None = None,
     judge_engine: ScriptEngine | None = None,
     rng: random.Random | None = None,
@@ -371,12 +468,19 @@ def run(
     """Prompt in, finished meditation out.
 
     Args:
-        prompt: The user's natural-language request.
+        prompt: The user's natural-language request. Ignored on the genre
+            path, where the planner's brief becomes the writer's prompt.
+        genre: A genre pack slug. When set, a planner stage turns the pack
+            and a chosen angle into a creative brief before writing. config
+            never has content_type inferred from this at run time -- the
+            caller owns content_type, via AutoConfig.from_genre() or the UI.
+        steer: Free-text listener steering, forwarded to the planner.
         config: Overrides; defaults come from the environment.
         pipeline: Injected for tests. Defaults to a real MeditationPipeline.
-        generator_engine / judge_engine: Injected for tests. Default to the
-            engines named by MOODSCAPE_SCRIPT_GENERATOR / _JUDGE.
-        rng: Seeded Random for reproducible background selection.
+        planner_engine / generator_engine / judge_engine: Injected for
+            tests. Default to the engines named by MOODSCAPE_SCRIPT_PLANNER /
+            _GENERATOR / _JUDGE.
+        rng: Seeded Random for reproducible background/angle selection.
         progress_cb: Called with (fraction, message).
         **pipeline_kwargs: Forwarded verbatim to MeditationPipeline.generate().
 
@@ -384,6 +488,20 @@ def run(
         AutoResult with paths to the audio, script, and metadata.
     """
     config = config or AutoConfig.from_env()
+
+    pack, angle = None, None
+    if genre:
+        pack = load_pack(genre)
+        angle = pick_angle(
+            pack,
+            recent=recent_angles(genre, limit=3, corpus_dir=config.corpus_dir),
+            rng=rng,
+        )
+        config.angle = angle.name
+        if planner_engine is None:
+            planner_engine = build_engine(
+                os.environ.get("MOODSCAPE_SCRIPT_PLANNER", DEFAULT_PLANNER)
+            )
 
     if generator_engine is None:
         generator_engine = build_engine(
@@ -394,8 +512,17 @@ def run(
             os.environ.get("MOODSCAPE_SCRIPT_JUDGE", DEFAULT_JUDGE)
         )
 
+    # Fail in seconds rather than five minutes in.
+    for engine in (planner_engine, generator_engine, judge_engine):
+        if engine is not None:
+            engine.preflight()
+
     outcome = generate_script(
         prompt,
+        pack=pack,
+        angle=angle,
+        steer=steer,
+        planner_engine=planner_engine,
         generator_engine=generator_engine,
         judge_engine=judge_engine,
         config=config,
@@ -411,6 +538,7 @@ def run(
         scan=config.background_scan,
         exclude=config.recent_backgrounds,
         rng=rng,
+        prefer_tags=config.music_tags,
     )
 
     if pipeline is None:
@@ -477,6 +605,7 @@ def run(
                 "repairs_used": outcome.repairs_used,
                 "originality_cosine": outcome.originality_cosine,
                 "originality_shared_span": outcome.originality_shared_span,
+                "brief": outcome.brief,
             },
             indent=2,
         ),
@@ -494,4 +623,7 @@ def run(
         violations=outcome.violations,
         estimated_sec=outcome.estimated_sec,
         originality=outcome.originality_cosine,
+        brief=outcome.brief,
+        genre=config.genre,
+        angle=config.angle,
     )

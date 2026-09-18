@@ -530,5 +530,144 @@ class OriginalityEnvTest(unittest.TestCase):
                 AutoConfig.from_env()
 
 
+class GenrePathTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _run(self, *, genre="grief_and_loss", band="medium", steer="", **kw):
+        from core.auto_generate import DURATION_BANDS
+        from core.genres import load_pack
+
+        pack = load_pack(genre)
+        config = AutoConfig.from_genre(
+            pack,
+            band=band,
+            corpus_dir=self.dir / "corpus",
+            background_scan=lambda: [("Bed — 10:00", "/bg/a.mp3")],
+        )
+        self.planner = FakeScriptEngine(["A brief about a chair by a window."])
+        self.generator = FakeScriptEngine([CLEAN_SCRIPT])
+        self.judge = FakeScriptEngine([judged(CLEAN_SCRIPT)])
+        self.pipeline = StubPipeline(self.dir)
+        return run(
+            "",
+            genre=genre,
+            steer=steer,
+            config=config,
+            pipeline=self.pipeline,
+            planner_engine=self.planner,
+            generator_engine=self.generator,
+            judge_engine=self.judge,
+            **kw,
+        ), config
+
+    def test_duration_bands_cover_the_three_ui_options(self):
+        from core.auto_generate import DURATION_BANDS
+
+        self.assertEqual(DURATION_BANDS["short"], (180.0, 360.0))
+        self.assertEqual(DURATION_BANDS["medium"], (360.0, 600.0))
+        self.assertEqual(DURATION_BANDS["long"], (600.0, 900.0))
+
+    def test_from_genre_copies_the_packs_deterministic_fields(self):
+        from core.genres import load_pack
+
+        config = AutoConfig.from_genre(load_pack("fall_asleep"), band="short")
+        self.assertEqual(config.content_type, "sleep_story")
+        self.assertEqual(config.genre, "fall_asleep")
+        self.assertEqual(config.target_min_sec, 180.0)
+        self.assertEqual(config.target_max_sec, 360.0)
+
+    def test_the_planners_brief_becomes_the_writers_prompt(self):
+        _result, _config = self._run()
+        self.assertIn(
+            "A brief about a chair by a window.", self.generator.calls[0]["user"]
+        )
+
+    def test_the_chosen_angle_is_recorded(self):
+        from core.genres import load_pack
+
+        result, _config = self._run()
+        names = {a.name for a in load_pack("grief_and_loss").angles}
+        self.assertIn(result.angle, names)
+
+    def test_steer_text_reaches_the_planner(self):
+        _result, _config = self._run(steer="after a long hospital week")
+        self.assertIn("hospital week", self.planner.calls[0]["user"])
+
+    def test_the_packs_music_tags_reach_the_background_picker(self):
+        seen = {}
+
+        def fake_pick(**kwargs):
+            seen.update(kwargs)
+            return ("Bed — 10:00", "/bg/a.mp3")
+
+        with patch("core.auto_generate.pick_background", fake_pick):
+            self._run()
+        self.assertEqual(tuple(seen["prefer_tags"]), ("warm", "sparse"))
+
+    def test_every_engine_is_preflighted_and_unloaded(self):
+        self._run()
+        self.assertEqual(self.judge.preflight_calls, 1)
+        self.assertGreaterEqual(self.generator.unload_calls, 1)
+        self.assertGreaterEqual(self.judge.unload_calls, 1)
+
+    def test_a_shared_planner_and_writer_engine_is_not_unloaded_between_them(self):
+        """The default config uses one model for both stages; unloading
+        between them would pay an 18 GB reload for nothing."""
+        shared = FakeScriptEngine(["A brief.", CLEAN_SCRIPT])
+        from core.genres import load_pack
+
+        config = AutoConfig.from_genre(
+            load_pack("grief_and_loss"),
+            corpus_dir=self.dir / "corpus",
+            background_scan=lambda: [("Bed — 10:00", "/bg/a.mp3")],
+        )
+        run(
+            "", genre="grief_and_loss", config=config,
+            pipeline=StubPipeline(self.dir),
+            planner_engine=shared, generator_engine=shared,
+            judge_engine=FakeScriptEngine([judged(CLEAN_SCRIPT)]),
+        )
+        self.assertEqual(shared.unload_calls, 1)
+
+    def test_the_brief_and_genre_land_in_the_metadata(self):
+        result, _config = self._run()
+        meta = json.loads(Path(result.meta_path).read_text())
+        self.assertEqual(meta["genre"], "grief_and_loss")
+        self.assertIn("brief", meta)
+        self.assertTrue(meta["angle"])
+
+    def test_recently_used_angles_are_avoided(self):
+        from core.genres import load_pack
+        from core.originality import add_to_corpus
+
+        pack = load_pack("grief_and_loss")
+        corpus = self.dir / "corpus"
+        for angle in list(pack.angles)[:-1]:
+            add_to_corpus("x", genre="grief_and_loss", angle=angle.name,
+                          corpus_dir=corpus)
+        result, _config = self._run()
+        self.assertEqual(result.angle, pack.angles[-1].name)
+
+    def test_the_prompt_path_still_works_unchanged(self):
+        """Backward compatibility: no genre, positional prompt, as before."""
+        result = run(
+            "I feel anxious.",
+            config=AutoConfig(
+                corpus_dir=self.dir / "corpus",
+                background_scan=lambda: [("Bed — 10:00", "/bg/a.mp3")],
+            ),
+            pipeline=StubPipeline(self.dir),
+            generator_engine=FakeScriptEngine([CLEAN_SCRIPT]),
+            judge_engine=FakeScriptEngine([judged(CLEAN_SCRIPT)]),
+        )
+        self.assertTrue(result.audio_path)
+        self.assertEqual(result.genre, "")
+
+
 if __name__ == "__main__":
     unittest.main()
