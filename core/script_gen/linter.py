@@ -13,7 +13,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from core.originality import SMALL_CORPUS_BELOW
+from core.originality import SMALL_CORPUS_BELOW, OriginalityReport
 
 FATAL = "fatal"
 ADVISORY = "advisory"
@@ -434,7 +434,7 @@ MIN_RUN_TOKENS_SMALL_CORPUS = 20
 
 
 def check_originality(
-    report,
+    report: OriginalityReport,
     *,
     fatal_cosine: float = FATAL_COSINE,
     advisory_cosine: float = ADVISORY_COSINE,

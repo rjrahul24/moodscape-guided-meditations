@@ -439,7 +439,7 @@ class CheckBannedPhrasesTest(unittest.TestCase):
     def test_a_curly_apostrophe_cannot_defeat_the_check(self):
         from core.script_gen.linter import check_banned_phrases
 
-        script = "You’ll move on soon."
+        script = "You\u2019ll move on soon."
         self.assertEqual(len(check_banned_phrases(script, ["you'll move on"])), 1)
 
     def test_an_unused_phrase_is_not_flagged(self):
