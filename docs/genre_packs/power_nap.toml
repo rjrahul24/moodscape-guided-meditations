@@ -1,0 +1,46 @@
+label        = "Power Nap"
+family       = "Sleep & Rest"
+content_type = "sleep_story"
+music_tags   = ["warm", "sustained"]
+pause_ratio  = 0.18
+
+technique = """
+Brief narrative descent: a short story — 20 to 30 minutes — designed to carry
+the listener from waking to sleep and back, preserving the hyperaware state
+that makes power naps restorative. No instruction; pure scene-building at a
+steady, moderate pace.
+"""
+
+arc = [
+    "stepping into a familiar refuge",
+    "a moment of ordinary rest",
+    "deepening comfort",
+    "the body asking for nothing",
+    "waking refreshed",
+]
+
+safety = """
+This is brief and compact — it should never feel rushed, but it also need not
+linger. Avoid false endings: a single clear moment of waking up ready, not
+repeated false finishes. Do not reference alarm clocks or being disturbed.
+"""
+
+banned = [
+    "you will wake up energized",
+    "this nap will fix everything",
+    "time is short so sleep quickly",
+    "you must not oversleep",
+    "don't dream",
+]
+
+[[angles]]
+name    = "the hammock in afternoon shade"
+imagery = ["fabric just slightly swaying", "dappled light and shadow on closed eyelids", "the smell of grass and canvas"]
+
+[[angles]]
+name    = "the hotel room at midday"
+imagery = ["do-not-disturb sign on the door", "blackout curtains and cool air", "a bed made for strangers, now yours alone"]
+
+[[angles]]
+name    = "the overstuffed chair by a window"
+imagery = ["cushions holding you the way a hand holds something precious", "outside light but not on your face", "the low sound of the city very far away"]

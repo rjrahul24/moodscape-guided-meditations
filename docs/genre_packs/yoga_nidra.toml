@@ -1,0 +1,49 @@
+label        = "Yoga Nidra (NSDR)"
+family       = "Sleep & Rest"
+content_type = "meditation"
+music_tags   = ["drone", "tonal"]
+pause_ratio  = 0.38
+
+technique = """
+Rotation of consciousness through body parts (Nyasa): a systematic, very slow
+sweep from crown to feet, spending 3-5 seconds at each major point, stating the
+name ("forehead," "heart," "right knee") and inviting attention without tension.
+The listener remains awake but in profound rest — the difference between sleep
+and deep relaxation.
+"""
+
+arc = [
+    "settling supine with intention",
+    "the crown of the head downward",
+    "front and back of the body in turn",
+    "limbs and extremities",
+    "return to wholeness",
+]
+
+safety = """
+Yoga Nidra is *not* sleep and should never become sleep during the body scan
+— emphasize eyes closed but awareness alert. Do not use it for insomnia. Make
+clear this is restorative wakefulness, equivalent to several hours of sleep.
+Never rush the rotation; silence between points is essential.
+"""
+
+banned = [
+    "fall asleep",
+    "the sleep of consciousness",
+    "you will be unconscious",
+    "deep sleep",
+    "relax completely",
+    "let your body go limp",
+]
+
+[[angles]]
+name    = "lightning tracing the body"
+imagery = ["bright and silent down the spine", "branching to fingers and toes", "illuminating from within"]
+
+[[angles]]
+name    = "water filling a vessel"
+imagery = ["slowly rising from feet to crown", "each part becoming aware as it fills", "perfectly still once full"]
+
+[[angles]]
+name    = "light at dawn across a landscape"
+imagery = ["touching the highest peak first", "gradually reaching the valleys", "everything visible but without shadow"]

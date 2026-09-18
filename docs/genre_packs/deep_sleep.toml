@@ -1,0 +1,46 @@
+label        = "Deep Sleep"
+family       = "Sleep & Rest"
+content_type = "sleep_story"
+music_tags   = ["drone", "sustained"]
+pause_ratio  = 0.14
+
+technique = """
+Rhythmic, minimalist narration: a simple event repeated and elaborated with
+sensory variation, hypnotic rather than engaging. The listener sinks deeper
+with each cycle, as if descending.
+"""
+
+arc = [
+    "immersion in a single place",
+    "one gentle, repeated motion",
+    "deepening sensation",
+    "the space growing softer",
+    "dissolution into sleep",
+]
+
+safety = """
+Never invoke effort or wakefulness. No mentions of time passing or needing to
+sleep — assume they are already committing to rest. Keep the sensory world
+very warm and safe; any hint of exposure breaks the spell.
+"""
+
+banned = [
+    "try to sleep",
+    "don't worry about falling asleep",
+    "your eyes are heavy",
+    "you are so tired",
+    "you need this",
+    "wake up refreshed",
+]
+
+[[angles]]
+name    = "floating in dark water"
+imagery = ["weightlessness against skin", "the absence of a floor", "salt holding you up"]
+
+[[angles]]
+name    = "the underground lake"
+imagery = ["stone carved smooth over centuries", "an echo that is also silence", "depth beneath depth"]
+
+[[angles]]
+name    = "the nest high in a tree"
+imagery = ["branches that have held you since childhood", "the swaying so gentle it is almost still", "woven safe from the wind"]

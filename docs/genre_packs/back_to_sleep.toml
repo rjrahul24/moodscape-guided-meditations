@@ -1,0 +1,48 @@
+label        = "Back to Sleep"
+family       = "Sleep & Rest"
+content_type = "sleep_story"
+music_tags   = ["dark", "drone"]
+pause_ratio  = 0.16
+
+technique = """
+Reentry narrative: the listener has woken in the middle of the night and
+re-entered restlessness. The story is a journey back down, neither starting from
+zero nor pretending nothing interrupted. It names the wakefulness gently, then
+guides back into the dream threshold.
+"""
+
+arc = [
+    "acknowledging the waking",
+    "a place of return and familiarity",
+    "sinking back into the dream",
+    "the edges softening",
+    "sleep finding you again",
+]
+
+safety = """
+Normalize middle-of-the-night waking; do not catastrophize it. Never suggest the
+listener has failed or should feel frustrated. Avoid any narrative about time or
+how long the listener has been awake. The story should feel like a gift rather
+than a remedy.
+"""
+
+banned = [
+    "you shouldn't be awake",
+    "you've lost too much sleep",
+    "you only have a few hours left",
+    "you won't be able to function",
+    "don't think about tomorrow",
+    "stress is keeping you awake",
+]
+
+[[angles]]
+name    = "returning to a dream-in-progress"
+imagery = ["fragments of what you were just dreaming still hovering", "slipping back into the narrative", "the dream welcoming you"]
+
+[[angles]]
+name    = "the dark hallway back to bed"
+imagery = ["the familiar path without light", "finding your way by touch and memory", "the bed waiting exactly where you left it"]
+
+[[angles]]
+name    = "the in-between place"
+imagery = ["neither waking nor sleeping but something in the middle", "soft and timelessly warm", "where night creatures move without urgency"]

@@ -1,0 +1,46 @@
+label        = "Fall Asleep"
+family       = "Sleep & Rest"
+content_type = "sleep_story"
+music_tags   = ["dark", "sustained"]
+pause_ratio  = 0.15
+
+technique = """
+Continuous narrative immersion: a gentle story designed to occupy just enough
+attention to quiet mental chatter, then fade. The listener drifts away mid-scene,
+which is the goal. No instruction, no pacing markers.
+"""
+
+arc = [
+    "arrival in a quiet place",
+    "a simple, recurring event",
+    "sensory details without urgency",
+    "the scene settling into stillness",
+    "trailing off into sleep",
+]
+
+safety = """
+No time pressure or deadlines. Avoid any surprise or tension, even soft conflict.
+Never use sound effects that might startle. Assume the listener has already chosen
+sleep: the story is permission to let go, not persuasion to try.
+"""
+
+banned = [
+    "you must be tired",
+    "let yourself drift",
+    "close your eyes now",
+    "how did you get here",
+    "suddenly",
+    "the sound of",
+]
+
+[[angles]]
+name    = "the rain-soaked garden"
+imagery = ["old flagstones darkened by wet", "drops on broad leaves", "the smell of wet earth"]
+
+[[angles]]
+name    = "the ship's cabin"
+imagery = ["a brass lamp throwing warm shadow", "gentle rocking beneath blankets", "the creak of wood and rope"]
+
+[[angles]]
+name    = "the library at closing"
+imagery = ["shelves receding into shadow", "dust motes in a single shaft of light", "the quiet after others have left"]
