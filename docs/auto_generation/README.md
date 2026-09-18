@@ -26,7 +26,7 @@ Behind the scenes:
 - Preflight check: verify all LLM models exist (Ollama `/api/tags` check, fail in 2s not 5 min).
 - Load the genre pack (deterministic TOML file in `docs/genre_packs/<genre_slug>.toml`), validate it.
 - Rotate an angle: pick one of 3 distinct metaphorical frames (imagery, pacing) from the pack, excluding the last N used.
-- Extract an avoid-list: scan the 100 most recent same-genre scripts in `var/originality/`, pull out distinctive 1–3-grams, TF-IDF weighted.
+- Extract an avoid-list: scan the 5 most recent same-genre scripts in `var/originality/`, pull out distinctive 1–3-grams, TF-IDF weighted (proactive protection). Also load 100 same-genre scripts for cosine comparison and 500 all-genre scripts for IDF weighting (reactive, during validation).
 - **Planner** (Pass 0): generator model reads the pack's technique, arc, angle, music tags, pause ratio, safety caveats, plus the avoid-list and duration band. Outputs a prose creative brief (no JSON, no parsing).
 - **Writer** (Pass 1): same generator model (already resident) reads the brief, the formatting guide, safety rules, and duration band. Outputs a full script with tags (`[pause:Xs]`, `[breath]`, etc.), formatted and ready to parse.
 - **Judge** (Pass 2): independent judge model reviews the script, returns a revised version plus a changelog.
@@ -69,8 +69,8 @@ Two-tier system: proactive (prevents bad stories from being written) + reactive 
 
 ### Proactive
 
-1. **Angle rotation**: Each genre has 3 angles (distinct metaphorical frames). Each run picks one while excluding the last N (default 2) used for this genre. Two runs therefore use different imagery.
-2. **Avoid-list**: Extract from the 100 most recent same-genre scripts. Pull 1–3-grams (word sequences), weight them by TF-IDF *over the entire corpus* (so "notice your breath" gets near-zero weight, distinctive phrases keep full weight), render into the planner's prompt as "do not use".
+1. **Angle rotation**: Each genre has 3 angles (distinct metaphorical frames). Each run picks one while excluding the last N (default 3) used for this genre. Two runs therefore use different imagery.
+2. **Avoid-list**: Extract from the 5 most recent same-genre scripts. Pull 1–3-grams (word sequences), weight them by TF-IDF *over the entire corpus* (so "notice your breath" gets near-zero weight, distinctive phrases keep full weight), render into the planner's prompt as "do not use".
 
 ### Reactive
 
@@ -102,7 +102,7 @@ The subsystem is built as five layers, each catching a different class of proble
 0. **Genre pack validation** (`genres.load_pack`): Required fields present, `content_type` is valid, `music_tags` are in the known vocabulary, `angles` count and distinctness, exact 2–3 tags. Malformed pack raises at call time.
 1. **Prose rules (LLM-enforced).** `docs/prompting_guides/content_safety_rules.md` plus the per-engine, per-content-type formatting guides (`vocal_{content_type}_{engine}_instructions.md`) are assembled into the planner's and writer's and judge's system prompts by `script_gen/rules.py`. These are read at call time, not import time — see the Gotchas note below.
 2. **Linter (code-enforced).** `script_gen/linter.py` re-checks the same rules deterministically: markup, tags, pause bounds, mental-health hard-blocks, originality scoring, banned phrases. This never depends on the model having followed instructions correctly.
-3. **Generator + Planner.** `script_gen/planner.py :: draft()` (pass 0: brief only), then `script_gen/generator.py :: draft()` (pass 1: full script).
+3. **Generator + Planner.** `script_gen/planner.py :: plan()` (pass 0: brief only), then `script_gen/generator.py :: draft()` (pass 1: full script).
 4. **Judge.** `script_gen/judge.py :: review()` / `repair()` — an independent second model that revises the draft, and later repairs it against named violations.
 
 **Why the split exists.** Format and safety rules living only in the prompt would cost a token (and a chance of being ignored) on every generation, and a model that ignores them has no backstop. Putting the same rules in `content_safety_rules.md` *and* in `linter.py` means the prompt does the persuading — cheaply, since it's plain text with no extra inference — and the linter does the enforcing, for free, without spending a single token. That deterministic backstop is what makes a weaker or cheaper model usable at all: a small local model that gets the format wrong occasionally is fine, because the linter catches it and the judge repairs it, instead of a bad script silently reaching the TTS engine. Genre packs add a fourth layer before any inference: if the pack is malformed, the job fails before the LLM budget is spent.

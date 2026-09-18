@@ -42,4 +42,4 @@ When you need to change something, start here. Locate the row that matches your 
 | Change the judge model | `MOODSCAPE_SCRIPT_JUDGE` env var | **Must be independent** — a different model family than the writer, not the same weights. Affects quality of review/repair. |
 | Change the Manual / Auto-Generate tab layout | `app.py` (`gr.Tabs()` container) | `core/auto_tab.py` (Auto-Generate tab content + `elem_classes` styling) — see [app_wiring.md](auto_generation/app_wiring.md) |
 | Change the Auto-Generate UI controls (dropdown, radio, etc.) | `core/auto_tab.py` | Wiring lives in `auto_generate_handler()` callback; genre on-change handler calls `genres.load_pack()` to pre-fill voice engine and content type |
-| Benchmark a model pairing | `python scripts/eval_genres.py --pair writer:model judge:model ...` | Renders matrix of genres × model configs, writes metrics to comparison dir |
+| Benchmark a model pairing | `python scripts/eval_genres.py --configs "name=writer_spec\|judge_spec" --out /path` | Renders matrix of genres × model configs, writes metrics to comparison dir |

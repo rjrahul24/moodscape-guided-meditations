@@ -10,7 +10,7 @@ The genre path uses **three LLM stages** to ensure independence between generati
 
 ### Stage 0 — Planner (`script_gen/planner.py`, model: `MOODSCAPE_SCRIPT_PLANNER`)
 
-**Input:** Genre pack (technique, arc, 3 imagery angles, safety rules, music tags, pause ratio), selected angle, avoid-list (distinctive terms from the 100 most recent same-genre scripts), duration band (3–6 min, 6–10 min, 10–15 min).
+**Input:** Genre pack (technique, arc, 3 imagery angles, safety rules, music tags, pause ratio), selected angle, avoid-list (distinctive terms from the 5 most recent same-genre scripts), duration band (3–6 min, 6–10 min, 10–15 min).
 
 **Output:** Prose creative brief (100–150 words), plain text — no JSON, no parsing.
 
@@ -44,8 +44,8 @@ Two-tier proactive (prevents bad stories from being written) + reactive (flags r
 
 ### Proactive
 
-1. **Angle rotation** (`genres.pick_angle`, `originality.recent_angles`): Three distinct angles per genre (e.g., "the empty chair", "tidal", "carrying" for Grief & Loss). Each run picks one while excluding the last N (default 2) used for this genre. Ensures two runs use different sensory frames.
-2. **Avoid-list** (`originality.avoid_terms`): Extract distinctive 1–3-grams from the 100 most recent same-genre scripts (TF-IDF weighting, over the entire corpus so generic "notice your breath" terms get zero weight). Render this list into the planner's prompt as an explicit "do not use" block.
+1. **Angle rotation** (`genres.pick_angle`, `originality.recent_angles`): Three distinct angles per genre (e.g., "the empty chair", "tidal", "carrying" for Grief & Loss). Each run picks one while excluding the last N (default 3) used for this genre. Ensures two runs use different sensory frames.
+2. **Avoid-list** (`originality.avoid_terms`): Extract distinctive 1–3-grams from the 5 most recent same-genre scripts (TF-IDF weighting, over the entire corpus so generic "notice your breath" terms get zero weight; for reactive scoring, load 100 same-genre scripts for cosine comparison and 500 all-genre scripts for IDF weighting). Render the proactive list into the planner's prompt as an explicit "do not use" block.
 
 ### Reactive
 

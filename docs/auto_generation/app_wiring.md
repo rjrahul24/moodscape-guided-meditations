@@ -100,11 +100,12 @@ Both pre-fills are set by `on_genre_change()` callback when the genre dropdown c
 
 ### Orchestration inside `auto_generate_handler()`
 
-1. Read `genre_dropdown.value` → `genres.load_pack(genre_slug)`
-2. Read `duration_band_radio.value` → `DURATION_BANDS[band]` → `(target_min_sec, target_max_sec)`
-3. Read `steer_accordion` text → append to brief if present
-4. Call `auto_generate.run(genre=pack, duration_min=target_min, duration_max=target_max, steer=steer_text, …)`
-5. Stream progress via `StreamingRun`, yield audio + script on success
+1. Read `genre_dropdown.value` → `genres.load_pack(genre_slug)` → get pack
+2. Read `duration_band_radio.value` → duration band string ("short", "medium", "long")
+3. Build `AutoConfig` via `AutoConfig.from_genre(pack, band=band, content_type=content_type, tts_engine=tts_engine)`
+4. Read `steer_accordion` text → pass to `StreamingRun` if present
+5. Create `StreamingRun` with `genre=genre_slug, steer=steer_text, config=config`
+6. Stream progress via `StreamingRun`, yield audio + script on success
 
 ## If you need to restructure this again
 

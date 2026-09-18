@@ -90,15 +90,16 @@ Full breakdown with parameters: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 Genre and duration band in, finished meditation out, with no human step.
 
-0. **Preflight** → `preflight_check()` verifies all LLM models exist (Ollama
+0. **Preflight** → `preflight()` verifies all LLM models exist (Ollama
    `/api/tags`) and names any missing model before planning starts (fail in 2s,
    not 5 min)
 1. **Load pack + rotate angle** → `genres.load_pack()` validates the genre
    pack (required fields, known tags, valid `content_type`), then
    `genres.pick_angle()` selects one of 3 distinct angles, excluding recently
    used ones for this genre; `originality.avoid_terms()` extracts a do-not-reuse
-   list from the 100 most recent same-genre scripts
-2. **Plan** (Pass 0) → `script_gen/planner.py :: draft()` takes the pack's
+   list from the 5 most recent same-genre scripts (avoid-list), 100 same-genre scripts
+   (cosine comparison), and 500 all-genre scripts (IDF weighting)
+2. **Plan** (Pass 0) → `script_gen/planner.py :: plan()` takes the pack's
    technique, arc, imagery angle, pause_ratio, and safety rules, plus the
    avoid-list and duration band, and returns a **prose creative brief**
    (plain text, no JSON) that shapes what the writer will generate
@@ -151,7 +152,7 @@ Full detail: [docs/auto_generation/README.md](docs/auto_generation/README.md).
 
 ## Top Gotchas
 
-The six that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
+The eight that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
 
 - **MPS bus error on exit** → `atexit.register(lambda: os._exit(0))` in `app.py` — do not remove.
 - **Kokoro forced to CPU** → MPS causes deallocation bus errors. British voices (`bf_*`, `bm_*`) need `KPipeline(lang_code="b")`.

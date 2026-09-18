@@ -40,9 +40,9 @@ Authoritative map of every class and module in `core/`. Use this when you need t
 | Genre pack loader | `core/genres.py` | `GenrePack`, `Angle`, `GenrePackError` | `load_pack()`, `load_all_packs()`, `pick_angle()`, `genre_choices()` — reads + validates TOML packs at call time |
 | Originality corpus + scoring | `core/originality.py` | `CorpusEntry` | `load_corpus()`, `add_to_corpus()`, `recent_angles()`, `avoid_terms()`, `assess()` — TF-IDF + rare-n-gram overlap |
 | Background music tagging | `core/background_tags.py` | — | `extract_features()`, `tags_from_features()`, `tags_for()` — lazy librosa analysis, cached by (filename, size, mtime) |
-| Script engine ABC + registry | `core/script_gen/engine.py` | `ScriptEngine(ABC)`, `FakeScriptEngine` | `complete()`, `unload()`, `build_engine()`, `parse_engine_spec()`, `preflight_check()` — provider registry `PROVIDER_BASE_URLS` / `PROVIDER_KEY_ENV` |
+| Script engine ABC + registry | `core/script_gen/engine.py` | `ScriptEngine(ABC)`, `FakeScriptEngine` | `complete()`, `unload()`, `build_engine()`, `parse_engine_spec()`, `preflight()` — provider registry `PROVIDER_BASE_URLS` / `PROVIDER_KEY_ENV` |
 | Prompt assembly | `core/script_gen/rules.py` | — | `build_planner_system_prompt()`, `build_generator_system_prompt()`, `build_judge_system_prompt()`, `load_guide()`, `load_safety_rules()` |
-| Planner (pass 0) | `core/script_gen/planner.py` | — | `draft()` — genre pack + angle → prose creative brief |
+| Planner (pass 0) | `core/script_gen/planner.py` | — | `plan()` — genre pack + angle → prose creative brief |
 | Script generator (pass 1) | `core/script_gen/generator.py` | — | `draft()`, `strip_wrapper()` |
 | Script judge (pass 2) | `core/script_gen/judge.py` | — | `review()`, `repair()`, `parse_judge_response()` |
 | Script linter | `core/script_gen/linter.py` | `Violation` | `check()`, `check_format()`, `check_safety()`, `check_originality()`, `check_banned_phrases()`, `fatal_violations()`, `format_for_repair()` |
