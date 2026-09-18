@@ -2940,6 +2940,13 @@ def pick_angle(
     return chooser.choice(candidates)
 ```
 
+**Note added during execution:** the code above validates presence, range and
+membership but not **type**, which lets `arc = "a string"` through silently —
+`tuple("...")` iterates characters into a garbage tuple that passes the length
+check. The shipped implementation adds `_require_str`, `_require_str_list` and
+`_require_float` helpers that raise `GenrePackError` naming the field and what
+was found, and routes every field through them. See commit `f390acb`.
+
 - [ ] **Step 4: Run test to verify the non-pack tests pass**
 
 Run: `.venv/bin/python -m pytest tests/unit/test_genres.py -v -k "not Shipped"`
