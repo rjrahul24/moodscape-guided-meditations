@@ -1,0 +1,50 @@
+label        = "Confidence"
+family       = "Emotional"
+content_type = "meditation"
+music_tags   = ["bright", "steady"]
+pause_ratio  = 0.28
+
+technique = """
+Grounding in capability: noticing moments when you have managed, decided, or
+moved through difficulty. Somatic resourcing (Peter Levine): anchoring attention
+to physical sensations of stability, steadiness, and capacity. Not a feeling to
+be manufactured, but an acknowledgment of what you already carry.
+"""
+
+arc = [
+    "arriving with your whole self",
+    "remembering a time you found your way",
+    "noticing where you feel grounded in your body",
+    "what strength is already in you",
+    "steady as you go forward",
+]
+
+safety = """
+Confidence is not the absence of doubt or fear. Do not promise an outcome or
+suggest that the listener will succeed at a specific task. Do not offer
+affirmations as substitutes for felt experience. This is an invitation to notice
+capability that already exists, not to generate false certainty. Some days
+confidence will feel small — that is not failure.
+"""
+
+banned = [
+    "you can do anything",
+    "believe in yourself and you'll succeed",
+    "you will accomplish your goals",
+    "fake it till you make it",
+    "no one can stop you",
+    "you are destined for success",
+    "manifesto your confidence",
+]
+
+[[angles]]
+name    = "the steady ground"
+imagery = ["earth beneath your feet", "solid and holding you up", "no effort required, simply present"]
+
+[[angles]]
+name    = "the river finding its way"
+imagery = ["water moving around obstacles", "not forcing, just persistent", "reaching what is downstream"]
+
+[[angles]]
+name    = "the spine supporting upright"
+imagery = ["your skeleton arranging around its core", "no collapse, no pretense", "simply holding the shape of you"]

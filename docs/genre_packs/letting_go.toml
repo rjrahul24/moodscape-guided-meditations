@@ -1,0 +1,50 @@
+label        = "Letting Go"
+family       = "Emotional"
+content_type = "meditation"
+music_tags   = ["sparse", "sustained"]
+pause_ratio  = 0.36
+
+technique = """
+Gradual release without force: inviting the body to soften what it is holding,
+without timeline or judgment. Noting and labelling (Jotika Malwatte): observing
+what arises — the grip, the fear, the reluctance — and naming it gently. Not
+about achieving release, but about allowing the process to move at its own pace.
+"""
+
+arc = [
+    "noticing what you are holding",
+    "the cost of the grip",
+    "gradual softening, moment by moment",
+    "what wants to release is released",
+    "what wants to stay, stays — that is fine",
+]
+
+safety = """
+Holding on is often wisdom and love, not weakness. Never imply the listener
+should be over something by now, or that their continued holding is a failure.
+Letting go is not forgetting, not abandoning, not ceasing to care. This practice
+is an invitation to release only what the listener chooses. Some things take
+years; some things are not meant to be released. Honour the listener's timing.
+"""
+
+banned = [
+    "let it all go",
+    "you need to move on",
+    "just let it go",
+    "holding on is weakness",
+    "you're holding on too long",
+    "release everything",
+    "stop clinging",
+]
+
+[[angles]]
+name    = "the open hand"
+imagery = ["fingers gradually uncurling", "what was held no longer held", "the palm empty and open"]
+
+[[angles]]
+name    = "the fog lifting"
+imagery = ["what was opaque becoming clear", "not by force but by time and warmth", "revealing what was always underneath"]
+
+[[angles]]
+name    = "the branch in the wind"
+imagery = ["bending with the gusts, not resisting", "the twig that yields survives", "flexibility rather than rigidity"]

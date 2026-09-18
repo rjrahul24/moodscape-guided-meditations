@@ -1,0 +1,50 @@
+label        = "Loneliness"
+family       = "Emotional"
+content_type = "meditation"
+music_tags   = ["warm", "steady"]
+pause_ratio  = 0.32
+
+technique = """
+Presence and acknowledgment: sitting with loneliness as information about your
+needs rather than a defect in you. Body-based grounding to the room and the
+present moment. No prescription to connect — loneliness and isolation are not
+the same, and sometimes being alone is what you need.
+"""
+
+arc = [
+    "arriving with what is true right now",
+    "loneliness as a message about need, not failure",
+    "feeling your body in this space",
+    "noticing what might help in this moment",
+    "what comes next is yours to choose",
+]
+
+safety = """
+Never suggest that loneliness is the listener's fault or a failure of effort to
+socialise. Do not prescribe connection or socialising as the cure, and do not
+assume loneliness means isolation. Loneliness is a mismatch between desired and
+actual connection; a person surrounded by others can feel it, and a person alone
+may not. Honour the listener's knowledge of what they need.
+"""
+
+banned = [
+    "reach out to someone",
+    "you just need to make more friends",
+    "loneliness is all in your head",
+    "connect with others",
+    "you shouldn't feel alone",
+    "call someone",
+    "loneliness is your own fault",
+]
+
+[[angles]]
+name    = "the quiet room"
+imagery = ["the space around you, solid and real", "your breath moving through it", "time moving at its own pace"]
+
+[[angles]]
+name    = "the small anchor"
+imagery = ["an object in your hands", "its weight and texture", "something that is simply itself, asking nothing of you"]
+
+[[angles]]
+name    = "the distant shore"
+imagery = ["a stretch of beach you cannot cross to", "the water between", "what is there is there; you are here"]

@@ -1,0 +1,49 @@
+label        = "Self-Compassion"
+family       = "Emotional"
+content_type = "meditation"
+music_tags   = ["warm", "sustained"]
+pause_ratio  = 0.34
+
+technique = """
+Self-compassion break (Kristin Neff): recognise suffering, note the common
+humanity of difficulty, and offer kindness to yourself as you would to a friend
+in pain. A practice, not a performance — imperfect and repeated.
+"""
+
+arc = [
+    "noticing what is hard right now",
+    "this is a moment of suffering, and suffering is part of life",
+    "you deserve the same kindness you give others",
+    "placing a hand where it feels right, gently",
+    "carrying this forward",
+]
+
+safety = """
+Self-compassion is not self-pity, self-indulgence, or letting yourself off the
+hook for harm. It is not a feeling to be achieved by the end of the session.
+Avoid affirmations ("you are enough") that sound like slogans rather than an
+invitation to practice. Some listeners will feel self-directed kindness as
+unfamiliar or uncomfortable — that is normal and does not mean they are doing
+it wrong.
+"""
+
+banned = [
+    "you are enough",
+    "you are worthy",
+    "love yourself",
+    "don't be so hard on yourself",
+    "just be kind to yourself",
+    "you deserve happiness",
+]
+
+[[angles]]
+name    = "the hand on the heart"
+imagery = ["warmth and steadiness where your palm rests", "the rhythm of your heartbeat beneath your hand", "a gesture that says: I am here"]
+
+[[angles]]
+name    = "the friend beside you"
+imagery = ["someone who knows you well", "sitting quietly without needing to fix anything", "their presence without judgment"]
+
+[[angles]]
+name    = "the small child"
+imagery = ["a young version of yourself", "who deserves gentleness right now", "your own young hands needing comfort"]
