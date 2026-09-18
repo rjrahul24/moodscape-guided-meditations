@@ -13,7 +13,6 @@ from core.auto_generate import (
     DEFAULT_GENERATOR,
     DEFAULT_JUDGE,
     DEFAULT_PLANNER,
-    DURATION_BANDS,
     AutoConfig,
 )
 from core.genres import genre_choices, load_pack
@@ -76,6 +75,11 @@ def auto_generate_handler(
         yield None, "", "", update.message
 
     if run.result is None:
+        # Guard on result, not on the truthiness of run.error: an exception
+        # with an EMPTY message sets run.error = "", which is falsy, so a
+        # truthiness check here would fall through to `run.result` (still
+        # None) and raise AttributeError inside this Gradio generator
+        # instead of reporting the failure.
         message = run.error if run.invalid_input else f"Failed: {run.error}"
         yield None, "", "", message
         return
@@ -206,7 +210,7 @@ def build_auto_tab() -> dict:
         )
 
     return {
-        "prompt": None, "genre": genre, "band": band, "steer": steer,
+        "genre": genre, "band": band, "steer": steer,
         "content_type": content_type, "tts_engine": tts_engine,
         "target_min": target_min, "target_max": target_max,
         "planner": planner, "generator": generator, "judge": judge, "button": button,

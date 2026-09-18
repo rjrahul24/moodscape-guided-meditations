@@ -43,6 +43,20 @@ class GenreControlsTest(unittest.TestCase):
         self.assertEqual(content_type_for_genre("fall_asleep"), "sleep_story")
         self.assertEqual(content_type_for_genre("grief_and_loss"), "meditation")
 
+    def test_band_choices_labels_match_duration_bands(self):
+        from core.auto_tab import BAND_CHOICES
+        from core.auto_generate import DURATION_BANDS
+
+        band_dict = {slug: label for label, slug in BAND_CHOICES}
+        for band_slug, (min_sec, max_sec) in DURATION_BANDS.items():
+            min_min = min_sec / 60
+            max_min = max_sec / 60
+            expected_label = f"{min_min:.0f}–{max_min:.0f} min"
+            self.assertEqual(
+                band_dict[band_slug], expected_label,
+                f"Band '{band_slug}' label does not match its duration range"
+            )
+
 
 class TestBuildAutoTab(unittest.TestCase):
     def test_builds_inside_a_blocks_context(self):
@@ -54,8 +68,8 @@ class TestBuildAutoTab(unittest.TestCase):
         with gr.Blocks():
             components = build_auto_tab()
         for key in (
-            "prompt", "content_type", "tts_engine", "target_min", "target_max",
-            "generator", "judge", "button", "audio", "status", "script", "changelog",
+            "genre", "band", "steer", "content_type", "tts_engine",
+            "planner", "generator", "judge", "button", "audio", "status", "script", "changelog",
         ):
             self.assertIn(key, components)
 
