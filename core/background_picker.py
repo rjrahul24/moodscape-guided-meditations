@@ -9,10 +9,13 @@ exclude-recent behaviour that stops a batch landing on the same instrumental
 repeatedly.
 """
 
+import logging
 import random
 from collections.abc import Sequence
 
 from core.upload_music import BACKGROUNDS_DIR, scan_backgrounds
+
+logger = logging.getLogger(__name__)
 
 
 def pick_background(
@@ -20,6 +23,8 @@ def pick_background(
     scan=None,
     exclude: Sequence[str] = (),
     rng: random.Random | None = None,
+    prefer_tags: Sequence[str] = (),
+    tag_lookup=None,
 ) -> tuple[str, str]:
     """Choose one background instrumental at random.
 
@@ -30,6 +35,12 @@ def pick_background(
             would leave nothing, the full pool is used instead — variety is a
             preference, not a reason to fail a job.
         rng: Inject a seeded Random for reproducible selection.
+        prefer_tags: Only consider tracks carrying ALL of these tags. If that
+            leaves nothing, the tag filter is dropped. Genre packs supply
+            these so a running meditation does not land on a sleep drone.
+        tag_lookup: Callable mapping [path, ...] -> {path: [tag, ...]}.
+            Defaults to background_tags.tags_for. Only called when
+            prefer_tags is non-empty, so an untagged library costs nothing.
 
     Returns:
         (label, path) — the label is human-readable, e.g.
@@ -47,8 +58,29 @@ def pick_background(
             "Add royalty-free audio files there before auto-generating."
         )
 
+    candidates = list(pool)
+
+    if prefer_tags:
+        lookup = tag_lookup
+        if lookup is None:
+            from core.background_tags import tags_for as lookup
+        wanted = set(prefer_tags)
+        tags = lookup([path for _label, path in candidates])
+        tagged = [
+            entry
+            for entry in candidates
+            if wanted.issubset(set(tags.get(entry[1], ())))
+        ]
+        if tagged:
+            candidates = tagged
+        else:
+            logger.info(
+                "No background matches tags %s; using the full library.",
+                sorted(wanted),
+            )
+
     excluded = set(exclude)
-    candidates = [entry for entry in pool if entry[1] not in excluded] or pool
+    candidates = [entry for entry in candidates if entry[1] not in excluded] or candidates
 
     chooser = rng if rng is not None else random
     return chooser.choice(candidates)

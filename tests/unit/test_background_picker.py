@@ -54,5 +54,67 @@ class TestBackgroundPicker(unittest.TestCase):
         self.assertTrue(path.endswith((".mp3", ".wav", ".flac", ".ogg", ".m4a")))
 
 
+class PreferTagsTest(unittest.TestCase):
+    POOL = [
+        ("Calm Drone — 10:00", "/bg/drone.mp3"),
+        ("Bright Piano — 08:00", "/bg/piano.mp3"),
+        ("Dark Pad — 12:00", "/bg/pad.mp3"),
+    ]
+    TAGS = {
+        "/bg/drone.mp3": ["drone", "dark", "sustained"],
+        "/bg/piano.mp3": ["bright", "struck", "evolving"],
+        "/bg/pad.mp3": ["dark", "sustained", "steady"],
+    }
+
+    def _scan(self):
+        return list(self.POOL)
+
+    def _lookup(self, paths):
+        return {p: self.TAGS[p] for p in paths}
+
+    def test_prefers_tracks_carrying_every_requested_tag(self):
+        for _ in range(20):
+            _label, path = pick_background(
+                scan=self._scan,
+                prefer_tags=["dark", "sustained"],
+                tag_lookup=self._lookup,
+            )
+            self.assertIn(path, {"/bg/drone.mp3", "/bg/pad.mp3"})
+
+    def test_single_tag_narrows_correctly(self):
+        _label, path = pick_background(
+            scan=self._scan, prefer_tags=["struck"], tag_lookup=self._lookup
+        )
+        self.assertEqual(path, "/bg/piano.mp3")
+
+    def test_unmatchable_tags_fall_back_to_the_full_pool(self):
+        _label, path = pick_background(
+            scan=self._scan,
+            prefer_tags=["rhythmic", "brass"],
+            tag_lookup=self._lookup,
+        )
+        self.assertIn(path, {p for _, p in self.POOL})
+
+    def test_exclude_still_applies_within_a_tag_filter(self):
+        _label, path = pick_background(
+            scan=self._scan,
+            prefer_tags=["dark"],
+            exclude=["/bg/pad.mp3"],
+            tag_lookup=self._lookup,
+        )
+        self.assertEqual(path, "/bg/drone.mp3")
+
+    def test_no_prefer_tags_never_calls_the_tag_lookup(self):
+        """Tagging is lazy; an untagged library must stay fast when unused."""
+        calls = []
+
+        def spy(paths):
+            calls.append(paths)
+            return {}
+
+        pick_background(scan=self._scan, tag_lookup=spy)
+        self.assertEqual(calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()
