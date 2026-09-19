@@ -80,6 +80,33 @@ class CorpusTest(unittest.TestCase):
         (self.dir / "index.json").write_text("{not json at all", encoding="utf-8")
         self.assertEqual(load_corpus(corpus_dir=self.dir), [])
 
+    def test_a_corrupt_index_is_quarantined_not_destroyed(self):
+        """A corrupt index must be renamed aside, not silently overwritten --
+        add_to_corpus() writing a fresh 1-record index straight over a
+        corrupt file would orphan every prior script permanently."""
+        add_to_corpus("something", genre="sleep", corpus_dir=self.dir)
+        (self.dir / "index.json").write_text("{not json at all", encoding="utf-8")
+
+        # Reading (and thus quarantining) happens as a side effect of the
+        # next corpus operation.
+        load_corpus(corpus_dir=self.dir)
+
+        quarantined = list(self.dir.glob("index.json.corrupt-*"))
+        self.assertEqual(len(quarantined), 1)
+        self.assertIn("not json at all", quarantined[0].read_text(encoding="utf-8"))
+        # The new index written afterwards is a normal, fresh file.
+        add_to_corpus("something else", genre="sleep", corpus_dir=self.dir)
+        self.assertTrue((self.dir / "index.json").is_file())
+
+    def test_write_index_leaves_no_temp_file_behind(self):
+        """_write_index's atomic temp-file-plus-replace must not leave
+        stray .tmp-* files after a normal write."""
+        add_to_corpus("a", genre="sleep", corpus_dir=self.dir)
+        add_to_corpus("b", genre="sleep", corpus_dir=self.dir)
+        leftovers = list(self.dir.glob("index.json.tmp-*"))
+        self.assertEqual(leftovers, [])
+        self.assertEqual(len(load_corpus(corpus_dir=self.dir)), 2)
+
 
 from core.originality import (
     build_idf,
@@ -228,6 +255,7 @@ class LongestRareRunTest(unittest.TestCase):
 
 
 from core.originality import CorpusEntry, assess, avoid_terms
+from core.script_gen.linter import check_originality
 
 
 def _entry(text: str, script_id: str = "x", angle: str = "") -> CorpusEntry:
@@ -281,13 +309,55 @@ class AssessTest(unittest.TestCase):
         self.assertLess(report.max_cosine, 0.65)
 
     def test_lifted_passage_is_reported_even_when_cosine_is_low(self):
+        # idf_texts models the corpus as it exists BEFORE this candidate is
+        # assessed -- LIFTED (the candidate) is not yet in it, matching how
+        # assess() is actually called (a script is only added to the corpus
+        # after a successful render).
         report = assess(
             LIFTED,
             compare_against=[_entry(GENERIC_B)],
-            idf_texts=self._big_corpus([GENERIC_B, LIFTED]),
+            idf_texts=self._big_corpus([GENERIC_B]),
         )
         self.assertGreaterEqual(report.shared_span, 9)
         self.assertIn("copper staircase", report.shared_text)
+
+
+class RunDfCorpusScopeTest(unittest.TestCase):
+    """The rare-run df filter must be built from the WHOLE corpus.
+
+    max_df is meant to exclude phrasing common across every genre. A genre
+    holding only 1-2 prior scripts can never demonstrate that on its own --
+    the df must come from idf_texts (all genres), not compare_against (same
+    genre only). Regression for the bug where an ordinary shared opener,
+    present in all 15 corpus documents, scored as a lifted passage because
+    the df was built from a same-genre set of one.
+    """
+
+    def test_an_opener_shared_across_the_whole_corpus_is_not_a_lift(self):
+        opener = (
+            "Settle in and let your shoulders drop away from your ears and "
+            "notice the weight of your hands where they rest. "
+        )
+        others = [
+            opener + f"Tonight we rest with {word}."
+            for word in (
+                "alpha bravo charlie delta echo foxtrot golf hotel india "
+                "juliet kilo lima mike november"
+            ).split()
+        ]
+        same_genre = [
+            _entry(opener + "A copper staircase descends into lamplight.")
+        ]
+        candidate = opener + "Rain begins against the window, unhurried."
+
+        report = assess(
+            candidate,
+            compare_against=same_genre,
+            idf_texts=others + [e.text for e in same_genre],
+        )
+
+        self.assertEqual(report.shared_span, 0)
+        self.assertEqual(check_originality(report), [])
 
 
 class AvoidTermsTest(unittest.TestCase):

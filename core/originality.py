@@ -60,16 +60,49 @@ def _read_index(root: Path) -> list[dict]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        logger.warning("Corpus index at %s is unreadable; treating as empty.", path)
+        # A corrupt index must not be silently overwritten: add_to_corpus()
+        # calls this, then _write_index()s a single new record over whatever
+        # this returns -- if that were [], every prior script would be
+        # orphaned permanently the moment one write got cut short (which is
+        # itself how the index goes corrupt in the first place, since the
+        # old _write_index() was a non-atomic full rewrite). Rename the
+        # unreadable file aside instead, so the corpus survives and a human
+        # can recover it, and log exactly where it went.
+        quarantine = path.with_name(
+            f"{path.name}.corrupt-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
+        )
+        try:
+            path.rename(quarantine)
+            logger.warning(
+                "Corpus index at %s was unreadable; moved aside to %s and "
+                "starting a fresh index. Prior scripts on disk are intact "
+                "and can be recovered by inspecting the quarantined file.",
+                path, quarantine,
+            )
+        except OSError:
+            logger.warning(
+                "Corpus index at %s is unreadable and could not be moved "
+                "aside; treating as empty for this run.", path,
+            )
         return []
     return data if isinstance(data, list) else []
 
 
 def _write_index(root: Path, records: list[dict]) -> None:
+    """Write the index atomically: a temp file plus os.replace().
+
+    A plain write_text() truncates the file before writing, so a process
+    killed mid-write (or a full disk) leaves a partial JSON file -- which is
+    exactly the "corrupt index" case _read_index() has to quarantine. Writing
+    to a temp file in the same directory and renaming it into place makes the
+    replace atomic: the index is always either the old complete file or the
+    new complete file, never a partial one.
+    """
     root.mkdir(parents=True, exist_ok=True)
-    (root / _INDEX_NAME).write_text(
-        json.dumps(records, indent=2), encoding="utf-8"
-    )
+    path = root / _INDEX_NAME
+    tmp_path = path.with_name(f"{_INDEX_NAME}.tmp-{os.getpid()}-{os.urandom(3).hex()}")
+    tmp_path.write_text(json.dumps(records, indent=2), encoding="utf-8")
+    os.replace(tmp_path, path)
 
 
 def add_to_corpus(
@@ -325,6 +358,12 @@ class OriginalityReport:
     shared_span: int
     shared_text: str
     corpus_size: int
+    # How many SAME-GENRE scripts were actually compared against (the size of
+    # `compare_against`). This is what determines whether the rare-run
+    # document-frequency statistics are meaningful for THIS genre -- a genre
+    # holding one or two prior scripts cannot tell rare from stock phrasing,
+    # regardless of how large the all-genre corpus (`corpus_size`) is.
+    compared_count: int = 0
 
 
 def assess(
@@ -351,16 +390,25 @@ def assess(
             shared_span=0,
             shared_text="",
             corpus_size=len(idf_texts),
+            compared_count=0,
         )
 
     candidate_tokens = tokenize(script)
     other_tokens = {entry.script_id: tokenize(entry.text) for entry in compare_against}
 
-    # df for the rare-run check is computed over every document available,
-    # candidate included, so a phrase the candidate shares with many prior
-    # scripts is correctly seen as common rather than lifted.
+    # Tokenize the whole (all-genre) corpus once and reuse it for both the
+    # rare-run document-frequency filter and the cosine IDF weighting below,
+    # rather than tokenizing idf_texts twice.
+    idf_token_lists = [tokenize(text) for text in idf_texts]
+
+    # df for the rare-run check MUST be built from the entire corpus (every
+    # genre), not just compare_against (same genre only): max_df is meant to
+    # exclude phrasing that is common ACROSS THE WHOLE CORPUS, and a genre
+    # holding one or two prior scripts can never demonstrate that a phrase is
+    # common. The candidate itself is included too, so a phrase the candidate
+    # repeats internally is correctly seen as common rather than lifted.
     run_df = document_frequencies(
-        [candidate_tokens, *other_tokens.values()], max_n=RUN_NGRAM
+        [candidate_tokens, *idf_token_lists], max_n=RUN_NGRAM
     )
 
     best_span, best_text = 0, ""
@@ -373,7 +421,7 @@ def assess(
     max_cosine, nearest_id = 0.0, ""
 
     if cosine_available:
-        idf, default_idf = build_idf([tokenize(text) for text in idf_texts])
+        idf, default_idf = build_idf(idf_token_lists)
         candidate_vector = tfidf_vector(candidate_tokens, idf, default_idf)
         for script_id, tokens in other_tokens.items():
             score = cosine(
@@ -389,6 +437,7 @@ def assess(
         shared_span=best_span,
         shared_text=best_text,
         corpus_size=len(idf_texts),
+        compared_count=len(compare_against),
     )
 
 

@@ -456,9 +456,13 @@ def check_originality(
     """
     violations: list[Violation] = []
 
+    # Keyed on compared_count (same-genre scripts actually compared), not
+    # corpus_size (the all-genre total): the df statistics behind the
+    # rare-run filter are only meaningful for this genre once enough
+    # same-genre scripts exist to show a phrase is common rather than rare.
     run_threshold = (
         MIN_RUN_TOKENS
-        if report.corpus_size >= SMALL_CORPUS_BELOW
+        if report.compared_count >= SMALL_CORPUS_BELOW
         else MIN_RUN_TOKENS_SMALL_CORPUS
     )
 

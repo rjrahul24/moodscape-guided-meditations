@@ -353,6 +353,7 @@ class CheckOriginalityTest(unittest.TestCase):
             "shared_span": 0,
             "shared_text": "",
             "corpus_size": 50,
+            "compared_count": 50,
         }
         base.update(overrides)
         return OriginalityReport(**base)
@@ -399,7 +400,8 @@ class CheckOriginalityTest(unittest.TestCase):
         from core.script_gen.linter import check_originality
 
         small = self._report(
-            corpus_size=3, cosine_available=False, shared_span=14,
+            corpus_size=50, compared_count=3, cosine_available=False,
+            shared_span=14,
             shared_text="notice your breath and let your shoulders drop now",
         )
         self.assertEqual(check_originality(small), [])
