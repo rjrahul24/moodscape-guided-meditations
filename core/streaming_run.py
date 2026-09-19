@@ -34,14 +34,14 @@ class StreamingRun:
         prompt: str = "",
         *,
         genre: str | None = None,
-        steer: str = "",
+        steer: str | None = "",
         config=None,
         runner=None,
         **kwargs,
     ):
         self._prompt = prompt
         self._genre = genre
-        self._steer = steer
+        self._steer = steer or ""
         self._config = config
         self._runner = runner if runner is not None else default_run
         self._kwargs = kwargs

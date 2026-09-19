@@ -4,6 +4,7 @@ import gc
 import logging
 import os
 import time
+from typing import Any
 
 import numpy as np
 
@@ -36,13 +37,14 @@ class MeditationPipeline:
 
     def __init__(self):
         self.tts = KokoroEngine()
+        self.last_stems = None
 
     def generate(
         self,
         script: str,
         music_prompt: str,
-        voice: str = "golden_hour",
-        speed: float = 0.90,
+        voice: str = "balanced_calm",
+        speed: float | None = None,
         duck_amount_db: float = -16.0,
         reverb_amount: float = 0.15,
         fade_in_sec: float = 1.5,
@@ -68,6 +70,7 @@ class MeditationPipeline:
         stereo_output: bool = False,
         uploaded_music_path: str | None = None,
         content_type: str = "meditation",
+        custom_tts_engine: Any = None,
     ) -> tuple[str, str]:
         """Run the full pipeline and return the path to the output audio file.
 
@@ -124,6 +127,8 @@ class MeditationPipeline:
         from core.content_profiles import get_profile, normalize_content_type
         content_type = normalize_content_type(content_type)
         profile = get_profile(content_type)
+        if speed is None:
+            speed = profile["speed"]
         bed_profile = profile.get("bed")
 
         # Generate a session seed if not provided
@@ -145,7 +150,13 @@ class MeditationPipeline:
         # Uploaded instrumentals are decoded/resampled to 48 kHz as well.
         # F5-TTS also mixes at 48 kHz.
         # TTS voice (24 kHz) is upsampled to match whichever rate is selected.
-        mix_sr = 48000 if (use_lyria or use_upload or tts_engine == "f5") else TARGET_SR
+        from core.engine_registry import get_engine_info
+        engine_info = get_engine_info(tts_engine)
+        base_engine = engine_info.get("base_engine", tts_engine) if engine_info else tts_engine
+        if base_engine not in ("f5", "kokoro"):
+            base_engine = "f5" if "f5" in str(tts_engine).lower() else "kokoro"
+
+        mix_sr = 48000 if (use_lyria or use_upload or base_engine != "kokoro") else TARGET_SR
 
         logger.info("Starting generation — mode=%s, music_model=%s, voice=%s, speed=%s, seed=%s, lufs=%s",
                     generation_mode, music_model, voice, speed, seed, target_lufs)
@@ -155,7 +166,7 @@ class MeditationPipeline:
                 # ── Step 1: Parse script ────────────────────────────────────────
                 _progress(progress_cb, 0.0, "Parsing meditation script...")
 
-                if tts_engine == "f5":
+                if base_engine == "f5":
                     from core.f5_tts.preprocessor import prepare_segments as _prepare
                 else:
                     from core.kokoro_tts.preprocessor import prepare_segments as _prepare
@@ -171,13 +182,20 @@ class MeditationPipeline:
                 )
 
                 # ── Step 2: Load TTS ────────────────────────────────────────────
-                if tts_engine == "f5":
+                if custom_tts_engine is not None:
+                    tts = custom_tts_engine
+                    _progress(progress_cb, 0.05, f"Loading {tts_engine} voice model...")
+                elif tts_engine == "f5":
                     from core.f5_tts.engine import F5Engine
                     tts = F5Engine(voice_slug=f5_voice_slug)
                     _progress(progress_cb, 0.05, "Loading F5-TTS voice model...")
-                else:
+                elif tts_engine == "kokoro":
                     tts = self.tts
                     _progress(progress_cb, 0.05, "Loading Kokoro voice model...")
+                else:
+                    from core.engine_registry import get_engine
+                    tts = get_engine(tts_engine, voice_slug=f5_voice_slug)
+                    _progress(progress_cb, 0.05, f"Loading {tts_engine} voice model...")
                 tts.load_model()
                 gc.collect()
 
@@ -188,10 +206,15 @@ class MeditationPipeline:
                     frac = 0.10 + 0.30 * (current / max(total, 1))
                     _progress(progress_cb, frac, f"Synthesizing segment {current}/{total}...")
 
-                if tts_engine == "f5":
+                if base_engine == "f5":
                     voice_audio, voice_activity = tts.synthesize(
                         segments, speed=speed, progress_cb=tts_progress,
                         target_wpm=f5_target_wpm if f5_target_wpm and f5_target_wpm > 0 else None,
+                    )
+                elif base_engine == "chatterbox":
+                    voice_audio, voice_activity = tts.synthesize(
+                        segments, voice=f5_voice_slug, speed=speed,
+                        progress_cb=tts_progress, seed=seed,
                     )
                 else:
                     voice_audio, voice_activity = tts.synthesize(
@@ -234,7 +257,7 @@ class MeditationPipeline:
                 # Step 7, replacing the old two-chain master_vocals + voice_chain.
                 # F5-TTS still uses its own mastering engine.
                 mastering_engine = None
-                if tts_engine == "f5":
+                if base_engine == "f5":
                     _progress(progress_cb, 0.38, "Preparing vocal mastering chain...")
                     from core.f5_tts.postprocessor import F5MasteringEngine
                     mastering_engine = F5MasteringEngine(sample_rate=SAMPLE_RATE)
@@ -276,7 +299,7 @@ class MeditationPipeline:
                     # denoising strips breath/naturalness (KokoroV2 research): use a light
                     # wet blend by default. Override via MOODSCAPE_KOKORO_DF_WET (0 = off).
                     # F5-TTS is noisier — keep full-strength denoising.
-                    if tts_engine == "kokoro":
+                    if base_engine == "kokoro":
                         df_wet = float(os.environ.get("MOODSCAPE_KOKORO_DF_WET", "0.25"))
                     else:
                         df_wet = 1.0
@@ -294,7 +317,7 @@ class MeditationPipeline:
                 # ── Step 4: Unload TTS, load music model ────────────────────────
                 if not is_instrumental:
                     tts.unload_model()
-                    if tts_engine == "f5":
+                    if tts_engine != "kokoro" and custom_tts_engine is None:
                         del tts
 
                 music_model_label = {
@@ -401,14 +424,14 @@ class MeditationPipeline:
             if not is_instrumental:
                 # ── Step 7: Apply voice FX ──────────────────────────────────────
                 _progress(progress_cb, 0.72, "Applying voice effects...")
-                if tts_engine == "f5":
+                if base_engine == "f5":
                     from core.f5_tts.postprocessor import build_f5_voice_chain
                     from core.kokoro_tts.postprocessor import apply_fx
                     voice_chain = build_f5_voice_chain(reverb_amount=reverb_amount, ir_name=reverb_ir)
                 else:
                     from core.kokoro_tts.postprocessor import build_voice_chain, apply_fx
                     voice_chain = build_voice_chain(reverb_amount=reverb_amount, ir_name=reverb_ir)
-                voice_audio = apply_fx(voice_audio, voice_chain, mix_sr, engine=tts_engine)
+                voice_audio = apply_fx(voice_audio, voice_chain, mix_sr, engine=base_engine)
 
                 # Align voice_activity to post-FX voice length (reverb tail trim
                 # may change length slightly)
@@ -454,7 +477,10 @@ class MeditationPipeline:
             if do_export_stems and not is_instrumental and not is_vocals:
                 _progress(progress_cb, 0.80, "Exporting stems...")
                 stem_paths = export_stems(voice_audio, music_audio, mix_sr)
+                self.last_stems = stem_paths
                 logger.info("Stems exported: %s", stem_paths)
+            else:
+                self.last_stems = None
 
             # ── Step 8b: Adaptive bed calibration (MOODSCAPE_ADAPTIVE_BED) ──
             # Replaces the fixed -16 dB bed / -16 dB duck constants with values
