@@ -169,6 +169,125 @@ class TestScriptGeneration(unittest.TestCase):
             any(v.code == "DURATION_OUT_OF_WINDOW" for v in outcome.violations)
         )
 
+class EngineUnloadOnEveryExitPathTest(unittest.TestCase):
+    """Every engine actually passed in must be unloaded no matter which
+    stage raises -- planning, drafting, reviewing, or a repair. An 18 GB
+    model left resident because an earlier stage never got the chance to
+    unload it is exactly the swap / MPS-bus-error condition this exists to
+    prevent."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.config = AutoConfig(
+            target_min_sec=1.0,
+            target_max_sec=100000.0,
+            corpus_dir=Path(self._tmp.name) / "corpus",
+            failure_dir=Path(self._tmp.name) / "failures",
+        )
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_planner_failure_unloads_planner_generator_and_judge(self):
+        from types import SimpleNamespace
+
+        pack = SimpleNamespace(label="Grief", banned=[])
+        angle = SimpleNamespace(name="the empty chair")
+        planner = FakeScriptEngine(["unused"])
+        generator = FakeScriptEngine(["unused"])
+        judge = FakeScriptEngine(["unused"])
+
+        with patch("core.auto_generate.plan", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                generate_script(
+                    "p",
+                    generator_engine=generator,
+                    judge_engine=judge,
+                    planner_engine=planner,
+                    pack=pack,
+                    angle=angle,
+                    config=self.config,
+                )
+
+        self.assertEqual(planner.unload_calls, 1)
+        self.assertEqual(generator.unload_calls, 1)
+        self.assertEqual(judge.unload_calls, 1)
+
+    def test_draft_failure_unloads_generator_and_judge(self):
+        generator = FakeScriptEngine(["unused"])
+        judge = FakeScriptEngine(["unused"])
+
+        with patch("core.auto_generate.draft", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                generate_script(
+                    "p",
+                    generator_engine=generator,
+                    judge_engine=judge,
+                    config=self.config,
+                )
+
+        self.assertEqual(generator.unload_calls, 1)
+        self.assertEqual(judge.unload_calls, 1)
+
+    def test_review_failure_unloads_generator_and_judge(self):
+        generator = FakeScriptEngine([CLEAN_SCRIPT])
+        judge = FakeScriptEngine(["unused"])
+
+        with patch("core.auto_generate.review", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                generate_script(
+                    "p",
+                    generator_engine=generator,
+                    judge_engine=judge,
+                    config=self.config,
+                )
+
+        self.assertEqual(generator.unload_calls, 1)
+        self.assertEqual(judge.unload_calls, 1)
+
+    def test_repair_failure_unloads_generator_and_judge(self):
+        generator = FakeScriptEngine([BROKEN_SCRIPT])
+        judge = FakeScriptEngine([judged(BROKEN_SCRIPT)])
+
+        with patch("core.auto_generate.repair", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                generate_script(
+                    "p",
+                    generator_engine=generator,
+                    judge_engine=judge,
+                    config=self.config,
+                )
+
+        self.assertEqual(generator.unload_calls, 1)
+        self.assertEqual(judge.unload_calls, 1)
+
+    def test_shared_planner_and_generator_is_unloaded_once_on_draft_failure(self):
+        shared = FakeScriptEngine(["a brief"])
+        judge = FakeScriptEngine(["unused"])
+        from types import SimpleNamespace
+
+        pack = SimpleNamespace(label="Grief", banned=[])
+        angle = SimpleNamespace(name="the empty chair")
+
+        with patch("core.auto_generate.plan", return_value="a brief"):
+            with patch("core.auto_generate.draft", side_effect=RuntimeError("boom")):
+                with self.assertRaises(RuntimeError):
+                    generate_script(
+                        "p",
+                        generator_engine=shared,
+                        judge_engine=judge,
+                        planner_engine=shared,
+                        pack=pack,
+                        angle=angle,
+                        config=self.config,
+                    )
+
+        # Exactly once, not twice, even though the shared engine plays both
+        # the planner and generator roles.
+        self.assertEqual(shared.unload_calls, 1)
+        self.assertEqual(judge.unload_calls, 1)
+
+
 FAKE_SCAN = lambda: [("Healing Forest — 23:12", "/bg/forest.mp3")]
 
 
@@ -277,6 +396,34 @@ class TestRun(unittest.TestCase):
         call = pipeline.calls[0]
         self.assertEqual(call["tts_engine"], "f5")
         self.assertEqual(call["music_model"], "upload")
+        self.assertEqual(call["speed"], 0.80)
+        self.assertEqual(call["duck_amount_db"], -16.0)
+        self.assertEqual(call["reverb_amount"], 0.15)
+
+    def test_pipeline_receives_sleep_story_profile_settings(self):
+        pipeline = StubPipeline(self.dir)
+        self.config.content_type = "sleep_story"
+        self._run(pipeline)
+        call = pipeline.calls[0]
+        self.assertEqual(call["speed"], 0.75)
+        self.assertEqual(call["duck_amount_db"], -11.0)
+        self.assertEqual(call["reverb_amount"], 0.18)
+
+    def test_pipeline_receives_kokoro_voice_default(self):
+        pipeline = StubPipeline(self.dir)
+        self.config.tts_engine = "kokoro"
+        self._run(pipeline)
+        call = pipeline.calls[0]
+        self.assertEqual(call["voice"], "balanced_calm")
+
+    def test_explicit_speed_and_voice_override_defaults(self):
+        pipeline = StubPipeline(self.dir)
+        self.config.speed = 0.72
+        self.config.voice = "deep_rest"
+        self._run(pipeline)
+        call = pipeline.calls[0]
+        self.assertEqual(call["speed"], 0.72)
+        self.assertEqual(call["voice"], "deep_rest")
 
     def test_artifacts_are_written_when_script_generation_fails(self):
         pipeline = StubPipeline(self.dir)
@@ -437,6 +584,61 @@ class TestAutoConfigFromEnv(unittest.TestCase):
             with self.assertRaises(ScriptGenerationError) as ctx:
                 AutoConfig.from_env()
         self.assertIn("MOODSCAPE_TARGET_MAX_SEC", str(ctx.exception))
+
+
+class FromGenrePrecedenceTest(unittest.TestCase):
+    """from_genre() must not bypass from_env() -- it is the only path the UI
+    has, and MOODSCAPE_ORIGINALITY=0 is documented as a kill switch.
+
+    Precedence, low to high: dataclass default -> environment -> pack ->
+    explicit override.
+    """
+
+    def _pack(self):
+        from core.genres import load_pack
+
+        return load_pack("grief_and_loss")
+
+    def test_default_level_matches_from_env_defaults(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MOODSCAPE_ORIGINALITY", None)
+            os.environ.pop("MOODSCAPE_SCRIPT_MAX_REPAIRS", None)
+            config = AutoConfig.from_genre(self._pack(), band="short")
+        self.assertTrue(config.originality)
+        self.assertEqual(config.max_repairs, 2)
+
+    def test_environment_level_is_honoured(self):
+        """The bug: MOODSCAPE_ORIGINALITY=0 previously did nothing on the
+        genre path because from_genre() built AutoConfig directly."""
+        with patch.dict(
+            os.environ,
+            {"MOODSCAPE_ORIGINALITY": "0", "MOODSCAPE_SCRIPT_MAX_REPAIRS": "5"},
+        ):
+            config = AutoConfig.from_genre(self._pack(), band="short")
+        self.assertFalse(config.originality)
+        self.assertEqual(config.max_repairs, 5)
+
+    def test_pack_level_beats_environment(self):
+        """The duration band's seconds must win over a stray env override --
+        the band is what the UI's Length radio actually controls."""
+        with patch.dict(
+            os.environ,
+            {"MOODSCAPE_TARGET_MIN_SEC": "999", "MOODSCAPE_TARGET_MAX_SEC": "1000"},
+        ):
+            config = AutoConfig.from_genre(self._pack(), band="short")
+        self.assertEqual(config.target_min_sec, 180.0)
+        self.assertEqual(config.target_max_sec, 360.0)
+        self.assertEqual(config.content_type, self._pack().content_type)
+        self.assertEqual(config.genre, "grief_and_loss")
+
+    def test_explicit_override_beats_pack(self):
+        with patch.dict(os.environ, {}, clear=False):
+            config = AutoConfig.from_genre(
+                self._pack(), band="short", content_type="sleep_story",
+                target_min_sec=42.0,
+            )
+        self.assertEqual(config.content_type, "sleep_story")
+        self.assertEqual(config.target_min_sec, 42.0)
 
 
 class OriginalityIntegrationTest(unittest.TestCase):
@@ -719,6 +921,35 @@ class GenrePathTest(unittest.TestCase):
         self.assertEqual(meta["genre"], "grief_and_loss")
         self.assertIn("brief", meta)
         self.assertTrue(meta["angle"])
+
+    def test_genre_argument_sets_config_genre_on_a_bare_config(self):
+        """Regression: a caller doing
+        run("", genre="grief_and_loss", config=AutoConfig(...)) -- i.e. a
+        config NOT built via from_genre() -- must still get config.genre
+        set. Angle rotation reads the `genre` ARGUMENT, but comparison, the
+        avoid-list and the corpus write all read config.genre; before this
+        fix a bare AutoConfig() left genre="" and the script silently filed
+        under the empty-string partition with no music tags."""
+        config = AutoConfig(
+            corpus_dir=self.dir / "corpus",
+            background_scan=lambda: [("Bed — 10:00", "/bg/a.mp3")],
+        )
+        result = run(
+            "",
+            genre="grief_and_loss",
+            config=config,
+            pipeline=StubPipeline(self.dir),
+            planner_engine=FakeScriptEngine(["A brief about a chair."]),
+            generator_engine=FakeScriptEngine([CLEAN_SCRIPT]),
+            judge_engine=FakeScriptEngine([judged(CLEAN_SCRIPT)]),
+        )
+        self.assertEqual(config.genre, "grief_and_loss")
+        self.assertEqual(result.genre, "grief_and_loss")
+
+        from core.originality import load_corpus
+
+        entries = load_corpus(genre="grief_and_loss", corpus_dir=config.corpus_dir)
+        self.assertEqual(len(entries), 1)
 
     def test_recently_used_angles_are_avoided(self):
         from core.genres import load_pack

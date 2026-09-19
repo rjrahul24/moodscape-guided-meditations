@@ -54,6 +54,11 @@ def auto_generate_handler(
     judge_spec,
 ):
     """Genre + length -> finished meditation, streaming progress to the UI."""
+    steer = steer or ""
+    planner_spec = planner_spec or os.environ.get("MOODSCAPE_SCRIPT_PLANNER", DEFAULT_PLANNER)
+    generator_spec = generator_spec or os.environ.get("MOODSCAPE_SCRIPT_GENERATOR", DEFAULT_GENERATOR)
+    judge_spec = judge_spec or os.environ.get("MOODSCAPE_SCRIPT_JUDGE", DEFAULT_JUDGE)
+
     os.environ["MOODSCAPE_SCRIPT_PLANNER"] = planner_spec
     os.environ["MOODSCAPE_SCRIPT_GENERATOR"] = generator_spec
     os.environ["MOODSCAPE_SCRIPT_JUDGE"] = judge_spec
@@ -130,6 +135,7 @@ def build_auto_tab() -> dict:
                     steer = gr.Textbox(
                         label="Anything else? (optional)",
                         placeholder="by the ocean · for a night shift",
+                        value="",
                         lines=2,
                     )
                 button = gr.Button(
@@ -161,8 +167,9 @@ def build_auto_tab() -> dict:
                         label="Content Type",
                         elem_classes="dropdown-container",
                     )
+                    from core.engine_registry import list_all_engines
                     tts_engine = gr.Dropdown(
-                        choices=["f5", "kokoro"],
+                        choices=[(label, eid) for label, eid in list_all_engines()],
                         value="f5",
                         label="Voice Engine",
                         elem_classes="dropdown-container",

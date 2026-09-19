@@ -4,6 +4,7 @@ Never imports app.py: that module loads torch and registers an atexit
 hard-exit hook, so importing it from a test is not viable.
 """
 
+import os
 import unittest
 from unittest.mock import patch
 
@@ -101,20 +102,31 @@ class _FakeEmptyErrorRun:
 
 
 class TestAutoGenerateHandlerErrorGuard(unittest.TestCase):
+    """auto_generate_handler writes MOODSCAPE_SCRIPT_{PLANNER,GENERATOR,JUDGE}
+    into os.environ as a side effect of wiring the UI's model textboxes
+    through to build_engine(). Every call here must run inside
+    patch.dict(os.environ, ...) so that write is rolled back afterwards --
+    otherwise 'ollama:llama3.2:3b' leaks into the process environment and
+    silently shadows AutoConfig.from_env()'s defaults for every test that
+    runs later in the same process (e.g. test_auto_generate.py's
+    engine-sharing guards, which depend on DEFAULT_PLANNER/_GENERATOR being
+    read back unset)."""
+
     def test_empty_error_message_reports_failure_not_attributeerror(self):
-        with patch("core.auto_tab.StreamingRun", _FakeEmptyErrorRun):
-            outputs = list(
-                auto_generate_handler(
-                    "stress_relief",
-                    "medium",
-                    "",
-                    "meditation",
-                    "f5",
-                    "ollama:llama3.2:3b",
-                    "ollama:llama3.2:3b",
-                    "ollama:llama3.2:3b",
+        with patch.dict(os.environ, {}, clear=False):
+            with patch("core.auto_tab.StreamingRun", _FakeEmptyErrorRun):
+                outputs = list(
+                    auto_generate_handler(
+                        "stress_relief",
+                        "medium",
+                        "",
+                        "meditation",
+                        "f5",
+                        "ollama:llama3.2:3b",
+                        "ollama:llama3.2:3b",
+                        "ollama:llama3.2:3b",
+                    )
                 )
-            )
         # The final yielded status must be the "Failed: ..." message, not an
         # AttributeError raised from touching run.result.background.
         self.assertEqual(outputs[-1][3], "Failed: ")
@@ -126,15 +138,28 @@ class TestAutoGenerateHandlerErrorGuard(unittest.TestCase):
                 self.error = ""
                 self.invalid_input = True
 
-        with patch("core.auto_tab.StreamingRun", FakeInvalidInputRun):
-            outputs = list(
-                auto_generate_handler(
-                    "stress_relief", "medium", "",
-                    "meditation", "f5",
-                    "ollama:llama3.2:3b", "ollama:llama3.2:3b", "ollama:llama3.2:3b",
+        with patch.dict(os.environ, {}, clear=False):
+            with patch("core.auto_tab.StreamingRun", FakeInvalidInputRun):
+                outputs = list(
+                    auto_generate_handler(
+                        "stress_relief", "medium", "",
+                        "meditation", "f5",
+                        "ollama:llama3.2:3b", "ollama:llama3.2:3b", "ollama:llama3.2:3b",
+                    )
                 )
-            )
         self.assertEqual(outputs[-1][3], "")
+
+    def test_steer_none_does_not_raise_attribute_error(self):
+        with patch.dict(os.environ, {}, clear=False):
+            with patch("core.auto_tab.StreamingRun", _FakeEmptyErrorRun):
+                outputs = list(
+                    auto_generate_handler(
+                        "stress_relief", "medium", None,
+                        "meditation", "f5",
+                        "ollama:llama3.2:3b", "ollama:llama3.2:3b", "ollama:llama3.2:3b",
+                    )
+                )
+        self.assertEqual(outputs[-1][3], "Failed: ")
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ import logging
 import os
 import random
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -128,6 +128,8 @@ class AutoConfig:
     # None uses core.originality.CORPUS_DIR. Injected in tests.
     corpus_dir: Path | None = None
     tts_engine: str = "f5"
+    speed: float | None = None
+    voice: str | None = None
     target_min_sec: float = 300.0
     target_max_sec: float = 420.0
     max_repairs: int = 2
@@ -177,10 +179,16 @@ class AutoConfig:
     def from_genre(cls, pack, *, band: str = "medium", **overrides) -> "AutoConfig":
         """Build a config from a genre pack and a duration band.
 
-        Copies the pack's deterministic fields explicitly. run() never infers
-        content_type at run time -- the caller owns it, so a UI that lets the
-        user override the pack's choice and a script that does not both behave
-        predictably.
+        Precedence, low to high: dataclass default -> environment
+        (MOODSCAPE_ORIGINALITY, _SCRIPT_MAX_REPAIRS, _TARGET_MIN_SEC/_MAX_SEC)
+        -> the pack's deterministic fields -> the caller's explicit overrides.
+
+        This starts from from_env() rather than constructing AutoConfig
+        directly, so the genre path -- the only path the UI has -- still
+        honours MOODSCAPE_ORIGINALITY=0 and friends instead of silently
+        ignoring them. run() never infers content_type at run time -- the
+        caller owns it, so a UI that lets the user override the pack's choice
+        and a script that does not both behave predictably.
         """
         if band not in DURATION_BANDS:
             raise ScriptGenerationError(
@@ -188,15 +196,18 @@ class AutoConfig:
                 f"{sorted(DURATION_BANDS)}."
             )
         target_min_sec, target_max_sec = DURATION_BANDS[band]
-        values = {
+        config = cls.from_env()
+        pack_values = {
             "genre": pack.slug,
             "content_type": pack.content_type,
             "music_tags": pack.music_tags,
             "target_min_sec": target_min_sec,
             "target_max_sec": target_max_sec,
         }
-        values.update(overrides)
-        return cls(**values)
+        config = replace(config, **pack_values)
+        if overrides:
+            config = replace(config, **overrides)
+        return config
 
 
 @dataclass
@@ -289,10 +300,20 @@ def generate_script(
     planner_engine: ScriptEngine | None = None,
     pack=None,
     angle=None,
-    steer: str = "",
+    steer: str | None = "",
     progress_cb=None,
 ) -> ScriptOutcome:
+    steer = steer or ""
     """Run [planner ->] generator -> judge -> lint -> bounded repair.
+
+    Whichever stage raises -- planning, drafting, reviewing, or a repair --
+    every engine that was constructed for this run is unloaded on the way
+    out. An 18 GB model left resident while a later stage never runs is
+    exactly the swap / MPS-bus-error condition this machinery exists to
+    prevent. Unloading is deduplicated by identity, so a shared engine
+    (planner sharing the generator's model, or the generator sharing the
+    judge's -- see run()'s spec-matching reuse) is unloaded exactly once,
+    and never early: it is not unloaded between two stages that share it.
 
     Raises:
         ScriptGenerationError: If fatal violations survive the repair budget.
@@ -310,49 +331,60 @@ def generate_script(
         config.target_max_sec,
     )
 
+    unloaded_ids: set[int] = set()
+
+    def _unload_once(engine: ScriptEngine | None) -> None:
+        if engine is not None and id(engine) not in unloaded_ids:
+            engine.unload()
+            unloaded_ids.add(id(engine))
+
     brief = ""
-    if pack is not None and angle is not None and planner_engine is not None:
-        if progress_cb:
-            progress_cb(0.02, f"Planning a {pack.label} session")
-        planner_system = build_planner_system_prompt(
-            config.content_type, config.target_min_sec, config.target_max_sec
-        )
-        avoid = avoid_terms(
-            load_corpus(genre=config.genre, limit=5, corpus_dir=config.corpus_dir),
-            [e.text for e in load_corpus(limit=500, corpus_dir=config.corpus_dir)],
-        )
-        brief = plan(
-            planner_engine,
-            pack,
-            angle,
-            system=planner_system,
-            target_min_sec=config.target_min_sec,
-            target_max_sec=config.target_max_sec,
-            avoid=avoid,
-            steer=steer,
-        )
-        prompt = brief
-        # Only unload if the writer is a different model. The default config
-        # uses one model for both stages, where unloading would pay a full
-        # 18 GB reload to save nothing.
-        if planner_engine is not generator_engine:
-            planner_engine.unload()
-
-    if progress_cb:
-        progress_cb(0.05, "Writing draft script")
-    draft_script = draft(
-        generator_engine, prompt, gen_system, max_tokens=config.max_tokens
-    )
-    generator_engine.unload()
-
-    if progress_cb:
-        progress_cb(0.12, "Reviewing script")
-    script, changelog = review(
-        judge_engine, draft_script, judge_system, max_tokens=config.max_tokens
-    )
-
-    repairs_used = 0
     try:
+        if pack is not None and angle is not None and planner_engine is not None:
+            if progress_cb:
+                progress_cb(0.02, f"Planning a {pack.label} session")
+            planner_system = build_planner_system_prompt(
+                config.content_type, config.target_min_sec, config.target_max_sec
+            )
+            avoid = avoid_terms(
+                load_corpus(genre=config.genre, limit=5, corpus_dir=config.corpus_dir),
+                [e.text for e in load_corpus(limit=500, corpus_dir=config.corpus_dir)],
+            )
+            brief = plan(
+                planner_engine,
+                pack,
+                angle,
+                system=planner_system,
+                target_min_sec=config.target_min_sec,
+                target_max_sec=config.target_max_sec,
+                avoid=avoid,
+                steer=steer,
+            )
+            prompt = brief
+            # Only unload if the writer is a different model. The default
+            # config uses one model for both stages, where unloading would
+            # pay a full 18 GB reload to save nothing.
+            if planner_engine is not generator_engine:
+                _unload_once(planner_engine)
+
+        if progress_cb:
+            progress_cb(0.05, "Writing draft script")
+        draft_script = draft(
+            generator_engine, prompt, gen_system, max_tokens=config.max_tokens
+        )
+        # Same reasoning as the planner/generator share above, mirrored for
+        # generator/judge: don't evict a model that review() is about to use
+        # again immediately.
+        if generator_engine is not judge_engine:
+            _unload_once(generator_engine)
+
+        if progress_cb:
+            progress_cb(0.12, "Reviewing script")
+        script, changelog = review(
+            judge_engine, draft_script, judge_system, max_tokens=config.max_tokens
+        )
+
+        repairs_used = 0
         while True:
             estimated_sec = estimate_duration_sec(
                 script,
@@ -423,7 +455,13 @@ def generate_script(
             )
             changelog = f"{changelog}\n{repair_log}".strip()
     finally:
-        judge_engine.unload()
+        # Covers every early exit above (plan/draft/review raising) as well
+        # as the normal return and the fatal-after-budget raise. Deduped by
+        # identity, so a shared planner/generator or generator/judge engine
+        # is unloaded exactly once, not zero and not twice.
+        _unload_once(planner_engine)
+        _unload_once(generator_engine)
+        _unload_once(judge_engine)
 
 
 def _measure_actual_duration_sec(audio_path: str) -> float | None:
@@ -455,7 +493,7 @@ def run(
     prompt: str = "",
     *,
     genre: str | None = None,
-    steer: str = "",
+    steer: str | None = "",
     config: AutoConfig | None = None,
     pipeline=None,
     planner_engine: ScriptEngine | None = None,
@@ -465,6 +503,7 @@ def run(
     progress_cb=None,
     **pipeline_kwargs,
 ) -> AutoResult:
+    steer = steer or ""
     """Prompt in, finished meditation out.
 
     Args:
@@ -498,6 +537,13 @@ def run(
             rng=rng,
         )
         config.angle = angle.name
+        # config.genre is the single source of truth read by comparison, the
+        # avoid-list and the corpus write below -- angle rotation above reads
+        # the `genre` ARGUMENT instead, so without this a caller passing a
+        # genre string alongside a config that doesn't already carry it (e.g.
+        # a bare AutoConfig()) would file the script under the empty-string
+        # partition and get no music tags, silently.
+        config.genre = genre
 
     if generator_engine is None:
         generator_engine = build_engine(
@@ -558,6 +604,24 @@ def run(
         from core.pipeline import MeditationPipeline
         pipeline = MeditationPipeline()
 
+    from core.content_profiles import get_profile
+    profile = get_profile(config.content_type)
+    speed = config.speed if config.speed is not None else profile["speed"]
+
+    generate_kwargs = {
+        "speed": speed,
+        "duck_amount_db": profile["duck_amount_db"],
+        "reverb_amount": profile["reverb_amount"],
+        "fade_in_sec": profile["fade_in_sec"],
+        "fade_out_sec": profile["fade_out_sec"],
+    }
+    if config.voice is not None:
+        generate_kwargs["voice"] = config.voice
+    elif config.tts_engine == "kokoro":
+        generate_kwargs["voice"] = "balanced_calm"
+
+    generate_kwargs.update(pipeline_kwargs)
+
     audio_path, _status = pipeline.generate(
         script=outcome.script,
         music_prompt="",
@@ -566,7 +630,7 @@ def run(
         music_model="upload",
         uploaded_music_path=background_path,
         progress_cb=progress_cb,
-        **pipeline_kwargs,
+        **generate_kwargs,
     )
 
     if config.originality:
