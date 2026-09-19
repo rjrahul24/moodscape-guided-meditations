@@ -29,7 +29,7 @@ CONTENT_PROFILES: dict[str, dict] = {
     # defaults in MeditationPipeline.generate() and app.py so meditation never regresses.
     "meditation": {
         "label": "Guided Meditation",
-        "speed": 0.90,
+        "speed": 0.80,
         "duck_amount_db": -16.0,
         "reverb_amount": 0.15,
         "fade_in_sec": 1.5,
@@ -44,13 +44,13 @@ CONTENT_PROFILES: dict[str, dict] = {
     # the story flows; the bed dips little and recovers slowly.
     "sleep_story": {
         "label": "Sleep Story",
-        "speed": 0.85,
+        "speed": 0.75,
         "duck_amount_db": -11.0,
         "reverb_amount": 0.18,
         "fade_in_sec": 2.5,
         "fade_out_sec": 10.0,
-        "kokoro_paragraph_pause_sec": 2.5,
-        "f5_paragraph_pause_sec": 1.5,
+        "kokoro_paragraph_pause_sec": 4.0,
+        "f5_paragraph_pause_sec": 2.0,
         # Gentler breathing-duck + narrower calibration so the bed stays soft and
         # nearly constant instead of swinging dramatically between speech and pauses.
         # NOTE: duck *depth* is the duck_amount_db slider (-11 above), so it is not

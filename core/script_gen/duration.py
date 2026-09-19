@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 # measurement above.
 DEFAULT_WPM: dict[str, float] = {
     "f5": 85.0,
-    "kokoro": 105.0,
+    "kokoro": 90.0,
 }
 
 # Measured from assets/breath_sounds/ (breath.wav 1.200s, inhale.wav 1.500s,

@@ -121,6 +121,26 @@ class TestOpenAICompatEngine(unittest.TestCase):
         self.assertEqual(payload["max_tokens"], 1234)
         self.assertEqual(payload["temperature"], 0.4)
 
+    def test_sends_reasoning_effort_none_for_ollama(self):
+        captured = []
+        self.build(ok_transport(captured)).complete("sys", "usr")
+        payload = json.loads(captured[0].content)
+        self.assertEqual(payload.get("reasoning_effort"), "none")
+
+    def test_no_reasoning_effort_for_other_providers(self):
+        captured = []
+        engine = OpenAICompatEngine(
+            provider="openrouter",
+            model="meta-llama/llama-3-8b-instruct",
+            base_url="https://openrouter.ai/api/v1",
+            transport=ok_transport(captured),
+            sleep=lambda _: None,
+        )
+        engine.complete("sys", "usr")
+        payload = json.loads(captured[0].content)
+        self.assertNotIn("reasoning_effort", payload)
+
+
     def test_no_auth_header_without_a_key_env(self):
         captured = []
         self.build(ok_transport(captured)).complete("sys", "usr")

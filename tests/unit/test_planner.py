@@ -83,6 +83,10 @@ class PlanTest(unittest.TestCase):
         engine, _brief = self._plan(steer="for a night shift worker")
         self.assertIn("night shift worker", engine.calls[0]["user"])
 
+    def test_steer_none_handled_gracefully(self):
+        engine, _brief = self._plan(steer=None)
+        self.assertNotIn("Additional request from the listener", engine.calls[0]["user"])
+
     def test_the_pause_budget_is_expressed_as_a_percentage(self):
         engine, _brief = self._plan()
         user = engine.calls[0]["user"]

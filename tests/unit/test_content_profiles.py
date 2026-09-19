@@ -51,7 +51,7 @@ class TestContentProfiles(unittest.TestCase):
         # These mirror MeditationPipeline.generate() / app.py defaults. If a default
         # changes, this test forces the profile to be updated in lock-step.
         med = get_profile("meditation")
-        self.assertEqual(med["speed"], 0.90)
+        self.assertEqual(med["speed"], 0.80)
         self.assertEqual(med["duck_amount_db"], -16.0)
         self.assertEqual(med["reverb_amount"], 0.15)
         self.assertEqual(med["kokoro_paragraph_pause_sec"], KOKORO_PARA_DEFAULT)
@@ -101,12 +101,12 @@ class TestSleepStoryShortensPauses(unittest.TestCase):
     def test_kokoro_sleep_paragraph_pause_is_shorter(self):
         segs = kokoro_prepare("One.\n\nTwo.", content_type="sleep_story")
         pause = next(s for s in segs if s["type"] == "pause")
-        self.assertEqual(pause["duration_sec"], 2.5)
+        self.assertEqual(pause["duration_sec"], 4.0)
 
     def test_f5_sleep_paragraph_pause_is_shorter(self):
         segs = f5_prepare("One.\n\nTwo.", content_type="sleep_story")
         pause = next(s for s in segs if s["type"] == "pause")
-        self.assertEqual(pause["duration_sec"], 1.5)
+        self.assertEqual(pause["duration_sec"], 2.0)
 
     def test_explicit_pauses_unaffected_by_content_type(self):
         # Author-placed [pause:Xs] must be honoured exactly regardless of mode.

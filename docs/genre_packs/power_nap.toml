@@ -2,7 +2,7 @@ label        = "Power Nap"
 family       = "Sleep & Rest"
 content_type = "sleep_story"
 music_tags   = ["warm", "sustained"]
-pause_ratio  = 0.18
+pause_ratio  = 0.26
 
 technique = """
 Brief narrative descent: a short story — 20 to 30 minutes — designed to carry

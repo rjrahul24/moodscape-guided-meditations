@@ -34,7 +34,7 @@ any tag.
 ```
 TOPIC:            <what the story is about, 1–3 sentences — a setting, a gentle journey>
 VOICE:            <F5 voice slug, selected in the UI, not the script>
-TARGET_LENGTH:    <e.g. "about 12 minutes" or "~1800 words" (~150 spoken words/minute)>
+TARGET_LENGTH:    <e.g. "about 10 minutes" or "~850-950 words" (~85-95 spoken words/minute)>
 OVERALL_TONE:     <e.g. "warm and dreamy", "gentle and grounding">
 NOTES (optional): <imagery to include, a motif, anything to include or avoid>
 ```
@@ -74,22 +74,22 @@ write speed into the script. Leave **Pacing (WPM)** at 0 (natural rhythm) so F5 
 own prosodic timing — fixed WPM flattens expression and is wrong for storytelling.
 
 ### 2. Paragraph breaks — your main structural pause
-A blank line inserts a **1.5-second** pause in Sleep Story mode. This is your primary
-scene breath. Because it is short, use paragraph breaks freely to move through the story
-continuously without meditation-length silences.
+A blank line inserts a **2.0-second** pause in Sleep Story mode. This is your primary
+scene breath. Use paragraph breaks between scene shifts so the narrative does not feel
+continuous and rushed.
 
-### 3. Explicit pauses — `[pause:Xs]`, used sparingly
-Seconds only: `[pause:0.5s]`, `[pause:1s]`, `[pause:1.5s]` (minimum useful 0.5s). Sleep
-stories use **fewer and shorter** explicit pauses than meditations. Reserve them for:
+### 3. Explicit pauses — `[pause:Xs]` for restful pacing
+Seconds only: `[pause:2s]`, `[pause:3s]`, `[pause:4s]`. Sleep stories require regular pauses
+to give the listener space to rest and let the imagery settle:
 
 | Moment | Suggested | Example |
 |--------|-----------|---------|
-| Scene transition | `[pause:1s]`–`[pause:1.5s]` | `The meadow falls behind you. [pause:1.5s] A stream appears ahead.` |
-| Landing a key image | `[pause:0.5s]` | `[pause:0.5s] A single candle burns in the window.` |
-| The dissolving end | `[pause:1.5s]`–`[pause:2s]` | `Drifting now. [pause:2s] Just drifting.` |
+| Scene transition | `[pause:2.5s]`–`[pause:3s]` | `The meadow falls behind you. [pause:3s] A quiet stream appears ahead.` |
+| Landing a key image | `[pause:2s]`–`[pause:2.5s]` | `A single candle burns in the window. [pause:2s] Its light is warm and still.` |
+| The dissolving end | `[pause:3s]`–`[pause:4s]` | `Drifting now. [pause:3s] Just drifting. [pause:4s]` |
 
-**Frequency:** at most one explicit pause every 5–8 sentences, slightly more in the final
-third. Do not exceed ~2.5s. Because F5 strips ellipses, `[pause:Xs]` is your *only* way to
+**Frequency:** place an explicit pause roughly every **2–4 sentences**, slightly longer in the final
+third. Do not exceed ~4s. Because F5 strips ellipses, `[pause:Xs]` is your *only* way to
 create a deliberate beat beyond a sentence boundary.
 
 ## Style — slow, sensory, continuous
@@ -151,10 +151,10 @@ Notice: very short sentences; present tense; sensory and concrete; only a few sh
 - [ ] **No tone tags** — only `[pause:Xs]` (seconds), optional `[breath]`, optional `[voice:phase]`.
 - [ ] Sentences under ~15 words; long ideas split across two sentences.
 - [ ] No colons, ellipses, em-dashes, compound hyphens, or ALL CAPS (F5 normalizes/mishandles them).
-- [ ] Pauses are sparing (≤ one per 5–8 sentences) and short (0.5–2s). Fewer than a meditation.
+- [ ] Pauses are regular (roughly every 2–4 sentences, 2–4s), deepening near the end.
 - [ ] Numbers/symbols spelled out. Present tense, sensory detail; emotion in word choice.
 - [ ] Progressive structure: arrival → exploration → settling → release.
 - [ ] No instructions, questions, dialogue, or tension.
-- [ ] Roughly matches `TARGET_LENGTH` (~150 spoken words per minute).
+- [ ] Roughly matches `TARGET_LENGTH` (~85–95 spoken words per minute).
 
 Now output the sleep story, and nothing but the story.

@@ -2,7 +2,7 @@ label        = "Back to Sleep"
 family       = "Sleep & Rest"
 content_type = "sleep_story"
 music_tags   = ["dark", "drone"]
-pause_ratio  = 0.16
+pause_ratio  = 0.28
 
 technique = """
 Reentry narrative: the listener has woken in the middle of the night and

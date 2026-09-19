@@ -2,7 +2,7 @@ label        = "Deep Sleep"
 family       = "Sleep & Rest"
 content_type = "sleep_story"
 music_tags   = ["drone", "sustained"]
-pause_ratio  = 0.14
+pause_ratio  = 0.28
 
 technique = """
 Rhythmic, minimalist narration: a simple event repeated and elaborated with

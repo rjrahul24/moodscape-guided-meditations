@@ -26,7 +26,7 @@ def plan(
     target_min_sec: float,
     target_max_sec: float,
     avoid: Sequence[str] = (),
-    steer: str = "",
+    steer: str | None = "",
     max_tokens: int = 1024,
 ) -> str:
     """Produce a creative brief for one run of one genre.
@@ -65,8 +65,9 @@ def plan(
             "this genre already used them:\n" + _bullet(avoid)
         )
 
-    if steer.strip():
-        sections.append(f"Additional request from the listener:\n{steer.strip()}")
+    steer_text = (steer or "").strip()
+    if steer_text:
+        sections.append(f"Additional request from the listener:\n{steer_text}")
 
     user = (
         "Write the creative brief for one session.\n\n"

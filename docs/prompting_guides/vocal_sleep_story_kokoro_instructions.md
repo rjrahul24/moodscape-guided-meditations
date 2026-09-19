@@ -1,13 +1,13 @@
 <!-- QUICK-REF ──────────────────────────────────────────────────────── -->
 **Engine files:** `core/kokoro_tts/preprocessor.py` · `core/kokoro_tts/engine.py`
-**Mode:** Set **Content Type → Sleep Story** in the UI (slows speed to ~0.85, shortens
-paragraph pauses, softens the music bed). All controls remain adjustable.
+**Mode:** Set **Content Type → Sleep Story** in the UI (slows speed to ~0.75, gives spacious
+4.0s paragraph pauses, softens the music bed). All controls remain adjustable.
 **Script tags:** `[pause:Xs]` (seconds) · `[breath]` (1.2s) · `\n\n` paragraph break
-(**2.5s in Sleep Story mode**, vs 6.5s for meditations)
+(**4.0s in Sleep Story mode**, vs 6.5s for meditations)
 **No tone tags:** `[soothing]`, `[dreamy]`, etc. are **not** supported — they would be
 spoken aloud. Pace is the **Speech Speed** slider; emotion lives in word choice.
 **Chunk limit:** 150 tokens (auto-merged/split at sentence boundaries)
-**Speed:** clamped to a 0.65 floor; Sleep Story preset is 0.85
+**Speed:** clamped to a 0.65 floor; Sleep Story preset is 0.75
 **See also:** `docs/model_implementation_guides/kokoro_tts.md` · `vocal_meditation_kokoro_instructions.md`
 <!-- ────────────────────────────────────────────────────────────────── -->
 
@@ -18,12 +18,12 @@ for the Kokoro engine. Give it to an LLM to generate complete, production-ready 
 that the app processes without errors.
 
 A sleep story is **not** a guided meditation. It is a single continuous narrative — a
-quiet, sensory journey that drifts, softens, and dissolves toward sleep. The crux is the
-**story**. There are far fewer pauses than in a meditation; the narration flows for long
-stretches and the music sits softly in the background as a soothing add-on.
+quiet, sensory journey that drifts, softens, and dissolves toward sleep. The delivery
+is unhurried, gentle, and soft, with regular restful pauses letting the imagery linger
+while the ambient music bed softly comforts the listener.
 
-The delivery character is the same as meditation (soft, slow, warm) — only the **pause
-density** changes. Keep the listener inside one unbroken story.
+The delivery character is calmer and slower than daytime meditation, with deliberate,
+spacious pauses throughout the narrative to create an atmosphere of profound rest.
 
 ---
 
@@ -32,8 +32,8 @@ density** changes. Keep the listener inside one unbroken story.
 ```
 TOPIC:            <what the story is about, 1–3 sentences — a setting, a gentle journey.
                    e.g. "A slow walk through a quiet forest at dusk">
-VOICE:            <Kokoro voice, e.g. "af_heart", "bf_emma" — set in the UI, not the script>
-TARGET_LENGTH:    <e.g. "about 12 minutes" or "~1800 words" (~150 spoken words/minute)>
+VOICE:            <Kokoro voice, e.g. "balanced_calm", "deep_rest" — set in the UI, not the script>
+TARGET_LENGTH:    <e.g. "about 10 minutes" or "~850-950 words" (~85-95 spoken words/minute)>
 OVERALL_TONE:     <e.g. "deeply peaceful", "warm and cosy", "gently hypnotic">
 NOTES (optional): <imagery to include, a motif, a feeling to land on, things to avoid>
 ```
@@ -46,10 +46,10 @@ NOTES (optional): <imagery to include, a motif, a feeling to land on, things to 
 Raw prose
    │  ▼ core/kokoro_tts/preprocessor.py — parse_script(content_type="sleep_story")
    │    [pause:Xs] → silent room-tone; [breath] → breath sample;
-   │    blank line (\n\n) → 2.5s pause (NOT 6.5s — that's meditation mode)
+   │    blank line (\n\n) → 4.0s pause (spacious scene breath)
    │  ▼ meditation prosody pass (comma/ellipsis phrasing applied automatically)
    │  ▼ token-aware chunking (~100–150 tokens, merged/split at sentence boundaries)
-   │  ▼ KokoroEngine.synthesize() at the Sleep Story speed (~0.85)
+   │  ▼ KokoroEngine.synthesize() at the Sleep Story speed (~0.75)
    ▼ voice_audio (24 kHz mono)
 ```
 
@@ -60,29 +60,29 @@ TTS; a malformed tag will be spoken aloud.
 ## Pacing toolkit
 
 ### 1. Speed — handled by the UI
-Selecting **Content Type → Sleep Story** sets **Speech Speed ≈ 0.85** (slightly slower
-than the meditation 0.90). You do not write speed into the script. Leave the slider where
-the preset puts it unless you want to fine-tune.
+Selecting **Content Type → Sleep Story** sets **Speech Speed ≈ 0.75** (slow, calm,
+and relaxing, well below standard speech). You do not write speed into the script.
+Leave the slider where the preset puts it unless you want to fine-tune.
 
 ### 2. Paragraph breaks — your main structural pause
-A blank line between paragraphs inserts a **2.5-second** pause in Sleep Story mode. This
-is your primary "scene breath." Because it is short, you can use paragraph breaks freely
-to move through the story without it feeling like a meditation's long silences.
+A blank line between paragraphs inserts a **4.0-second** pause in Sleep Story mode. This
+is your primary "scene breath." Use paragraph breaks generously between scene shifts to
+give the story room to breathe and let the music softly shine through.
 
-### 3. Explicit pauses — `[pause:Xs]`, used sparingly
-Seconds only: `[pause:0.5s]`, `[pause:1s]`, `[pause:1.5s]`. Minimum useful value is
-**0.5s**. Sleep stories use **fewer and shorter** explicit pauses than meditations —
-reserve them for:
+### 3. Explicit pauses — `[pause:Xs]` for restful pacing
+Use seconds syntax: `[pause:2s]`, `[pause:3s]`, `[pause:4s]`. Sleep stories require
+regular pauses so the narration never feels like a hurried wall of text:
 
 | Moment | Suggested | Example |
 |--------|-----------|---------|
-| Scene transition | `[pause:1s]`–`[pause:1.5s]` | `...the meadow falls behind you. [pause:1.5s] A stream appears ahead.` |
-| Landing a key image | `[pause:0.5s]` | `[pause:0.5s] A single candle burns in the window.` |
-| The dissolving end | `[pause:1.5s]`–`[pause:2s]` | `Drifting now. [pause:2s] Just drifting.` |
+| Scene transition | `[pause:3s]`–`[pause:4s]` | `...the meadow falls behind you. [pause:3s] A quiet stream appears ahead.` |
+| Landing a sensory image | `[pause:2s]`–`[pause:3s]` | `A single candle burns in the window. [pause:2.5s] Its golden flame is still.` |
+| Body or breath awareness | `[pause:3s]`–`[pause:4s]` | `Your shoulders drop a little lower. [pause:3s]` |
+| The dissolving end | `[pause:3s]`–`[pause:5s]` | `Drifting now. [pause:4s] Deep into sleep. [pause:5s]` |
 
-**Frequency:** at most one explicit pause every 5–8 sentences, and slightly more often in
-the final third. Most of your rhythm should come from punctuation and paragraph breaks,
-not from `[pause]`. Do not exceed ~2.5s — long silences break the story.
+**Frequency:** place an explicit pause every **2–4 sentences**, allowing each visual or
+feeling to settle before continuing. In the final third (settling and release), increase pause
+duration to 3–5 seconds as the story softly dissolves.
 
 ### 4. Punctuation — natural rhythm
 Kokoro reads punctuation for intonation, and the app's prosody pass adds gentle phrasing.
@@ -129,38 +129,38 @@ For topic "a quiet lakeside at twilight", ~2 minutes, tone "deeply peaceful":
 
 ```
 The lake is very still this evening. The water holds the last light of the day, and the
-colours are soft, pale gold and the faintest blush of rose. You stand at the water's edge,
-and the stones beneath your feet are smooth and cool.
+colours are soft, pale gold and the faintest blush of rose. [pause:2.5s] You stand at the
+water's edge, and the stones beneath your feet are smooth and cool.
 
-The air is clean here, carrying the scent of pine and wet earth. A few birds call to each
-other across the water, quiet and unhurried sounds that seem to belong to the twilight.
+The air is clean here, carrying the scent of pine and wet earth. [pause:2s] A few birds
+call to each other across the water, quiet and unhurried sounds that seem to belong to the twilight.
 
 You find a place to sit, where the grass meets the shore. The ground is soft, and it holds
-you gently. [pause:1s] From here you can see the far trees reflected in the water, dark and
-patient shapes standing perfectly still.
+you gently. [pause:3s] From here you can see the far trees reflected in the water, dark and
+patient shapes standing perfectly still. [pause:3s]
 
 The light is fading now, and the colours deepen. The gold becomes amber, the rose becomes
-a soft grey, and the lake grows quieter.
+a soft grey, and the lake grows quieter. [pause:3.5s]
 
 Everything is settling. The birds have gone silent... the water holds the sky, and the sky
-holds nothing but soft, gathering dark. [pause:1.5s]
+holds nothing but soft, gathering dark. [pause:4s]
 
-And you drift with it, gently... [pause:2s] gently.
+And you drift with it, gently... [pause:4s] gently... into sleep. [pause:5s]
 ```
 
-Notice: long continuous flow with only a few short pauses; paragraph breaks carry the
-rhythm; emotion in the imagery; progressive simplification toward the end.
+Notice: unhurried narrative flow with gentle pauses every few sentences; 4-second paragraph breaks
+let the music bed breathe; emotion in the imagery; progressive slowing toward the end.
 
 ## Before you output — self-check
 
 - [ ] Plain prose only — no markdown, no headings, no speaker labels, no emojis.
 - [ ] **No tone tags** — only `[pause:Xs]` (seconds) and optional `[breath]` in brackets.
-- [ ] Pauses are sparing (≤ one per 5–8 sentences) and short (0.5–2s). Fewer than a meditation.
+- [ ] Regular calming pauses (roughly every 2–4 sentences, 2–4s), deepening to 3–5s near the end.
 - [ ] Most sentences are 12–20 words; none exceed 25.
 - [ ] Numbers/symbols spelled out. No ALL CAPS.
 - [ ] Present tense, second person, concrete sensory detail; emotion in word choice.
 - [ ] Progressive structure: arrival → exploration → settling → release.
 - [ ] No instructions, questions, dialogue, or tension.
-- [ ] Roughly matches `TARGET_LENGTH` (~150 spoken words per minute).
+- [ ] Roughly matches `TARGET_LENGTH` (~85–95 spoken words per minute).
 
 Now output the sleep story, and nothing but the story.

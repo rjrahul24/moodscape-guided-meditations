@@ -211,6 +211,8 @@ class OpenAICompatEngine(ScriptEngine):
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
+        if self._provider == "ollama":
+            payload["reasoning_effort"] = "none"
         # Raises immediately (not retried) if the key is missing -- this is
         # a config error, not a transient failure, and no request is sent.
         headers = self._headers()

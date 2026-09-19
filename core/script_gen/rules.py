@@ -42,7 +42,7 @@ def load_safety_rules(guides_dir: Path | None = None) -> str:
 def _duration_clause(target_min_sec: float, target_max_sec: float) -> str:
     return (
         f"The finished audio must run between {target_min_sec / 60:.0f} and "
-        f"{target_max_sec / 60:.0f} minutes. Spoken delivery is roughly 95-100 "
+        f"{target_max_sec / 60:.0f} minutes. Spoken delivery is roughly 85-95 "
         "words per minute and explicit [pause:Xs] markers add their full "
         "duration, so budget both words and silence deliberately."
     )
