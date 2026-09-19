@@ -64,6 +64,8 @@ from core.pipeline import MeditationPipeline
 from core.f5_tts import voice_registry as _f5_registry
 from core.upload_music import scan_backgrounds
 from core.auto_tab import build_auto_tab
+from core.sandbox_tab import build_sandbox_tab
+from core.engine_registry import list_all_engines
 
 # Load environment variables (like HF_TOKEN) from .env file
 load_dotenv()
@@ -271,8 +273,13 @@ def generate_meditation(
     # Map TTS engine label to key
     if tts_engine_choice == "F5-TTS":
         tts_engine = "f5"
-    else:
+    elif tts_engine_choice == "Kokoro":
         tts_engine = "kokoro"
+    elif tts_engine_choice == "Chatterbox TTS":
+        tts_engine = "chatterbox"
+    else:
+        label_map = {label: eid for label, eid in list_all_engines()}
+        tts_engine = label_map.get(tts_engine_choice, tts_engine_choice.lower())
 
     # Queue for streaming progress updates from the pipeline thread.
     # Items are (fraction, message) tuples; None is the sentinel for completion.
@@ -1012,7 +1019,7 @@ with gr.Blocks(
                                 )
                                 refresh_backgrounds_btn = gr.Button("↻", scale=0, min_width=48)
                         tts_engine_radio = gr.Radio(
-                            choices=["Kokoro", "F5-TTS"],
+                            choices=[label for label, _eid in list_all_engines()],
                             value="F5-TTS",
                             label="Voice Engine",
                             elem_classes="pill-radio",
@@ -1065,7 +1072,7 @@ with gr.Blocks(
                     # Section 2: Mix & Effects
                     with gr.Accordion("Mix & Effects", open=False, elem_classes="accordion-section"):
                         with gr.Row():
-                            speed_slider = gr.Slider(0.70, 1.20, 0.9, step=0.01, label="Speech Speed", info="0.85–0.95 is ideal for guided meditation.")
+                            speed_slider = gr.Slider(0.70, 1.20, 0.80, step=0.01, label="Speech Speed", info="0.75–0.88 is ideal for calm guided meditation & sleep stories.")
                             duck_slider = gr.Slider(-30, -6, -16, step=1, label="Music Ducking (dB)", info="How low the bed drops while you speak; it rises back gradually in pauses.")
                         with gr.Row():
                             reverb_slider = gr.Slider(0.0, 0.5, 0.15, step=0.05, label="Reverb Amount")
@@ -1132,7 +1139,7 @@ with gr.Blocks(
                 show_lyria = (current_music_model == "Lyria RealTime") and not is_voc
                 show_upload = (current_music_model == "Background Music") and not is_voc
                 show_kokoro = (current_tts_engine == "Kokoro") and not is_inst
-                show_f5 = (current_tts_engine == "F5-TTS") and not is_inst
+                show_f5 = (current_tts_engine != "Kokoro") and not is_inst
                 return (
                     gr.update(visible=not is_inst),   # script_input
                     gr.update(visible=not is_voc),    # music_prompt
@@ -1181,9 +1188,9 @@ with gr.Blocks(
             def toggle_tts_engine_ui(tts_engine, mode):
                 is_inst = mode == "Instrumental Only"
                 show_kokoro = (tts_engine == "Kokoro") and not is_inst
-                show_f5 = (tts_engine == "F5-TTS") and not is_inst
-                # Engine-optimal speed default (0.90 for both Kokoro and F5-TTS)
-                speed_val = 0.90
+                show_f5 = (tts_engine != "Kokoro") and not is_inst
+                # Engine-optimal speed default (0.80 for calm meditation pacing)
+                speed_val = 0.80
                 speed_label = "Speech Speed"
                 return (
                     gr.update(visible=show_kokoro),
@@ -1257,6 +1264,7 @@ with gr.Blocks(
             )
 
         build_auto_tab()
+        build_sandbox_tab()
 
 if __name__ == "__main__":
     # theme, css, and js moved here from gr.Blocks() per Gradio 6.0 API change.
