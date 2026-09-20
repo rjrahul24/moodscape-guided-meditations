@@ -282,87 +282,58 @@ def sandbox_generate_handler(
     benchmark_choice: str,
     generation_mode: str,
     script_text: str,
-    content_type_choice: str,
     music_prompt: str,
-    music_duration: float,
-    model_source: str,
     engine_choice: str,
-    kokoro_voice: str,
-    f5_voice: str,
-    custom_model_id: str,
-    custom_display_name: str,
-    custom_base_engine: str,
-    custom_voice_slug: str,
+    voice_choice: str,
+    speed: float,
     f5_wpm: int,
     f5_cfg: float,
-    microprosody_flag: bool,
     df_wet_val: float,
-    music_model_choice: str,
-    uploaded_music_file: str,
-    speed: float,
-    duck_amount: float,
-    spectral_duck_flag: bool,
-    shared_reverb_flag: bool,
     reverb_amount: float,
     reverb_ir_choice: str,
+    duck_amount: float,
     fade_in: float,
     fade_out: float,
-    output_format: str,
-    seed_val: int,
-    upsample_flag: bool,
-    export_stems_flag: bool,
-    stem_separation_flag: bool,
-    quality_mode_flag: bool,
-    stereo_output_flag: bool,
-    lyria_bpm: int,
-    lyria_density: float,
-    lyria_brightness: float,
+    uploaded_music_file: str,
 ):
     """Orchestrates end-to-end sandbox synthesis with progress updates."""
     start_time = time.time()
-    yield None, None, None, render_sandbox_status("Initializing Sandbox Pipeline...", 0.0, elapsed=0), render_qa_scorecard(None)
+    yield None, render_sandbox_status("Initializing Sandbox Pipeline...", 0.0, elapsed=0)
 
-    content_type = normalize_content_type(content_type_choice)
+    is_sleep = "Sleep Story" in benchmark_choice
+    content_type = "sleep_story" if is_sleep else "guided_meditation"
 
-    # Set research flags
-    os.environ["MOODSCAPE_SPECTRAL_DUCK"] = "1" if spectral_duck_flag else "0"
-    os.environ["MOODSCAPE_SHARED_REVERB"] = "1" if shared_reverb_flag else "0"
-    os.environ["MOODSCAPE_F5_MICROPROSODY"] = "1" if microprosody_flag else "0"
-    os.environ["MOODSCAPE_F5_CFG"] = str(float(f5_cfg))
+    # Set research flags / env vars
     os.environ["MOODSCAPE_KOKORO_DF_WET"] = str(float(df_wet_val))
+    os.environ["MOODSCAPE_CHATTERBOX_DF_WET"] = str(float(df_wet_val))
+    os.environ["MOODSCAPE_F5_CFG"] = str(float(f5_cfg))
+    os.environ["MOODSCAPE_CHATTERBOX_CFG"] = str(float(f5_cfg))
 
     # Resolve active engine and voice
-    if model_source == "New Open-Source Test":
-        tts_engine = custom_base_engine or "f5"
-        f5_voice_slug = custom_voice_slug or F5_VOICE_DEFAULT
-        active_voice = kokoro_voice
-    else:
-        tts_engine = engine_choice or "f5"
-        f5_voice_slug = f5_voice or F5_VOICE_DEFAULT
-        active_voice = kokoro_voice
+    tts_engine = engine_choice or "chatterbox"
+    info = get_engine_info(tts_engine)
+    base_engine = info.get("base_engine", tts_engine) if info else tts_engine
 
-    # Resolve music engine
-    if music_model_choice == "Lyria RealTime":
-        music_model = "lyria"
-        if not os.environ.get("GOOGLE_API_KEY", "").strip():
-            yield None, None, None, render_sandbox_status("Error: GOOGLE_API_KEY missing", 0.0, "Check your .env file"), render_qa_scorecard(None)
-            return
+    if base_engine == "kokoro":
+        active_voice = voice_choice or "balanced_calm"
+        f5_voice_slug = None
     else:
-        music_model = "upload"
-        if generation_mode != "Vocals Only" and not uploaded_music_file:
-            yield None, None, None, render_sandbox_status("Error: No background track selected", 0.0, "Choose an instrumental track"), render_qa_scorecard(None)
-            return
+        f5_voice_slug = voice_choice or F5_VOICE_DEFAULT or "Brittney"
+        active_voice = "balanced_calm"
+
+    # Background music resolution if mode is full mix
+    bg_track = uploaded_music_file
+    if generation_mode != "Vocals Only" and not bg_track:
+        if BACKGROUND_CHOICES:
+            bg_track = BACKGROUND_CHOICES[0][1]
 
     pipeline = _get_sandbox_pipeline()
-    progress_queue: list[tuple[float, str]] = []
 
     def progress_callback(fraction: float, message: str):
-        elapsed = time.time() - start_time
-        progress_queue.append((fraction, message))
+        pass
 
-    # Execute pipeline
     try:
-        yield None, None, None, render_sandbox_status("Starting synthesis...", 0.05, elapsed=time.time() - start_time), render_qa_scorecard(None)
+        yield None, render_sandbox_status("Starting synthesis...", 0.05, elapsed=time.time() - start_time)
 
         audio_path, status_msg = pipeline.generate(
             script=script_text,
@@ -373,98 +344,67 @@ def sandbox_generate_handler(
             reverb_amount=float(reverb_amount),
             fade_in_sec=float(fade_in),
             fade_out_sec=float(fade_out),
-            output_format=output_format,
+            output_format="wav",
             progress_cb=progress_callback,
-            seed=int(seed_val) if seed_val else None,
-            do_export_stems=export_stems_flag,
-            upsample_48k=upsample_flag,
+            seed=None,
+            do_export_stems=False,
+            upsample_48k=True,
             generation_mode=generation_mode,
-            instrumental_duration_m=float(music_duration),
-            music_model=music_model,
-            stem_separation=stem_separation_flag,
-            lyria_bpm=int(lyria_bpm),
-            lyria_density=float(lyria_density),
-            lyria_brightness=float(lyria_brightness),
+            instrumental_duration_m=5.0,
+            music_model="upload",
+            stem_separation=True,
             tts_engine=tts_engine,
             f5_voice_slug=f5_voice_slug,
             f5_target_wpm=int(f5_wpm) if f5_wpm > 0 else None,
             reverb_ir=reverb_ir_choice,
-            quality_mode=quality_mode_flag,
-            stereo_output=stereo_output_flag,
-            uploaded_music_path=uploaded_music_file,
+            quality_mode=False,
+            stereo_output=False,
+            uploaded_music_path=bg_track,
             content_type=content_type,
         )
 
         elapsed = time.time() - start_time
-        scorecard = render_qa_scorecard(audio_path, is_vocals_only=(generation_mode == "Vocals Only"))
-
-        # Check for stems
-        voice_stem_path = None
-        music_stem_path = None
-        if export_stems_flag and pipeline.last_stems:
-            voice_stem_path = pipeline.last_stems.get("voice")
-            music_stem_path = pipeline.last_stems.get("music")
-        elif generation_mode == "Vocals Only":
-            voice_stem_path = audio_path
-
-        yield (
-            audio_path,
-            voice_stem_path,
-            music_stem_path,
-            render_sandbox_status("Synthesis Complete!", 1.0, f"Ready for evaluation. {status_msg}", elapsed=elapsed),
-            scorecard,
+        yield audio_path, render_sandbox_status(
+            "Synthesis Complete!", 1.0, f"Ready for evaluation. {status_msg}", elapsed=elapsed
         )
     except Exception as e:
         logger.error("Sandbox generation failed: %s", e, exc_info=True)
-        yield None, None, None, render_sandbox_status(f"Generation Failed: {str(e)}", 0.0, "Check application logs for details"), render_qa_scorecard(None)
+        yield None, render_sandbox_status(
+            f"Generation Failed: {str(e)}", 0.0, "Check application logs for details"
+        )
 
 
-# ── Promotion & Management Callbacks ────────────────────────────────────────
+# ── Utility Callbacks ────────────────────────────────────────────────────────
 
 def handle_promote_model(
-    model_source: str,
-    engine_choice: str,
-    custom_model_id: str,
-    custom_display_name: str,
-    custom_base_engine: str,
-    custom_voice_slug: str,
-    f5_voice: str,
-    speed: float,
-    f5_wpm: int,
-    f5_cfg: float,
-    reverb_amount: float,
-    reverb_ir: str,
-    duck_amount: float,
-    spectral_duck: bool,
-    shared_reverb: bool,
-    microprosody: bool,
-    df_wet: float,
-    content_type_choice: str,
+    model_source: str = "",
+    engine_choice: str = "f5",
+    custom_model_id: str = "",
+    custom_display_name: str = "",
+    custom_base_engine: str = "f5",
+    custom_voice_slug: str = "",
+    f5_voice: str = "",
+    speed: float = 0.90,
+    f5_wpm: int = 0,
+    f5_cfg: float = 2.0,
+    reverb_amount: float = 0.15,
+    reverb_ir: str = "warm_studio",
+    duck_amount: float = -16.0,
+    spectral_duck: bool = False,
+    shared_reverb: bool = False,
+    microprosody: bool = False,
+    df_wet: float = 0.85,
+    content_type_choice: str = "Guided Meditation",
 ):
-    """Save tuned model settings to var/promoted_models.json."""
-    if model_source == "New Open-Source Test":
-        m_id = (custom_model_id or "").strip()
-        if not m_id:
-            return (
-                "<div style='color: #ef4444; font-weight: 600;'>⚠️ Please provide a Model Identifier before promoting.</div>",
-                gr.update(),
-                format_promoted_models_html(),
-            )
-        display_name = custom_display_name or m_id.replace("_", " ").title()
-        base = custom_base_engine or "f5"
-        config = {
-            "voice_slug": custom_voice_slug or F5_VOICE_DEFAULT,
-            "adapter_type": base,
-        }
-    else:
-        m_id = f"promoted_{engine_choice}_{int(time.time()) % 10000}"
-        info = get_engine_info(engine_choice)
-        base = info.get("base_engine", "f5") if info else "f5"
-        display_name = f"{info.get('name', engine_choice)} (Fine-Tuned)"
-        config = {
-            "voice_slug": f5_voice or F5_VOICE_DEFAULT,
-            "base_engine": base,
-        }
+    """Save tuned model settings to var/promoted_models.json (utility helper)."""
+    m_id = f"promoted_{engine_choice}_{int(time.time()) % 10000}"
+    info = get_engine_info(engine_choice)
+    base = info.get("base_engine", "f5") if info else "f5"
+    display_name = f"{info.get('name', engine_choice)} (Fine-Tuned)"
+    config = {
+        "voice_slug": f5_voice or F5_VOICE_DEFAULT,
+        "base_engine": base,
+    }
 
     presets = {
         "speed": float(speed),
@@ -498,7 +438,7 @@ def handle_discard_model():
     """Clear test state and trigger garbage collection."""
     gc.collect()
     msg = "<div style='color: #94a3b8; font-style: italic;'>Model test discarded. Memory freed and sandbox reset.</div>"
-    return None, None, None, msg, render_sandbox_status("Ready", 0.0, "Ready for next test run"), render_qa_scorecard(None)
+    return None, msg, render_sandbox_status("Ready", 0.0, "Ready for next test run")
 
 
 def handle_demote_model(model_id: str):
@@ -517,7 +457,7 @@ def handle_demote_model(model_id: str):
 # ── Tab Builder ──────────────────────────────────────────────────────────────
 
 def build_sandbox_tab() -> dict[str, Any]:
-    """Construct the TTS Sandbox tab inside gr.Blocks().
+    """Construct the streamlined TTS Sandbox tab inside gr.Blocks().
 
     Returns dict of created components for testing and external event wiring.
     """
@@ -525,9 +465,7 @@ def build_sandbox_tab() -> dict[str, Any]:
         gr.Markdown(
             "### 🧪 Open-Source TTS Model Sandbox\n"
             "Experiment with, evaluate, and fine-tune open-source TTS models against 5-minute benchmark scripts. "
-            "Runs through MoodScape's full pre/post-processing engine (sinc upsampling, DeepFilterNet denoising, "
-            "vocal mastering, adaptive breathing ducking, convolution reverb, and true-peak limiting). "
-            "Review the QA Scorecard, dial in optimal voice knobs, then promote winning models directly to the app."
+            "Runs through MoodScape's full mastering and acoustic space engine."
         )
 
         with gr.Row():
@@ -538,51 +476,32 @@ def build_sandbox_tab() -> dict[str, Any]:
                         benchmark_script_choice = gr.Radio(
                             choices=["🧘 5-Min Guided Meditation", "🌙 5-Min Sleep Story"],
                             value="🧘 5-Min Guided Meditation",
-                            label="Benchmark Script",
+                            label="Meditation & Sleep Option",
                             elem_classes="pill-radio",
                             scale=3,
                         )
                         reset_script_btn = gr.Button("↺ Reset Script", size="sm", scale=1, min_width=110)
+                        generation_mode = gr.Radio(
+                            choices=["Vocals Only", "Instrumental + Vocal"],
+                            value="Vocals Only",
+                            label="Mode",
+                            elem_classes="pill-radio",
+                            scale=2,
+                        )
 
-                    content_type_dropdown = gr.Dropdown(
-                        choices=["Guided Meditation", "Sleep Story"],
-                        value="Guided Meditation",
-                        label="Content Profile",
-                        info="Drives paragraph pause durations and ambient bed ducking behavior.",
-                        elem_classes="dropdown-container",
-                    )
-                    generation_mode = gr.Radio(
-                        choices=["Vocals Only", "Instrumental + Vocal", "Instrumental Only"],
-                        value="Vocals Only",
-                        label="Evaluation Mode",
-                        info="Tip: Use 'Vocals Only' to critically inspect raw speech timbre, breathing, and prosody.",
-                        elem_classes="pill-radio",
-                    )
                     script_input = gr.Textbox(
-                        label="Benchmark Script (Editable)",
-                        placeholder="Benchmark script content...",
+                        label="Script",
+                        placeholder="Write or edit your meditation or sleep story script...",
                         value=MEDITATION_5MIN_SCRIPT,
-                        lines=14,
+                        lines=13,
                         elem_id="sandbox-script-textbox",
                     )
-
-                with gr.Row():
                     music_prompt = gr.Textbox(
-                        label="Atmosphere",
-                        placeholder="E.g. warm synthesizer pads, gentle drone...",
+                        label="Lyrics / Atmosphere Prompt",
+                        placeholder="E.g. ambient, warm synthesizer pads, gentle drone, peaceful...",
                         value=DEFAULT_MUSIC_PROMPT,
                         lines=2,
-                        scale=2,
-                        visible=False,
-                    )
-                    music_duration = gr.Slider(
-                        minimum=1.0,
-                        maximum=15.0,
-                        value=5.0,
-                        step=0.5,
-                        label="Duration (min)",
-                        visible=False,
-                        scale=1,
+                        elem_id="sandbox-lyrics-textbox",
                     )
 
                 generate_btn = gr.Button(
@@ -598,174 +517,56 @@ def build_sandbox_tab() -> dict[str, Any]:
                     elem_classes="music-player-glass",
                 )
 
-                with gr.Row():
-                    vocal_stem_output = gr.Audio(
-                        label="Narration Stem (Solo)",
-                        type="filepath",
-                        elem_classes="music-player-glass",
-                        visible=True,
-                    )
-                    music_stem_output = gr.Audio(
-                        label="Music Bed Stem (Solo)",
-                        type="filepath",
-                        elem_classes="music-player-glass",
-                        visible=False,
-                    )
-
                 status_display = gr.HTML(
                     render_sandbox_status("Ready", 0.0, "Ready to synthesize benchmark script."),
                     elem_id="sandbox-status-display",
                 )
 
-                # ── Model Decision & Promotion Suite ──────────────────────────
-                with gr.Group(elem_classes="accordion-section"):
-                    gr.Markdown("#### 🎯 Model Decision Suite")
-                    with gr.Row():
-                        promote_btn = gr.Button(
-                            "⭐ Promote Model to App",
-                            variant="primary",
-                            size="md",
-                            elem_classes="primary-btn",
-                        )
-                        discard_btn = gr.Button(
-                            "🗑️ Discard Model / Reset",
-                            variant="secondary",
-                            size="md",
-                        )
-                    promotion_status = gr.HTML(
-                        "<div style='color: #94a3b8; font-size: 0.9em;'>Run a sandbox test to evaluate audio quality before promoting or discarding.</div>"
-                    )
-
-                # ── Objective Audio QA Scorecard ──────────────────────────────
-                scorecard_display = gr.HTML(
-                    render_qa_scorecard(None),
-                    elem_id="sandbox-scorecard-display",
-                )
-
-            # ── Right Column: Settings Sidebar (Identical to Manual + Model Config) ──
+            # ── Right Column: Settings Sidebar ────────────────────────────────
             with gr.Column(scale=2, elem_classes="settings-sidebar"):
-
-                # Section 1: Model & Voice Architecture
-                with gr.Accordion("Model & Voice Architecture", open=True, elem_classes="accordion-section"):
-                    model_source_radio = gr.Radio(
-                        choices=["Built-in / Promoted", "New Open-Source Test"],
-                        value="Built-in / Promoted",
-                        label="Model Source",
-                        elem_classes="pill-radio",
-                    )
-
-                    with gr.Group(visible=True) as builtin_group:
-                        engine_dropdown = gr.Dropdown(
-                            choices=list_all_engines(),
-                            value="f5",
-                            label="TTS Engine",
-                            elem_classes="dropdown-container",
-                        )
-                        with gr.Group(visible=False) as kokoro_group:
-                            kokoro_voice_dropdown = gr.Dropdown(
-                                choices=KOKORO_VOICE_CHOICES,
-                                value="balanced_calm",
-                                label="Kokoro Voice Blend",
-                                elem_classes="dropdown-container",
-                            )
-                        with gr.Group(visible=True) as f5_group:
-                            f5_voice_dropdown = gr.Dropdown(
-                                choices=F5_VOICE_CHOICES if F5_VOICE_CHOICES else ["(no voices)"],
-                                value=F5_VOICE_DEFAULT,
-                                label="F5 Voice Pool",
-                                interactive=bool(F5_VOICE_CHOICES),
-                                elem_classes="dropdown-container",
-                            )
-
-                    with gr.Group(visible=False) as custom_model_group:
-                        custom_model_id = gr.Textbox(
-                            label="New Model Identifier / Slug",
-                            placeholder="e.g. mystic_sage_v1",
-                        )
-                        custom_display_name = gr.Textbox(
-                            label="Display Name",
-                            placeholder="e.g. Mystic Sage (Warm Breathing)",
-                        )
-                        custom_base_engine = gr.Dropdown(
-                            choices=["f5", "kokoro", "chatterbox", "custom"],
-                            value="f5",
-                            label="Base Framework / Architecture",
-                            elem_classes="dropdown-container",
-                        )
-                        custom_voice_slug = gr.Dropdown(
-                            choices=F5_VOICE_CHOICES if F5_VOICE_CHOICES else ["(no voices)"],
-                            value=F5_VOICE_DEFAULT,
-                            label="Reference Voice Audio",
-                            elem_classes="dropdown-container",
-                        )
-
-                    f5_wpm_slider = gr.Slider(
-                        0, 150, 0, step=5,
-                        label="Pacing (WPM)",
-                        info="0 = natural rhythm (recommended). 90–110 = meditation. 120–150 = narration.",
-                    )
-                    f5_cfg_slider = gr.Slider(
-                        minimum=1.0, maximum=2.5, value=2.0, step=0.1,
-                        label="Voice Expressiveness (F5 CFG)",
-                        info="Lower (e.g. 1.2–1.5) = warmer/more expressive. F5 only.",
-                    )
-                    with gr.Row():
-                        microprosody_checkbox = gr.Checkbox(
-                            label="Voice Microprosody", value=False,
-                            info="F5 only: phrase-final pitch drop + breathiness.",
-                            elem_classes="toggle-switch",
-                        )
-                    df_wet_slider = gr.Slider(
-                        0.0, 1.0, 0.25, step=0.05,
-                        label="DeepFilterNet Denoising (Wet)",
-                        info="Neural denoising strength. 0.25 = Kokoro sweet spot; 1.0 = full F5 denoising.",
-                    )
-
-                # Section 2: Music Bed
-                with gr.Accordion("Music Bed", open=False, elem_classes="accordion-section"):
-                    music_model_dropdown = gr.Dropdown(
-                        choices=["Background Music", "Lyria RealTime"],
-                        value="Background Music",
-                        label="Music Engine",
+                with gr.Accordion("Model & Voice", open=True, elem_classes="accordion-section"):
+                    engine_dropdown = gr.Dropdown(
+                        choices=list_all_engines(),
+                        value="chatterbox",
+                        label="TTS Model",
                         elem_classes="dropdown-container",
                     )
-                    with gr.Group(visible=True) as upload_settings:
-                        with gr.Row():
-                            uploaded_music = gr.Dropdown(
-                                choices=BACKGROUND_CHOICES if BACKGROUND_CHOICES else ["(no tracks found)"],
-                                value=BACKGROUND_DEFAULT,
-                                label="Instrumental Track",
-                                interactive=bool(BACKGROUND_CHOICES),
-                                elem_classes="dropdown-container",
-                                scale=1,
-                            )
-                            refresh_backgrounds_btn = gr.Button("↻", scale=0, min_width=48)
+                    voice_dropdown = gr.Dropdown(
+                        choices=F5_VOICE_CHOICES if F5_VOICE_CHOICES else ["(no voices)"],
+                        value=F5_VOICE_DEFAULT,
+                        label="Voice / Reference Voice",
+                        elem_classes="dropdown-container",
+                    )
 
-                    with gr.Group(visible=False) as lyria_settings:
-                        gr.Markdown("#### Lyria RealTime Tuning")
-                        lyria_bpm = gr.Slider(60, 200, 70, step=1, label="BPM")
-                        with gr.Row():
-                            lyria_density = gr.Slider(0, 1.0, 0.1, step=0.05, label="Density")
-                            lyria_brightness = gr.Slider(0, 1.0, 0.15, step=0.05, label="Brightness")
-
-                # Section 3: Mix & Voice Effects (Identical to Manual)
-                with gr.Accordion("Mix & Space Effects", open=False, elem_classes="accordion-section"):
+                with gr.Accordion("Sound Tuning", open=True, elem_classes="accordion-section"):
                     with gr.Row():
-                        speed_slider = gr.Slider(0.70, 1.20, 0.90, step=0.01, label="Speech Speed", info="0.85–0.95 is ideal for meditation.")
-                        duck_slider = gr.Slider(-30, -6, -16, step=1, label="Music Ducking (dB)", info="How low bed drops during speech.")
-                    with gr.Row():
-                        spectral_duck_checkbox = gr.Checkbox(
-                            label="Spectral Ducking", value=False,
-                            info="Duck only mid band — preserves bass warmth + air.",
-                            elem_classes="toggle-switch",
+                        speed_slider = gr.Slider(
+                            0.70, 1.20, 0.90, step=0.01,
+                            label="Speech Speed",
+                            info="0.85–0.95 is ideal for meditation.",
                         )
-                        shared_reverb_checkbox = gr.Checkbox(
-                            label="Shared Reverb", value=False,
-                            info="Sit music in voice IR room for acoustic cohesion.",
-                            elem_classes="toggle-switch",
+                        f5_wpm_slider = gr.Slider(
+                            0, 150, 0, step=5,
+                            label="Pacing (WPM)",
+                            info="0 = natural rhythm (recommended).",
                         )
                     with gr.Row():
-                        reverb_slider = gr.Slider(0.0, 0.50, 0.15, step=0.05, label="Reverb Amount")
+                        f5_cfg_slider = gr.Slider(
+                            1.0, 2.5, 2.0, step=0.1,
+                            label="Voice Expressiveness (CFG)",
+                            info="Lower = warmer/more expressive.",
+                        )
+                        df_wet_slider = gr.Slider(
+                            0.0, 1.0, 0.85, step=0.05,
+                            label="DeepFilterNet Denoising (Wet)",
+                            info="0.25 = Kokoro; 0.85 = Chatterbox; 1.0 = F5.",
+                        )
+                    with gr.Row():
+                        reverb_slider = gr.Slider(
+                            0.0, 0.50, 0.05, step=0.01,
+                            label="Reverb Amount",
+                            info="Abbey Road filtered room reverb.",
+                        )
                         reverb_ir_dropdown = gr.Dropdown(
                             choices=[
                                 ("Warm Studio", "warm_studio"),
@@ -776,47 +577,35 @@ def build_sandbox_tab() -> dict[str, Any]:
                             label="Space / IR",
                             elem_classes="dropdown-container",
                         )
+                    duck_slider = gr.Slider(
+                        -30, -6, -16, step=1,
+                        label="Music Ducking (dB)",
+                        info="How low bed drops during speech.",
+                    )
                     with gr.Row():
                         fade_in_slider = gr.Slider(0, 10, 1.5, step=0.5, label="Fade In (s)")
                         fade_out_slider = gr.Slider(0, 15, 6, step=0.5, label="Fade Out (s)")
-
-                # Section 4: Advanced Engine Options
-                with gr.Accordion("Advanced Engine Options", open=False, elem_classes="accordion-section"):
                     with gr.Row():
-                        format_radio = gr.Radio(["wav", "mp3"], value="wav", label="Format", elem_classes="pill-radio")
-                        seed_input = gr.Number(label="Seed", value=0, precision=0)
-                    with gr.Row():
-                        upsample_checkbox = gr.Checkbox(label="Hi-Fi (48 kHz)", value=True, elem_classes="toggle-switch")
-                        stems_checkbox = gr.Checkbox(label="Export Stems", value=True, elem_classes="toggle-switch")
-                    stem_separation_checkbox = gr.Checkbox(label="Clean Music (Source Separation)", value=True, elem_classes="toggle-switch")
-                    with gr.Row():
-                        quality_mode_checkbox = gr.Checkbox(label="High Quality (Best-of-3)", value=False, elem_classes="toggle-switch")
-                        stereo_output_checkbox = gr.Checkbox(label="Stereo Output", value=False, elem_classes="toggle-switch")
-
-                # Section 5: Promoted Models Directory
-                with gr.Accordion("Promoted Models Directory", open=False, elem_classes="accordion-section"):
-                    promoted_models_html = gr.HTML(format_promoted_models_html())
-                    with gr.Row():
-                        demote_model_dropdown = gr.Dropdown(
-                            choices=[mid for _, mid in list_all_engines() if mid not in ("f5", "kokoro")],
-                            value=None,
-                            label="Select Promoted Model to Remove",
+                        uploaded_music = gr.Dropdown(
+                            choices=BACKGROUND_CHOICES if BACKGROUND_CHOICES else ["(no tracks found)"],
+                            value=BACKGROUND_DEFAULT,
+                            label="Background Instrumental Track",
+                            interactive=bool(BACKGROUND_CHOICES),
                             elem_classes="dropdown-container",
-                            scale=3,
+                            scale=1,
                         )
-                        demote_btn = gr.Button("Demote Model", variant="secondary", scale=1, min_width=110)
+                        refresh_backgrounds_btn = gr.Button("↻", scale=0, min_width=48)
 
         # ── Interactive Event Wiring ──────────────────────────────────────────
 
         def on_benchmark_change(choice: str):
             """Switch between 5-min guided meditation and 5-min sleep story scripts."""
             is_sleep = "Sleep Story" in choice
-            content_type = "Sleep Story" if is_sleep else "Guided Meditation"
+            content_type = "sleep_story" if is_sleep else "guided_meditation"
             script = SLEEP_STORY_5MIN_SCRIPT if is_sleep else MEDITATION_5MIN_SCRIPT
-            p = get_profile(normalize_content_type(content_type))
+            p = get_profile(content_type)
             return (
                 script,
-                content_type,
                 gr.update(value=p["speed"]),
                 gr.update(value=p["duck_amount_db"]),
                 gr.update(value=p["reverb_amount"]),
@@ -827,7 +616,7 @@ def build_sandbox_tab() -> dict[str, Any]:
         benchmark_script_choice.change(
             fn=on_benchmark_change,
             inputs=[benchmark_script_choice],
-            outputs=[script_input, content_type_dropdown, speed_slider, duck_slider, reverb_slider, fade_in_slider, fade_out_slider],
+            outputs=[script_input, speed_slider, duck_slider, reverb_slider, fade_in_slider, fade_out_slider],
         )
 
         def on_reset_script(choice: str):
@@ -836,93 +625,40 @@ def build_sandbox_tab() -> dict[str, Any]:
 
         reset_script_btn.click(fn=on_reset_script, inputs=[benchmark_script_choice], outputs=[script_input])
 
-        def on_content_type_change(content_label: str):
-            p = get_profile(normalize_content_type(content_label))
-            return (
-                gr.update(value=p["speed"]),
-                gr.update(value=p["duck_amount_db"]),
-                gr.update(value=p["reverb_amount"]),
-                gr.update(value=p["fade_in_sec"]),
-                gr.update(value=p["fade_out_sec"]),
-            )
-
-        content_type_dropdown.change(
-            fn=on_content_type_change,
-            inputs=[content_type_dropdown],
-            outputs=[speed_slider, duck_slider, reverb_slider, fade_in_slider, fade_out_slider],
-        )
-
-        def on_mode_change(mode: str):
-            is_inst = mode == "Instrumental Only"
-            is_voc = mode == "Vocals Only"
-            return (
-                gr.update(visible=not is_inst),   # script_input
-                gr.update(visible=not is_voc),    # music_prompt
-                gr.update(visible=is_inst),       # music_duration
-                gr.update(visible=not is_voc),    # music_stem_output
-            )
-
-        generation_mode.change(
-            fn=on_mode_change,
-            inputs=[generation_mode],
-            outputs=[script_input, music_prompt, music_duration, music_stem_output],
-        )
-
-        def on_model_source_change(src: str):
-            is_custom = src == "New Open-Source Test"
-            return (
-                gr.update(visible=not is_custom),  # builtin_group
-                gr.update(visible=is_custom),      # custom_model_group
-            )
-
-        model_source_radio.change(
-            fn=on_model_source_change,
-            inputs=[model_source_radio],
-            outputs=[builtin_group, custom_model_group],
-        )
-
         def on_engine_change(engine: str):
             info = get_engine_info(engine)
             base = info.get("base_engine", engine) if info else engine
             is_kokoro = base == "kokoro"
             presets = get_model_presets(engine)
 
-            # Pre-fill tuned presets if available
-            speed_up = gr.update(value=presets.get("speed", 0.90))
-            duck_up = gr.update(value=presets.get("duck_amount_db", -16.0))
-            reverb_up = gr.update(value=presets.get("reverb_amount", 0.15))
-            wpm_up = gr.update(value=presets.get("target_wpm", 0))
-            cfg_up = gr.update(value=presets.get("cfg_strength", 2.0))
+            if is_kokoro:
+                voice_choices = KOKORO_VOICE_CHOICES
+                default_voice = "balanced_calm"
+            else:
+                voice_choices = F5_VOICE_CHOICES if F5_VOICE_CHOICES else ["(no voices)"]
+                default_voice = F5_VOICE_DEFAULT or "Brittney"
+
+            speed_val = presets.get("speed", 0.90)
+            reverb_val = presets.get("reverb_amount", 0.05 if base == "chatterbox" else 0.15)
+            df_val = presets.get("df_wet", 0.85 if base == "chatterbox" else (0.25 if base == "kokoro" else 1.0))
+            wpm_val = presets.get("target_wpm", 0)
+            cfg_val = presets.get("cfg_strength", 2.0)
+            duck_val = presets.get("duck_amount_db", -16.0)
 
             return (
-                gr.update(visible=is_kokoro),     # kokoro_group
-                gr.update(visible=not is_kokoro), # f5_group
-                speed_up,
-                duck_up,
-                reverb_up,
-                wpm_up,
-                cfg_up,
+                gr.update(choices=voice_choices, value=default_voice),
+                gr.update(value=speed_val),
+                gr.update(value=reverb_val),
+                gr.update(value=df_val),
+                gr.update(value=wpm_val),
+                gr.update(value=cfg_val),
+                gr.update(value=duck_val),
             )
 
         engine_dropdown.change(
             fn=on_engine_change,
             inputs=[engine_dropdown],
-            outputs=[kokoro_group, f5_group, speed_slider, duck_slider, reverb_slider, f5_wpm_slider, f5_cfg_slider],
-        )
-
-        def on_music_engine_change(model: str, mode: str):
-            is_lyria = model == "Lyria RealTime"
-            is_upload = model == "Background Music"
-            is_voc = mode == "Vocals Only"
-            return (
-                gr.update(visible=is_lyria and not is_voc),
-                gr.update(visible=is_upload and not is_voc),
-            )
-
-        music_model_dropdown.change(
-            fn=on_music_engine_change,
-            inputs=[music_model_dropdown, generation_mode],
-            outputs=[lyria_settings, upload_settings],
+            outputs=[voice_dropdown, speed_slider, reverb_slider, df_wet_slider, f5_wpm_slider, f5_cfg_slider, duck_slider],
         )
 
         def on_refresh_backgrounds():
@@ -935,127 +671,51 @@ def build_sandbox_tab() -> dict[str, Any]:
 
         refresh_backgrounds_btn.click(fn=on_refresh_backgrounds, outputs=[uploaded_music])
 
-        # Generate click
         generate_btn.click(
             fn=sandbox_generate_handler,
             inputs=[
                 benchmark_script_choice,
                 generation_mode,
                 script_input,
-                content_type_dropdown,
                 music_prompt,
-                music_duration,
-                model_source_radio,
                 engine_dropdown,
-                kokoro_voice_dropdown,
-                f5_voice_dropdown,
-                custom_model_id,
-                custom_display_name,
-                custom_base_engine,
-                custom_voice_slug,
+                voice_dropdown,
+                speed_slider,
                 f5_wpm_slider,
                 f5_cfg_slider,
-                microprosody_checkbox,
                 df_wet_slider,
-                music_model_dropdown,
-                uploaded_music,
-                speed_slider,
-                duck_slider,
-                spectral_duck_checkbox,
-                shared_reverb_checkbox,
                 reverb_slider,
                 reverb_ir_dropdown,
+                duck_slider,
                 fade_in_slider,
                 fade_out_slider,
-                format_radio,
-                seed_input,
-                upsample_checkbox,
-                stems_checkbox,
-                stem_separation_checkbox,
-                quality_mode_checkbox,
-                stereo_output_checkbox,
-                lyria_bpm,
-                lyria_density,
-                lyria_brightness,
+                uploaded_music,
             ],
-            outputs=[audio_output, vocal_stem_output, music_stem_output, status_display, scorecard_display],
+            outputs=[audio_output, status_display],
             show_progress="full",
-        )
-
-        # Promote click
-        promote_btn.click(
-            fn=handle_promote_model,
-            inputs=[
-                model_source_radio,
-                engine_dropdown,
-                custom_model_id,
-                custom_display_name,
-                custom_base_engine,
-                custom_voice_slug,
-                f5_voice_dropdown,
-                speed_slider,
-                f5_wpm_slider,
-                f5_cfg_slider,
-                reverb_slider,
-                reverb_ir_dropdown,
-                duck_slider,
-                spectral_duck_checkbox,
-                shared_reverb_checkbox,
-                microprosody_checkbox,
-                df_wet_slider,
-                content_type_dropdown,
-            ],
-            outputs=[promotion_status, engine_dropdown, promoted_models_html],
-        )
-
-        # Discard click
-        discard_btn.click(
-            fn=handle_discard_model,
-            outputs=[audio_output, vocal_stem_output, music_stem_output, promotion_status, status_display, scorecard_display],
-        )
-
-        # Demote click
-        demote_btn.click(
-            fn=handle_demote_model,
-            inputs=[demote_model_dropdown],
-            outputs=[promotion_status, engine_dropdown, promoted_models_html],
         )
 
     return {
         "benchmark_script_choice": benchmark_script_choice,
         "reset_script_btn": reset_script_btn,
-        "content_type_dropdown": content_type_dropdown,
         "generation_mode": generation_mode,
         "script_input": script_input,
         "music_prompt": music_prompt,
-        "music_duration": music_duration,
         "generate_btn": generate_btn,
         "audio_output": audio_output,
-        "vocal_stem_output": vocal_stem_output,
-        "music_stem_output": music_stem_output,
         "status_display": status_display,
-        "promote_btn": promote_btn,
-        "discard_btn": discard_btn,
-        "promotion_status": promotion_status,
-        "scorecard_display": scorecard_display,
-        "model_source_radio": model_source_radio,
         "engine_dropdown": engine_dropdown,
-        "kokoro_voice_dropdown": kokoro_voice_dropdown,
-        "f5_voice_dropdown": f5_voice_dropdown,
-        "custom_model_id": custom_model_id,
-        "custom_display_name": custom_display_name,
-        "custom_base_engine": custom_base_engine,
-        "custom_voice_slug": custom_voice_slug,
+        "voice_dropdown": voice_dropdown,
+        "speed_slider": speed_slider,
         "f5_wpm_slider": f5_wpm_slider,
         "f5_cfg_slider": f5_cfg_slider,
-        "microprosody_checkbox": microprosody_checkbox,
         "df_wet_slider": df_wet_slider,
-        "speed_slider": speed_slider,
         "duck_slider": duck_slider,
         "reverb_slider": reverb_slider,
         "reverb_ir_dropdown": reverb_ir_dropdown,
         "fade_in_slider": fade_in_slider,
         "fade_out_slider": fade_out_slider,
-        "stems_checkbox": stems_checkbox,
-        "upsample_checkbox": upsample_checkbox,
+        "uploaded_music": uploaded_music,
+        "refresh_backgrounds_btn": refresh_backgrounds_btn,
     }
+

@@ -30,27 +30,42 @@ class TestBuildSandboxTab(unittest.TestCase):
         required_keys = (
             "benchmark_script_choice",
             "reset_script_btn",
-            "content_type_dropdown",
             "generation_mode",
             "script_input",
+            "music_prompt",
             "generate_btn",
             "audio_output",
+            "status_display",
+            "engine_dropdown",
+            "voice_dropdown",
+            "speed_slider",
+            "f5_wpm_slider",
+            "f5_cfg_slider",
+            "df_wet_slider",
+            "duck_slider",
+            "reverb_slider",
+            "reverb_ir_dropdown",
+            "fade_in_slider",
+            "fade_out_slider",
+            "uploaded_music",
+            "refresh_backgrounds_btn",
+        )
+        for key in required_keys:
+            self.assertIn(key, components, f"Missing component key: {key}")
+
+        # Ensure removed clutter components are not present
+        removed_keys = (
             "vocal_stem_output",
             "music_stem_output",
-            "status_display",
             "promote_btn",
             "discard_btn",
             "promotion_status",
             "scorecard_display",
             "model_source_radio",
-            "engine_dropdown",
-            "speed_slider",
-            "duck_slider",
-            "reverb_slider",
             "stems_checkbox",
         )
-        for key in required_keys:
-            self.assertIn(key, components, f"Missing component key: {key}")
+        for key in removed_keys:
+            self.assertNotIn(key, components, f"Component should have been removed: {key}")
 
     def test_default_values(self):
         with gr.Blocks():
@@ -58,8 +73,8 @@ class TestBuildSandboxTab(unittest.TestCase):
 
         self.assertEqual(components["benchmark_script_choice"].value, "🧘 5-Min Guided Meditation")
         self.assertEqual(components["generation_mode"].value, "Vocals Only")
-        self.assertTrue(components["stems_checkbox"].value)
         self.assertEqual(components["script_input"].value, MEDITATION_5MIN_SCRIPT)
+        self.assertEqual(components["engine_dropdown"].value, "chatterbox")
 
     def test_render_status_html(self):
         html_ready = render_sandbox_status("Ready", 0.0, "Ready to test")
@@ -80,8 +95,6 @@ class TestBuildSandboxTab(unittest.TestCase):
         self.assertIsInstance(html, str)
 
     def test_discard_handler(self):
-        audio, v_stem, m_stem, msg, status, scorecard = handle_discard_model()
+        audio, msg, status = handle_discard_model()
         self.assertIsNone(audio)
-        self.assertIsNone(v_stem)
-        self.assertIsNone(m_stem)
         self.assertIn("discarded", msg)
