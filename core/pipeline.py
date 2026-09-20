@@ -4,6 +4,7 @@ import gc
 import logging
 import os
 import time
+from typing import Any
 
 import numpy as np
 
@@ -44,6 +45,7 @@ class MeditationPipeline:
         voice: str = "golden_hour",
         speed: float = 0.90,
         duck_amount_db: float = -16.0,
+        music_volume_db: float = -16.0,
         reverb_amount: float = 0.15,
         fade_in_sec: float = 1.5,
         fade_out_sec: float = 5.0,
@@ -68,6 +70,9 @@ class MeditationPipeline:
         stereo_output: bool = False,
         uploaded_music_path: str | None = None,
         content_type: str = "meditation",
+        custom_tts_engine: Any = None,
+        use_tts_cache: bool = True,
+        reuse_last_voice: bool = False,
     ) -> tuple[str, str]:
         """Run the full pipeline and return the path to the output audio file.
 
@@ -84,6 +89,9 @@ class MeditationPipeline:
                 calibrated per-session from measured stem loudness
                 (mixer.calibrate_music_bed); a non-default duck_amount_db
                 passed here still wins over the calibrated duck.
+            music_volume_db: Baseline background music volume during pauses.
+                Defaults to -16.0 dB. When MOODSCAPE_ADAPTIVE_BED=1, non-default
+                values apply a relative offset on top of the calibrated bed level.
             reverb_amount: Voice reverb wet level (0.0–0.5).
             fade_in_sec: Fade-in duration for the final mix.
             fade_out_sec: Fade-out duration for the final mix.
@@ -112,6 +120,10 @@ class MeditationPipeline:
                 the long-tuned meditation path unchanged. Slider-backed values
                 (speed, duck, fades, reverb) are still passed in explicitly by
                 the caller; this only drives the non-slider behaviours.
+            use_tts_cache: If True, reuses synthesized voice when script and
+                voice parameters match an entry in var/tts_cache/.
+            reuse_last_voice: If True, reuses the most recently synthesized
+                voice regardless of script hash.
 
         Returns:
             Tuple of (path_to_output_file, status_message).
@@ -126,7 +138,8 @@ class MeditationPipeline:
         profile = get_profile(content_type)
         bed_profile = profile.get("bed")
 
-        # Generate a session seed if not provided
+        # Track if seed was explicitly provided by caller before defaulting to clock
+        seed_is_explicit = seed is not None
         if seed is None:
             seed = int(time.time()) % (2**31)
 
@@ -170,36 +183,95 @@ class MeditationPipeline:
                     sum(1 for s in segments if s["type"] == "speech"),
                 )
 
-                # ── Step 2: Load TTS ────────────────────────────────────────────
-                if tts_engine == "f5":
-                    from core.f5_tts.engine import F5Engine
-                    tts = F5Engine(voice_slug=f5_voice_slug)
-                    _progress(progress_cb, 0.05, "Loading F5-TTS voice model...")
-                else:
-                    tts = self.tts
-                    _progress(progress_cb, 0.05, "Loading Kokoro voice model...")
-                tts.load_model()
-                gc.collect()
+                # ── Step 2: Check TTS Cache or Load Model ───────────────────────
+                tts = None
+                cached_voice = None
+                cache_key = None
 
-                # ── Step 3: Synthesize narration ────────────────────────────────
-                _progress(progress_cb, 0.10, "Synthesizing narration...")
-
-                def tts_progress(current, total):
-                    frac = 0.10 + 0.30 * (current / max(total, 1))
-                    _progress(progress_cb, frac, f"Synthesizing segment {current}/{total}...")
-
-                if tts_engine == "f5":
-                    voice_audio, voice_activity = tts.synthesize(
-                        segments, speed=speed, progress_cb=tts_progress,
-                        target_wpm=f5_target_wpm if f5_target_wpm and f5_target_wpm > 0 else None,
+                if reuse_last_voice:
+                    from core.tts_cache import get_latest_tts
+                    cached_voice = get_latest_tts()
+                    if cached_voice is not None:
+                        _progress(progress_cb, 0.10, "Reusing latest synthesized voice from cache...")
+                        logger.info("TTS cache hit: reusing latest voice narration")
+                elif use_tts_cache:
+                    from core.tts_cache import compute_cache_key, get_cached_tts
+                    f5_cfg = float(os.environ.get("MOODSCAPE_F5_CFG", "2.0"))
+                    microprosody = os.environ.get("MOODSCAPE_F5_MICROPROSODY", "0") == "1"
+                    cache_voice_id = f5_voice_slug if tts_engine == "f5" else voice
+                    cache_key = compute_cache_key(
+                        script=script,
+                        content_type=content_type,
+                        tts_engine=tts_engine,
+                        voice=cache_voice_id,
+                        speed=speed,
+                        f5_target_wpm=f5_target_wpm,
+                        f5_cfg_strength=f5_cfg,
+                        microprosody=microprosody,
+                        seed=seed if seed_is_explicit else None,
                     )
-                else:
-                    voice_audio, voice_activity = tts.synthesize(
-                        segments, voice=voice, speed=speed,
-                        progress_cb=tts_progress, seed=seed,
-                    )
+                    cached_voice = get_cached_tts(cache_key)
+                    if cached_voice is not None:
+                        _progress(progress_cb, 0.10, "Found cached voice narration (skipping TTS synthesis)...")
+                        logger.info("TTS cache hit for key %s", cache_key[:12])
 
-                logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
+                if cached_voice is not None:
+                    voice_audio = cached_voice["voice_audio"]
+                    voice_activity = cached_voice["voice_activity"]
+                    status_message += "Voice: Reused cached TTS. "
+                    _progress(progress_cb, 0.35, "Loaded voice narration from cache.")
+                else:
+                    if custom_tts_engine is not None:
+                        tts = custom_tts_engine
+                        _progress(progress_cb, 0.05, f"Loading {tts_engine} voice model...")
+                    elif tts_engine == "f5":
+                        from core.f5_tts.engine import F5Engine
+                        tts = F5Engine(voice_slug=f5_voice_slug)
+                        _progress(progress_cb, 0.05, "Loading F5-TTS voice model...")
+                    else:
+                        tts = self.tts
+                        _progress(progress_cb, 0.05, "Loading Kokoro voice model...")
+                    tts.load_model()
+                    gc.collect()
+
+                    # ── Step 3: Synthesize narration ────────────────────────────────
+                    _progress(progress_cb, 0.10, "Synthesizing narration...")
+
+                    def tts_progress(current, total):
+                        frac = 0.10 + 0.30 * (current / max(total, 1))
+                        _progress(progress_cb, frac, f"Synthesizing segment {current}/{total}...")
+
+                    if tts_engine == "f5":
+                        voice_audio, voice_activity = tts.synthesize(
+                            segments, speed=speed, progress_cb=tts_progress,
+                            target_wpm=f5_target_wpm if f5_target_wpm and f5_target_wpm > 0 else None,
+                        )
+                    else:
+                        voice_audio, voice_activity = tts.synthesize(
+                            segments, voice=voice, speed=speed,
+                            progress_cb=tts_progress, seed=seed,
+                        )
+
+                    logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
+
+                    # Save to cache if enabled
+                    if use_tts_cache and cache_key:
+                        from core.tts_cache import save_cached_tts
+                        meta = {
+                            "tts_engine": tts_engine,
+                            "voice": f5_voice_slug if tts_engine == "f5" else voice,
+                            "speed": speed,
+                            "content_type": content_type,
+                            "f5_target_wpm": f5_target_wpm,
+                            "script_preview": script[:120].replace("\n", " "),
+                        }
+                        try:
+                            save_cached_tts(
+                                cache_key, voice_audio, voice_activity,
+                                sample_rate=SAMPLE_RATE, metadata=meta,
+                            )
+                        except Exception as e:
+                            logger.warning("Failed to save TTS cache: %s", e)
 
                 # ── Vocal sanity check ──────────────────────────────────
                 # Catch broken TTS output BEFORE it reaches the post-processor.
@@ -292,7 +364,7 @@ class MeditationPipeline:
 
             if not is_vocals:
                 # ── Step 4: Unload TTS, load music model ────────────────────────
-                if not is_instrumental:
+                if not is_instrumental and tts is not None:
                     tts.unload_model()
                     if tts_engine == "f5":
                         del tts
@@ -464,7 +536,7 @@ class MeditationPipeline:
             # measured golden-path mix, so nominal sessions calibrate back to
             # (-16, -16). Set MOODSCAPE_ADAPTIVE_BED=0 to force the legacy
             # constants.
-            music_volume_db = -16.0
+            effective_music_volume_db = music_volume_db
             mix_phrases = None
             adaptive_bed = os.environ.get("MOODSCAPE_ADAPTIVE_BED", "1") == "1"
             if adaptive_bed and not is_instrumental and not is_vocals and music_audio.size:
@@ -483,14 +555,22 @@ class MeditationPipeline:
                     voice_audio, music_audio, mix_sr, phrases=mix_phrases,
                     **cal_offsets,
                 )
-                music_volume_db = cal_volume_db
+                if music_volume_db == -16.0:
+                    effective_music_volume_db = cal_volume_db
+                else:
+                    # User-moved volume slider applies relative adjustment on top of calibrated bed level
+                    offset = music_volume_db - (-16.0)
+                    effective_music_volume_db = cal_volume_db + offset
+
                 # A user-moved duck slider (non-default) still wins.
                 if duck_amount_db == -16.0:
                     duck_amount_db = cal_duck_db
                 logger.info(
-                    "Adaptive bed: music_volume_db=%.1f dB, duck_amount_db=%.1f dB (%d phrases)",
-                    music_volume_db, duck_amount_db, len(mix_phrases),
+                    "Adaptive bed: effective_volume_db=%.1f dB (cal=%.1f dB, user=%.1f dB), duck_amount_db=%.1f dB (%d phrases)",
+                    effective_music_volume_db, cal_volume_db, music_volume_db, duck_amount_db, len(mix_phrases),
                 )
+
+            effective_music_volume_db = float(np.clip(effective_music_volume_db, -40.0, 0.0))
 
             # ── Step 9: Mix with ducking ────────────────────────────────────
             if is_instrumental:
@@ -512,7 +592,7 @@ class MeditationPipeline:
                     music_audio,
                     sample_rate=mix_sr,
                     duck_amount_db=duck_amount_db,
-                    music_volume_db=music_volume_db,
+                    music_volume_db=effective_music_volume_db,
                     fade_in_sec=fade_in_sec,
                     fade_out_sec=fade_out_sec,
                     stereo_output=stereo_output,

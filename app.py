@@ -194,6 +194,7 @@ def generate_meditation(
     kokoro_voice,
     speed,
     duck_amount,
+    music_volume,
     reverb_amount,
     fade_in,
     fade_out,
@@ -217,6 +218,7 @@ def generate_meditation(
     microprosody_flag,
     f5_cfg_strength,
     content_type_choice,
+    use_tts_cache_flag,
 ):
     # Initial status
     yield None, _render_status("Initializing Pipeline", 0.0)
@@ -293,6 +295,7 @@ def generate_meditation(
                 speed=speed,
                 music_model=music_model,
                 duck_amount_db=duck_amount,
+                music_volume_db=float(music_volume),
                 reverb_amount=reverb_amount,
                 fade_in_sec=fade_in,
                 fade_out_sec=fade_out,
@@ -313,6 +316,7 @@ def generate_meditation(
                 stereo_output=bool(stereo_output_flag),
                 uploaded_music_path=uploaded_music_file or None,
                 content_type=content_type,
+                use_tts_cache=bool(use_tts_cache_flag),
             )
             result_container["result"] = result
         except Exception as e:
@@ -354,7 +358,8 @@ def generate_meditation(
     minutes = int(duration // 60)
     seconds = int(duration % 60)
     tts_label = {"f5": "F5-TTS", "kokoro": "Kokoro"}.get(tts_engine, "Kokoro")
-    detail = f"Synthesized with {tts_label} + {music_model_choice} · {minutes}m {seconds}s"
+    cached_tag = " (cached voice)" if "Reused cached TTS" in status_msg else ""
+    detail = f"Synthesized with {tts_label}{cached_tag} + {music_model_choice} · {minutes}m {seconds}s"
     yield output_path, _render_status("Generation Complete", 1.0, detail, elapsed=elapsed)
 
 
@@ -1058,14 +1063,20 @@ with gr.Blocks(
                     info="Lower = warmer/more expressive, slightly less voice-identical. "
                          "2.0 = default; try ~1.2. F5 only.",
                 )
+                use_tts_cache_checkbox = gr.Checkbox(
+                    label="Reuse Cached Voice", value=True,
+                    info="Instant re-mix: skips TTS when script & voice settings are unchanged.",
+                    elem_classes="toggle-switch",
+                )
 
             # Section 2: Mix & Effects
             with gr.Accordion("Mix & Effects", open=False, elem_classes="accordion-section"):
                 with gr.Row():
                     speed_slider = gr.Slider(0.70, 1.20, 0.9, step=0.01, label="Speech Speed", info="0.85–0.95 is ideal for guided meditation.")
-                    duck_slider = gr.Slider(-30, -6, -16, step=1, label="Music Ducking (dB)", info="How low the bed drops while you speak; it rises back gradually in pauses.")
-                with gr.Row():
                     reverb_slider = gr.Slider(0.0, 0.5, 0.15, step=0.05, label="Reverb Amount")
+                with gr.Row():
+                    music_volume_slider = gr.Slider(-30, 0, -16, step=1, label="Music Volume (dB)", info="Baseline volume of background music in pauses (-16 dB default).")
+                    duck_slider = gr.Slider(-30, -6, -16, step=1, label="Music Ducking (dB)", info="How low the bed drops while you speak; it rises back gradually in pauses.")
                     reverb_ir_dropdown = gr.Dropdown(
                         choices=[
                             ("Warm Studio", "warm_studio"),
@@ -1137,6 +1148,7 @@ with gr.Blocks(
             gr.update(visible=show_kokoro),   # kokoro_settings
             gr.update(visible=not is_inst),   # speed_slider
             gr.update(visible=not is_voc),    # duck_slider
+            gr.update(visible=not is_voc),    # music_volume_slider
             gr.update(visible=not is_inst),   # reverb_slider
             gr.update(visible=show_lyria),    # lyria_settings
             gr.update(visible=show_upload),   # upload_settings
@@ -1146,7 +1158,7 @@ with gr.Blocks(
     generation_mode.change(
         fn=toggle_mode_settings,
         inputs=[generation_mode, music_model_dropdown, tts_engine_radio],
-        outputs=[script_input, music_prompt, music_duration, kokoro_settings, speed_slider, duck_slider, reverb_slider, lyria_settings, upload_settings, f5_settings],
+        outputs=[script_input, music_prompt, music_duration, kokoro_settings, speed_slider, duck_slider, music_volume_slider, reverb_slider, lyria_settings, upload_settings, f5_settings],
     )
 
     def toggle_music_engine_ui(model, mode):
@@ -1203,6 +1215,7 @@ with gr.Blocks(
         return (
             gr.update(value=p["speed"]),          # speed_slider
             gr.update(value=p["duck_amount_db"]), # duck_slider
+            gr.update(value=p.get("music_volume_db", -16.0)), # music_volume_slider
             gr.update(value=p["reverb_amount"]),  # reverb_slider
             gr.update(value=p["fade_in_sec"]),    # fade_in_slider
             gr.update(value=p["fade_out_sec"]),   # fade_out_slider
@@ -1211,7 +1224,7 @@ with gr.Blocks(
     content_type_dropdown.change(
         fn=apply_content_profile,
         inputs=[content_type_dropdown],
-        outputs=[speed_slider, duck_slider, reverb_slider, fade_in_slider, fade_out_slider],
+        outputs=[speed_slider, duck_slider, music_volume_slider, reverb_slider, fade_in_slider, fade_out_slider],
     )
 
     generate_btn.click(
@@ -1225,6 +1238,7 @@ with gr.Blocks(
             kokoro_voice_dropdown,
             speed_slider,
             duck_slider,
+            music_volume_slider,
             reverb_slider,
             fade_in_slider,
             fade_out_slider,
@@ -1248,6 +1262,7 @@ with gr.Blocks(
             microprosody_checkbox,
             f5_cfg_slider,
             content_type_dropdown,
+            use_tts_cache_checkbox,
         ],
         outputs=[audio_output, status_display],
         show_progress="full",
