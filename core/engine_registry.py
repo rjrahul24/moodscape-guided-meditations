@@ -45,7 +45,16 @@ BUILTIN_ENGINES = {
         "name": "Chatterbox TTS",
         "description": "Resemble AI Chatterbox 500M TTS with zero-shot cloning and emotion tuning.",
         "base_engine": "chatterbox",
-        "default_voice": "default",
+        "default_voice": "Brittney",
+        "presets": {
+            "speed": 0.90,
+            "reverb_amount": 0.05,
+            "duck_amount_db": -16.0,
+            "df_wet": 0.85,
+            "exaggeration": 0.28,
+            "cfg_weight": 0.35,
+            "temperature": 0.55,
+        },
     },
 }
 
