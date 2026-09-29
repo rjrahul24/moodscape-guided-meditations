@@ -317,7 +317,7 @@ def generate_meditation(
                 lyria_density=float(lyria_density),
                 lyria_brightness=float(lyria_brightness),
                 tts_engine=tts_engine,
-                f5_voice_slug=f5_voice_slug if tts_engine == "f5" else None,
+                f5_voice_slug=f5_voice_slug if tts_engine in ("f5", "chatterbox") else None,
                 f5_target_wpm=int(f5_wpm) if tts_engine == "f5" and f5_wpm > 0 else None,
                 reverb_ir=reverb_ir_choice,
                 quality_mode=bool(quality_mode_flag),
@@ -1205,36 +1205,39 @@ with gr.Blocks(
                 # Engine-optimal speed default (0.80 for calm meditation pacing)
                 speed_val = 0.80
                 speed_label = "Speech Speed"
+                reverb_val = 0.0 if tts_engine == "Chatterbox TTS" else 0.15
                 return (
                     gr.update(visible=show_kokoro),
                     gr.update(visible=show_f5),
                     gr.update(value=speed_val, label=speed_label),
+                    gr.update(value=reverb_val),
                 )
 
             tts_engine_radio.change(
                 fn=toggle_tts_engine_ui,
                 inputs=[tts_engine_radio, generation_mode],
-                outputs=[kokoro_settings, f5_settings, speed_slider],
+                outputs=[kokoro_settings, f5_settings, speed_slider, reverb_slider],
             )
 
-            def apply_content_profile(content_type_label):
+            def apply_content_profile(content_type_label, tts_engine):
                 # Pre-fill the slider-backed controls with the selected content profile's
                 # defaults. The user can still override any of them afterward. Meditation
                 # restores today's defaults; Sleep Story applies the softer, slower tuning.
                 from core.content_profiles import get_profile, normalize_content_type
                 p = get_profile(normalize_content_type(content_type_label))
+                reverb_val = 0.0 if tts_engine == "Chatterbox TTS" else p["reverb_amount"]
                 return (
                     gr.update(value=p["speed"]),          # speed_slider
                     gr.update(value=p["duck_amount_db"]), # duck_slider
                     gr.update(value=p.get("music_volume_db", -16.0)), # music_volume_slider
-                    gr.update(value=p["reverb_amount"]),  # reverb_slider
+                    gr.update(value=reverb_val),          # reverb_slider
                     gr.update(value=p["fade_in_sec"]),    # fade_in_slider
                     gr.update(value=p["fade_out_sec"]),   # fade_out_slider
                 )
 
             content_type_dropdown.change(
                 fn=apply_content_profile,
-                inputs=[content_type_dropdown],
+                inputs=[content_type_dropdown, tts_engine_radio],
                 outputs=[speed_slider, duck_slider, music_volume_slider, reverb_slider, fade_in_slider, fade_out_slider],
             )
 

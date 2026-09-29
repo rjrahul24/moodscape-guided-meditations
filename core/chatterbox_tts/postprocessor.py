@@ -1,9 +1,15 @@
-"""Chatterbox TTS postprocessing — studio mastering and Abbey Road filtered space.
+"""Chatterbox TTS postprocessing — studio vocal mastering and Abbey Road acoustic space.
 
-Chatterbox uses flow matching diffusion into an S3Gen neural vocoder, producing
-rich acoustic timbre. Unlike Kokoro (which needs heavy mud cutting and ISTFTNet de-essing),
-Chatterbox benefits from transparent EQ, smooth dynamic leveling, and an
-Abbey Road filtered convolution reverb bus that keeps the voice clear of echo and mud.
+Calibrated to match ElevenLabs-grade broadcast intimacy and clarity:
+  1. Studio NoiseGate (-48 dBFS) eliminates low-level vocoder hiss in pauses.
+  2. HighpassFilter (75 Hz) strips sub-bass mic rumble without thinning vocal body.
+  3. PeakFilter (350 Hz, -2.0 dB) cleans boxy resonance.
+  4. LowShelfFilter (160 Hz, +2.0 dB) provides close-mic chest warmth.
+  5. HighShelfFilter (10.5 kHz, +1.5 dB) adds silky breath intimacy.
+  6. LowpassFilter (14 kHz) smooths supra-audible vocoder hash.
+  7. Compressor (-22 dB, 2.0:1, attack 15ms, release 180ms) levels dynamics naturally.
+  8. NO Pedalboard Limiter (avoids pedalboard 0.9.23's +4.75 dB sub-threshold static bug).
+  9. Default 100% DRY voice chain (matching ElevenLabs intimate studio delivery).
 """
 
 from __future__ import annotations
@@ -19,10 +25,10 @@ from pedalboard import (
     Gain,
     HighpassFilter,
     HighShelfFilter,
-    Limiter,
     LowpassFilter,
     LowShelfFilter,
     Mix,
+    NoiseGate,
     PeakFilter,
     Pedalboard,
 )
@@ -33,17 +39,13 @@ SAMPLE_RATE = 24000
 
 
 class ChatterboxMasteringEngine:
-    """Mastering engine for Chatterbox TTS output at the mix sample rate (48 kHz).
+    """Studio mastering engine for Chatterbox TTS output at the mix sample rate (48 kHz).
 
-    Applies transparent, meditation-tailored signal flow:
-      1. HPF 70 Hz: strip sub-bass rumble without thinning vocal body.
-      2. PeakFilter 350 Hz (-1.5 dB, Q=1.0): clean up lower-mid boxiness.
-      3. LowShelf 150 Hz (+1.2 dB): gentle chest warmth.
-      4. HighShelf 10 kHz (+1.0 dB): silky air and intimacy.
-      5. LowpassFilter 12 kHz: smooth, relaxing top-end rolloff.
-      6. Compressor (-24 dB, 1.8:1, attack 20ms, release 250ms): gentle leveling
-         that does NOT pump up quiet silence or breath tails.
-      7. Limiter (-1.5 dB): transparent ceiling protection.
+    Delivers an ElevenLabs-style close-mic studio delivery:
+      - NoiseGate: silences inter-phrase vocoder hiss.
+      - EQ: removes boxiness, enhances vocal chest warmth and silky air.
+      - Optical compression: gentle leveling without pumping quiet breath tails.
+      - Peak protection via np.clip (true-peak limiting handled at export via mixer.true_peak_limit).
     """
 
     def __init__(self, sample_rate: int = SAMPLE_RATE) -> None:
@@ -58,13 +60,13 @@ class ChatterboxMasteringEngine:
 
         if self._master_chain is None or self._master_chain_sr != sr:
             self._master_chain = Pedalboard([
-                HighpassFilter(cutoff_frequency_hz=70.0),
-                PeakFilter(cutoff_frequency_hz=350.0, gain_db=-1.5, q=1.0),
-                LowShelfFilter(cutoff_frequency_hz=150.0, gain_db=1.2),
-                HighShelfFilter(cutoff_frequency_hz=10000.0, gain_db=1.0),
-                LowpassFilter(cutoff_frequency_hz=12000.0),
-                Compressor(threshold_db=-24.0, ratio=1.8, attack_ms=20.0, release_ms=250.0),
-                Limiter(threshold_db=-1.5),
+                NoiseGate(threshold_db=-48.0, ratio=3.0, attack_ms=2.0, release_ms=150.0),
+                HighpassFilter(cutoff_frequency_hz=75.0),
+                PeakFilter(cutoff_frequency_hz=350.0, gain_db=-2.0, q=1.0),
+                LowShelfFilter(cutoff_frequency_hz=160.0, gain_db=2.0),
+                HighShelfFilter(cutoff_frequency_hz=10500.0, gain_db=1.5),
+                LowpassFilter(cutoff_frequency_hz=14000.0),
+                Compressor(threshold_db=-22.0, ratio=2.0, attack_ms=15.0, release_ms=180.0),
             ])
             self._master_chain_sr = sr
 
@@ -74,26 +76,27 @@ class ChatterboxMasteringEngine:
 
 
 def build_chatterbox_voice_chain(
-    reverb_amount: float = 0.05,
+    reverb_amount: float = 0.0,
     ir_name: str = "warm_studio",
 ) -> Pedalboard:
-    """Chatterbox voice FX chain: Abbey Road filtered convolution reverb + limiter.
+    """Chatterbox voice FX chain: 100% dry studio vocal by default, or Abbey Road reverb.
 
-    Applies the Abbey Road trick:
-      - The convolution reverb sits strictly on a parallel wet path.
-      - A HighpassFilter (300 Hz) and LowpassFilter (6000 Hz) filter the wet return,
-        preventing low-end rumble and high-frequency flutter from creating an echo chamber.
-      - When reverb_amount == 0.0 (or for critical vocal evaluation), the signal is 100% dry.
+    ElevenLabs vocal delivery is renowned for its bone-dry, intimate studio presence.
+    When reverb_amount == 0.0 (default), returns a transparent pass-through chain
+    without reverb or buggy pedalboard limiters.
+
+    When reverb is explicitly requested (>0.0), applies the Abbey Road trick:
+      - Wet convolution reverb is bandpassed between 300 Hz and 6000 Hz.
+      - Wet return is padded by -6 dB to prevent room convolution from overwhelming
+        the direct voice into an echo chamber.
     """
     from core.audio_processor import DEFAULT_IR, IR_CATALOG
 
     reverb_amount = float(np.clip(reverb_amount, 0.0, 0.5))
 
-    # If completely dry, return transparent limiter only
+    # If dry (ElevenLabs studio default), return transparent chain
     if reverb_amount <= 0.001:
-        return Pedalboard([
-            Limiter(threshold_db=-1.0),
-        ])
+        return Pedalboard([])
 
     ir_entry = IR_CATALOG.get(ir_name, IR_CATALOG.get(DEFAULT_IR))
     ir_path = ir_entry["path"] if ir_entry else ""
@@ -101,8 +104,10 @@ def build_chatterbox_voice_chain(
     dry_gain = 1.0 - reverb_amount
     wet_gain = reverb_amount
 
-    dry_db = 20.0 * np.log10(max(dry_gain, 1e-5))
-    wet_db = 20.0 * np.log10(max(wet_gain, 1e-5))
+    dry_db = float(20.0 * np.log10(max(dry_gain, 1e-5)))
+    # Attenuate wet return by -18 dB so convolution energy can never overwhelm
+    # the direct vocal into an echo chamber.
+    wet_db = float(20.0 * np.log10(max(wet_gain, 1e-5))) - 18.0
 
     wet_chain: list[Any] = []
     if os.path.isfile(ir_path):
@@ -118,5 +123,4 @@ def build_chatterbox_voice_chain(
             Gain(gain_db=dry_db),
             Pedalboard(wet_chain),
         ]),
-        Limiter(threshold_db=-1.0),
     ])

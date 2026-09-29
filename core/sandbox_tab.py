@@ -303,16 +303,20 @@ def sandbox_generate_handler(
     is_sleep = "Sleep Story" in benchmark_choice
     content_type = "sleep_story" if is_sleep else "guided_meditation"
 
-    # Set research flags / env vars
-    os.environ["MOODSCAPE_KOKORO_DF_WET"] = str(float(df_wet_val))
-    os.environ["MOODSCAPE_CHATTERBOX_DF_WET"] = str(float(df_wet_val))
-    os.environ["MOODSCAPE_F5_CFG"] = str(float(f5_cfg))
-    os.environ["MOODSCAPE_CHATTERBOX_CFG"] = str(float(f5_cfg))
-
     # Resolve active engine and voice
     tts_engine = engine_choice or "chatterbox"
     info = get_engine_info(tts_engine)
     base_engine = info.get("base_engine", tts_engine) if info else tts_engine
+
+    # Set research flags / env vars
+    os.environ["MOODSCAPE_KOKORO_DF_WET"] = str(float(df_wet_val))
+    os.environ["MOODSCAPE_CHATTERBOX_DF_WET"] = str(float(df_wet_val))
+    os.environ["MOODSCAPE_F5_CFG"] = str(float(f5_cfg))
+    if base_engine == "chatterbox":
+        cb_cfg = float(f5_cfg) if float(f5_cfg) <= 0.8 else 0.50
+        os.environ["MOODSCAPE_CHATTERBOX_CFG"] = str(cb_cfg)
+    else:
+        os.environ["MOODSCAPE_CHATTERBOX_CFG"] = str(float(f5_cfg))
 
     if base_engine == "kokoro":
         active_voice = voice_choice or "balanced_calm"
@@ -552,20 +556,20 @@ def build_sandbox_tab() -> dict[str, Any]:
                         )
                     with gr.Row():
                         f5_cfg_slider = gr.Slider(
-                            1.0, 2.5, 2.0, step=0.1,
+                            0.2, 3.0, 0.50, step=0.05,
                             label="Voice Expressiveness (CFG)",
-                            info="Lower = warmer/more expressive.",
+                            info="Chatterbox: ~0.50; F5: ~2.0.",
                         )
                         df_wet_slider = gr.Slider(
-                            0.0, 1.0, 0.85, step=0.05,
+                            0.0, 1.0, 1.0, step=0.05,
                             label="DeepFilterNet Denoising (Wet)",
-                            info="0.25 = Kokoro; 0.85 = Chatterbox; 1.0 = F5.",
+                            info="0.25 = Kokoro; 1.0 = Chatterbox / F5.",
                         )
                     with gr.Row():
                         reverb_slider = gr.Slider(
-                            0.0, 0.50, 0.05, step=0.01,
+                            0.0, 0.50, 0.0, step=0.01,
                             label="Reverb Amount",
-                            info="Abbey Road filtered room reverb.",
+                            info="0.0 = Dry studio vocal (ElevenLabs style); >0 = Abbey Road reverb.",
                         )
                         reverb_ir_dropdown = gr.Dropdown(
                             choices=[
@@ -598,24 +602,27 @@ def build_sandbox_tab() -> dict[str, Any]:
 
         # ── Interactive Event Wiring ──────────────────────────────────────────
 
-        def on_benchmark_change(choice: str):
+        def on_benchmark_change(choice: str, engine: str):
             """Switch between 5-min guided meditation and 5-min sleep story scripts."""
             is_sleep = "Sleep Story" in choice
             content_type = "sleep_story" if is_sleep else "guided_meditation"
             script = SLEEP_STORY_5MIN_SCRIPT if is_sleep else MEDITATION_5MIN_SCRIPT
             p = get_profile(content_type)
+            info = get_engine_info(engine)
+            base = info.get("base_engine", engine) if info else engine
+            reverb_val = 0.0 if base == "chatterbox" else p["reverb_amount"]
             return (
                 script,
                 gr.update(value=p["speed"]),
                 gr.update(value=p["duck_amount_db"]),
-                gr.update(value=p["reverb_amount"]),
+                gr.update(value=reverb_val),
                 gr.update(value=p["fade_in_sec"]),
                 gr.update(value=p["fade_out_sec"]),
             )
 
         benchmark_script_choice.change(
             fn=on_benchmark_change,
-            inputs=[benchmark_script_choice],
+            inputs=[benchmark_script_choice, engine_dropdown],
             outputs=[script_input, speed_slider, duck_slider, reverb_slider, fade_in_slider, fade_out_slider],
         )
 
@@ -639,10 +646,10 @@ def build_sandbox_tab() -> dict[str, Any]:
                 default_voice = F5_VOICE_DEFAULT or "Brittney"
 
             speed_val = presets.get("speed", 0.90)
-            reverb_val = presets.get("reverb_amount", 0.05 if base == "chatterbox" else 0.15)
-            df_val = presets.get("df_wet", 0.85 if base == "chatterbox" else (0.25 if base == "kokoro" else 1.0))
+            reverb_val = presets.get("reverb_amount", 0.0 if base == "chatterbox" else 0.15)
+            df_val = presets.get("df_wet", 1.0 if base == "chatterbox" else (0.25 if base == "kokoro" else 1.0))
             wpm_val = presets.get("target_wpm", 0)
-            cfg_val = presets.get("cfg_strength", 2.0)
+            cfg_val = presets.get("cfg_weight", presets.get("cfg_strength", 2.0))
             duck_val = presets.get("duck_amount_db", -16.0)
 
             return (

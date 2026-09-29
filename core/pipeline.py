@@ -177,7 +177,9 @@ class MeditationPipeline:
                 # ── Step 1: Parse script ────────────────────────────────────────
                 _progress(progress_cb, 0.0, "Parsing meditation script...")
 
-                if base_engine in ("f5", "chatterbox"):
+                if base_engine == "chatterbox":
+                    from core.chatterbox_tts.preprocessor import prepare_segments as _prepare
+                elif base_engine == "f5":
                     from core.f5_tts.preprocessor import prepare_segments as _prepare
                 else:
                     from core.kokoro_tts.preprocessor import prepare_segments as _prepare
@@ -205,7 +207,10 @@ class MeditationPipeline:
                         logger.info("TTS cache hit: reusing latest voice narration")
                 elif use_tts_cache:
                     from core.tts_cache import compute_cache_key, get_cached_tts
-                    f5_cfg = float(os.environ.get("MOODSCAPE_F5_CFG", "2.0"))
+                    if base_engine == "chatterbox":
+                        cfg_val = float(os.environ.get("MOODSCAPE_CHATTERBOX_CFG", "0.50"))
+                    else:
+                        cfg_val = float(os.environ.get("MOODSCAPE_F5_CFG", "2.0"))
                     microprosody = os.environ.get("MOODSCAPE_F5_MICROPROSODY", "0") == "1"
                     cache_voice_id = f5_voice_slug if base_engine in ("f5", "chatterbox") else voice
                     cache_key = compute_cache_key(
@@ -215,7 +220,7 @@ class MeditationPipeline:
                         voice=cache_voice_id,
                         speed=speed,
                         f5_target_wpm=f5_target_wpm,
-                        f5_cfg_strength=f5_cfg,
+                        f5_cfg_strength=cfg_val,
                         microprosody=microprosody,
                         seed=seed if seed_is_explicit else None,
                     )
@@ -373,7 +378,7 @@ class MeditationPipeline:
                     if base_engine == "kokoro":
                         df_wet = float(os.environ.get("MOODSCAPE_KOKORO_DF_WET", "0.25"))
                     elif base_engine == "chatterbox":
-                        df_wet = float(os.environ.get("MOODSCAPE_CHATTERBOX_DF_WET", "0.85"))
+                        df_wet = float(os.environ.get("MOODSCAPE_CHATTERBOX_DF_WET", "1.0"))
                     else:
                         df_wet = 1.0
                     voice_audio = enhance_voice_deepfilter(voice_audio, sr=mix_sr, wet=df_wet)
@@ -504,7 +509,12 @@ class MeditationPipeline:
                 elif base_engine == "chatterbox":
                     from core.chatterbox_tts.postprocessor import build_chatterbox_voice_chain
                     from core.kokoro_tts.postprocessor import apply_fx
-                    voice_chain = build_chatterbox_voice_chain(reverb_amount=reverb_amount, ir_name=reverb_ir)
+                    # ElevenLabs vocal delivery is 100% dry studio presence.
+                    # UI profiles default reverb to 0.15 for Kokoro, which turns Chatterbox
+                    # into an echo chamber. Chatterbox stays bone-dry (0.0) unless
+                    # explicitly overridden with MOODSCAPE_CHATTERBOX_REVERB=1.
+                    chatterbox_reverb = reverb_amount if os.environ.get("MOODSCAPE_CHATTERBOX_REVERB", "0") == "1" else 0.0
+                    voice_chain = build_chatterbox_voice_chain(reverb_amount=chatterbox_reverb, ir_name=reverb_ir)
                 else:
                     from core.kokoro_tts.postprocessor import build_voice_chain, apply_fx
                     voice_chain = build_voice_chain(reverb_amount=reverb_amount, ir_name=reverb_ir)
@@ -524,7 +534,8 @@ class MeditationPipeline:
                 # TTS engine output level.  We use -18 (not -16) because the
                 # final mix targets -16 LUFS and we need headroom for the
                 # music underneath.
-                voice_audio = normalize_loudness(voice_audio, mix_sr, target_lufs=-18.0)
+                if np.max(np.abs(voice_audio)) > 0.02:
+                    voice_audio = normalize_loudness(voice_audio, mix_sr, target_lufs=-18.0)
 
             if not is_vocals:
                 # ── Step 8: Apply music FX ──────────────────────────────────────
