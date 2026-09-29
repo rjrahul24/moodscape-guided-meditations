@@ -13,6 +13,8 @@ brew install espeak-ng                 # Kokoro G2P dependency
 python app.py                          # Gradio UI at http://localhost:7860
 ```
 
+**Model weights** live in the default user-level HF cache `~/.cache/huggingface/hub` (no `HF_HOME` override; there is no project-local `models/` or `checkpoints/` dir). Models actually used: `hexgrad/Kokoro-82M`, `SWivid/F5-TTS`, `charactr/vocos-mel-24khz`, `ResembleAI/chatterbox`, `mlx-community/DeepFilterNet-mlx`, `openai/whisper-large-v3-turbo` (F5 ref-transcription fallback), plus HTDemucs weights in `~/.cache/torch/hub/checkpoints`. Anything else in that cache is a leftover from a removed engine and safe to delete.
+
 `.env` must define `HF_TOKEN` and `GOOGLE_API_KEY`. `app.py` sets `TOKENIZERS_PARALLELISM=false` and `PYTORCH_ENABLE_MPS_FALLBACK=1` at startup.
 
 ## Build & Test
@@ -60,8 +62,6 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 │       ├── reference_audio/*.wav     #   speaker reference clips
 │       ├── reference_text/*.txt      #   transcripts (paired by slug)
 │       └── voices.toml               #   F5 multi-phase definitions
-├── models/                           # gitignored; all model weights
-│   └── hf_cache/                     # project-local HF cache
 ├── var/                              # gitignored; machine-local state
 │   └── originality/                  # corpus index + scripts for originality checks
 ├── docs/
