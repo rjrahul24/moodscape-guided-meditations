@@ -1,0 +1,49 @@
+label        = "Open Awareness"
+family       = "Presence"
+content_type = "meditation"
+music_tags   = ["drone", "sparse"]
+pause_ratio  = 0.40
+
+technique = """
+Choiceless awareness or open monitoring (Kabat-Zinn, Mahasi): releasing the
+anchor and opening attention to whatever arises — thoughts, sounds, sensations
+— without selecting or pursuing any of them. The practice is the spacious
+noticing itself, whatever appears.
+"""
+
+arc = [
+    "releasing the anchor",
+    "opening to the whole field of experience",
+    "noticing what wants attention",
+    "space between the moments",
+    "resting in open awareness",
+]
+
+safety = """
+Open awareness can feel unfamiliar or disorienting at first. Some people find
+breath-anchoring more comfortable, and that is perfectly valid. This practice
+works best when there is a baseline sense of safety; if it becomes overwhelming,
+return to a breath anchor or end the session. Drifting, falling asleep, or
+losing the thread is not failure — each moment of noticing is complete.
+"""
+
+banned = [
+    "control your thoughts",
+    "observe everything equally",
+    "achieve open awareness",
+    "let go of all anchors",
+    "pure awareness",
+    "transcend the mind",
+]
+
+[[angles]]
+name    = "the listening ear"
+imagery = ["sound arriving without effort", "near and far sounds at once", "ears open and receiving"]
+
+[[angles]]
+name    = "the body as space"
+imagery = ["your body as a room that sensations move through", "tingling, warmth, pressure arising and fading", "awareness touching each point as it appears"]
+
+[[angles]]
+name    = "the room around you"
+imagery = ["the walls holding the space", "the volume of air you sit in", "nothing forced, simply allowing what is present"]

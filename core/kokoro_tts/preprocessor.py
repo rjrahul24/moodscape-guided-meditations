@@ -4,7 +4,10 @@ Consolidates all preprocessing steps tailored to Kokoro-82M:
   1. Script parsing: [pause:Xs] markers and paragraph breaks → structured segments
   2. Text expansion: digits, abbreviations → spoken equivalents
   3. Meditation prosody: punctuation enhancement at natural phrasing boundaries
-  4. Token-aware chunking: sentences merged into 100–150 token chunks
+  4. merge_sentences_to_chunks() merges sentences into 100-150 token chunks,
+     but core/kokoro_tts/engine.py synthesizes per sentence via
+     split_into_sentences() instead — the merge step is not on the
+     synthesis path.
 """
 
 import os

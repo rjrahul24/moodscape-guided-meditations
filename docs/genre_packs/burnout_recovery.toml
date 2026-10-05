@@ -1,0 +1,49 @@
+label        = "Burnout Recovery"
+family       = "Stress & Anxiety"
+content_type = "meditation"
+music_tags   = ["warm", "sustained"]
+pause_ratio  = 0.35
+
+technique = """
+Restoration through permission-giving: naming what has been depleted (energy,
+hope, sense of purpose) without demanding immediate recovery. Uses body-based
+phrases ("your heart is learning to beat slowly again") to suggest restoration
+as a somatic process, not a willpower issue. Honors that burnout is real and
+recovery takes time.
+"""
+
+arc = [
+    "witnessing the depletion",
+    "permission to stop striving",
+    "the body's natural rhythms returning",
+    "small signs of renewal",
+    "patience with the process",
+]
+
+safety = """
+Never suggest burnout is the listener's fault or can be overcome with better
+habits. Do not frame this as a quick fix; burnout recovery is slow. Avoid
+motivational language or goals. Normalize that desire and energy may return
+unevenly, and that is not failure. This is a sanctuary, not a performance space.
+"""
+
+banned = [
+    "you just need to relax",
+    "get back in the game",
+    "this will pass quickly",
+    "you're stronger than this",
+    "push through",
+    "you should be grateful for your work",
+]
+
+[[angles]]
+name    = "the empty well slowly refilling"
+imagery = ["water rising drop by drop in darkness", "no rush, just gradual fullness", "depth returning to what was drained"]
+
+[[angles]]
+name    = "the winter tree preparing for spring"
+imagery = ["bare branches holding sap below the surface", "seeds inside bulbs underground", "life paused, not gone"]
+
+[[angles]]
+name    = "the fire banked for the night"
+imagery = ["embers still glowing beneath ash", "warmth held in reserve", "flame returning slowly when needed"]

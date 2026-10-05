@@ -1,0 +1,50 @@
+label        = "Anger & Frustration"
+family       = "Emotional"
+content_type = "meditation"
+music_tags   = ["dark", "steady"]
+pause_ratio  = 0.30
+
+technique = """
+Anger as data: attending to where frustration lives in the body without pushing
+it away or acting on it impulsively. Noticing what the anger is trying to tell
+you. Urge surfing (Marlatt & Gordon): observing the energy as it moves through
+you, meeting it with curiosity rather than judgment.
+"""
+
+arc = [
+    "acknowledging the energy present",
+    "anger is information about a boundary or need",
+    "where do you feel this in your body",
+    "observing without immediately acting",
+    "what is this telling you",
+]
+
+safety = """
+Anger is not a problem to solve in a meditation; it is a messenger. Never
+instruct the listener to suppress anger, "let it go," or calm down on command.
+Do not suggest that anger is irrational or that the listener should feel
+differently. This practice is not conflict resolution — it is space to listen to
+what the anger is saying before deciding what to do.
+"""
+
+banned = [
+    "let it go",
+    "calm down",
+    "don't be angry",
+    "anger is irrational",
+    "forgive and forget",
+    "release your anger",
+    "anger is destructive",
+]
+
+[[angles]]
+name    = "the storm"
+imagery = ["energy moving and building", "lightning without judgment of itself", "weather that passes through"]
+
+[[angles]]
+name    = "the clenched fist"
+imagery = ["strength held in your hand", "the tightness holding something true", "what it is protecting"]
+
+[[angles]]
+name    = "the boundary"
+imagery = ["a line drawn in earth", "something you will not cross", "what stands on the other side"]

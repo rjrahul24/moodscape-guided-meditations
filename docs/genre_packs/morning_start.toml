@@ -1,0 +1,47 @@
+label        = "Morning Start"
+family       = "Morning & Energy"
+content_type = "meditation"
+music_tags   = ["bright", "evolving"]
+pause_ratio  = 0.26
+
+technique = """
+Intention + embodied awareness: the listener wakes with gentle attention to the
+body, acknowledges what the day holds, and connects to a quality they want to
+bring (calm, confidence, patience). The technique is simple body awakening
+followed by invitational intention-setting. Not goal-chasing; direction-finding.
+"""
+
+arc = [
+    "gratitude for waking",
+    "the body becoming present",
+    "noticing what the day asks",
+    "finding a quality within",
+    "beginning from that ground",
+]
+
+safety = """
+Offer intention-setting; do not require it. Some people wake anxious and do not
+need a project. Give permission to skip the intention and simply rest in
+readiness. This is not about achievement or productivity. The goal is meeting
+the day from presence, not pressure.
+"""
+
+banned = [
+    "you must accomplish",
+    "today will be perfect",
+    "be productive",
+    "achieve more",
+    "push yourself",
+]
+
+[[angles]]
+name    = "the dawn"
+imagery = ["light gradually arriving", "the world emerging from dark", "readiness as natural as sunrise"]
+
+[[angles]]
+name    = "the morning coffee"
+imagery = ["warmth in your hands", "the first sip becoming awareness", "preparation for what's next"]
+
+[[angles]]
+name    = "the opened window"
+imagery = ["fresh air entering a room", "boundaries opening outward", "invitation to the day"]

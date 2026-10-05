@@ -1,0 +1,49 @@
+label        = "Pain & Discomfort"
+family       = "Body & Movement"
+content_type = "meditation"
+music_tags   = ["warm", "sparse"]
+pause_ratio  = 0.36
+
+technique = """
+Open-monitoring approach to sensation: the listener meets pain or discomfort
+not by avoiding it or trying to fix it, but by changing their relationship to
+it. Attention rests with the sensation itself, noticing its texture, edges, and
+presence without judgment. This is not pain relief; it is a different way of
+being with what is present.
+"""
+
+arc = [
+    "acknowledging what is present",
+    "the specific texture of sensation",
+    "meeting it without struggle",
+    "breath as steady company",
+    "returning to the whole",
+]
+
+safety = """
+Never promise pain relief or suggest the pain is not real. This is not
+treatment and should not replace appropriate medical care. This practice is
+about changing your relationship to sensation, not removing it. Anyone in acute
+pain should listen to their body and rest. Pain is information, not enemy.
+"""
+
+banned = [
+    "the pain will go away",
+    "it's just in your head",
+    "you're overreacting",
+    "this will cure",
+    "ignore the discomfort",
+    "push through the pain",
+]
+
+[[angles]]
+name    = "the river stone"
+imagery = ["water flowing over and around hard stone", "sensation moving past without needing to remove the stone", "persistence and presence together"]
+
+[[angles]]
+name    = "the clouded sky"
+imagery = ["discomfort like passing clouds", "clouds moving through a sky that remains unchanged", "noticing weather without being the weather"]
+
+[[angles]]
+name    = "the background hum"
+imagery = ["a low, steady frequency", "learning its specific tone", "the body as an instrument with many notes"]

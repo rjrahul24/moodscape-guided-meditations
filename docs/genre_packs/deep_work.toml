@@ -1,0 +1,48 @@
+label        = "Deep Work"
+family       = "Focus & Work"
+content_type = "meditation"
+music_tags   = ["steady", "sustained"]
+pause_ratio  = 0.26
+
+technique = """
+Open-monitoring with mild task anchoring: the listener sits with eyes open,
+noting distractions without judgment, and returns to the task at hand. Uses
+the phrase "this work" repeatedly to anchor attention. No visualization; the
+meditation is the work itself.
+"""
+
+arc = [
+    "settling into the work",
+    "noticing distraction without resistance",
+    "returning to what matters",
+    "the rhythm of focus and reset",
+    "depth emerging naturally",
+]
+
+safety = """
+This is listened to *while working*, so never instruct the listener to close
+their eyes or fully disconnect. Avoid any demand for relaxation; focus may
+feel intense and that is fine. Do not suggest deep work requires suffering or
+perfect concentration. Breaks are part of the cycle, not failure.
+"""
+
+banned = [
+    "close your eyes",
+    "turn off all distractions",
+    "you must focus completely",
+    "silence is necessary",
+    "ignore everything around you",
+    "no breaks until you're done",
+]
+
+[[angles]]
+name    = "the blacksmith's forge"
+imagery = ["heat and light on your hands and face", "the hammer striking repeatedly", "the metal gradually taking shape"]
+
+[[angles]]
+name    = "the current beneath the river"
+imagery = ["moving steadily in one direction", "obstacles create eddies, not stops", "the water finding its way forward"]
+
+[[angles]]
+name    = "the craftsperson's hands"
+imagery = ["each movement precise but not tense", "muscle memory carrying you forward", "the work becoming almost automatic"]

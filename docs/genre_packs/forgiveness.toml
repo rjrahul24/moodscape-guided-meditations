@@ -1,0 +1,52 @@
+label        = "Forgiveness"
+family       = "Emotional"
+content_type = "meditation"
+music_tags   = ["warm", "sustained"]
+pause_ratio  = 0.34
+
+technique = """
+Releasing resentment (not obligation to forgive): examining what the grudge is
+costing you, not what is owed to the other person. An optional practice, fully
+within the listener's control. Forgiveness is not reconciliation, not
+exoneration, not forgetting — it is the choice to release the grip holding
+bitterness.
+"""
+
+arc = [
+    "naming what happened without minimising",
+    "feeling what resentment does in your body",
+    "the cost of the grip on the hurt",
+    "considering what release might feel like",
+    "your choice remains yours",
+]
+
+safety = """
+Forgiveness is not a requirement and not owed to anyone. Some things are not
+forgivable, and the practice must leave room for that. Never suggest the listener
+should forgive, owes the person forgiveness, or is failing by withholding it.
+Forgiveness that is coerced is not forgiveness — it is performance. If this
+practice does not resonate, that is wisdom, not resistance. Honouring boundaries
+is not the same as holding a grudge.
+"""
+
+banned = [
+    "forgive and forget",
+    "you must forgive",
+    "they deserve your forgiveness",
+    "holding grudges will hurt you",
+    "you owe them forgiveness",
+    "forgive them for your own peace",
+    "everyone deserves a second chance",
+]
+
+[[angles]]
+name    = "the knot untying"
+imagery = ["twisted rope slowly loosening", "not by force but by patient work", "each strand eventually free"]
+
+[[angles]]
+name    = "the water flowing past the stone"
+imagery = ["what was rigid sitting in the current", "the water not trying to change the stone", "simply moving around and onward"]
+
+[[angles]]
+name    = "the locked door opening"
+imagery = ["a key you have held", "the door swinging open reveals the room beyond", "whether to walk through is your choice"]

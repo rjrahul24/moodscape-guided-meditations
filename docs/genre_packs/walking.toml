@@ -1,0 +1,47 @@
+label        = "Walking"
+family       = "Body & Movement"
+content_type = "meditation"
+music_tags   = ["warm", "steady"]
+pause_ratio  = 0.22
+
+technique = """
+Walking meditation: attention rests on the simple act of stepping, the shift of
+weight from one foot to the other, the contact of sole with ground. No need to
+slow down; the pace is yours. Senses remain open to the place you're walking
+through — the ground, air, the world around you.
+"""
+
+arc = [
+    "arriving where you stand",
+    "feeling the ground beneath you",
+    "the alternating rhythm of steps",
+    "openness to the space around",
+    "walking with ease",
+]
+
+safety = """
+The listener's eyes are open and they are moving in the world. Keep attention
+integrated with the environment — not withdrawn from it. Never ask them to
+close their eyes, narrow focus, or retreat inward. Safety awareness is always
+part of the practice.
+"""
+
+banned = [
+    "close your eyes",
+    "disappear into yourself",
+    "escape from",
+    "tune out the world",
+    "trance state",
+]
+
+[[angles]]
+name    = "the pilgrim's path"
+imagery = ["ground walked many times before", "each step a repetition", "a familiar route revealing itself anew"]
+
+[[angles]]
+name    = "the explorer's wandering"
+imagery = ["ground beneath your feet unknown", "each step a small discovery", "terrain unfolding step by step"]
+
+[[angles]]
+name    = "the temple's circumambulation"
+imagery = ["walking in a slow circle", "returning to the same place again and again", "the practice in the repetition itself"]

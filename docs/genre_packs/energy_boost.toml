@@ -1,0 +1,47 @@
+label        = "Energy Boost"
+family       = "Morning & Energy"
+content_type = "meditation"
+music_tags   = ["bright", "busy"]
+pause_ratio  = 0.20
+
+technique = """
+Vibrational activation: attention moves through the body, awakening energy
+centers with internal focus and engaged breathing. This is not hype or adrenaline
+—it is a practice of noticing and amplifying the energy already present. The
+listener emerges alert, not wired.
+"""
+
+arc = [
+    "centering in the core",
+    "awakening through the limbs",
+    "opening the chest and voice",
+    "full-body activation",
+    "sustained aliveness",
+]
+
+safety = """
+Energising meditation is not personal training or athletic coaching. Never use
+language of pushing, grinding, or exceeding limits. For people managing health
+conditions that limit activity, this is about internal energy, not exertion.
+Anyone who feels overstimulated should pause and return to gentler practice.
+"""
+
+banned = [
+    "push harder",
+    "no pain no gain",
+    "grind it out",
+    "feel the burn",
+    "beat your limit",
+]
+
+[[angles]]
+name    = "the lightning"
+imagery = ["energy passing through the body", "electricity from root to crown", "radiance moving outward"]
+
+[[angles]]
+name    = "the rising sun"
+imagery = ["heat and light building", "warmth spreading outward", "brightness increasing"]
+
+[[angles]]
+name    = "the drum"
+imagery = ["a steady, strong pulse", "rhythm that builds momentum", "power that is present"]

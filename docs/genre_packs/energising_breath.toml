@@ -1,0 +1,48 @@
+label        = "Energising Breath"
+family       = "Breathwork"
+content_type = "meditation"
+music_tags   = ["bright", "steady"]
+pause_ratio  = 0.38
+
+technique = """
+Kapalabhati-style breath: a burst of sharper exhalations that engage the core,
+with passive inhales. Not hyperventilation — this is controlled, rhythmic
+engagement of the diaphragm. Start slowly and stay within your capacity. The
+energy comes from the engagement, not from going faster.
+"""
+
+arc = [
+    "waking the diaphragm",
+    "learning the single burst",
+    "multiple rounds building gradually",
+    "pausing to feel the after-effect",
+    "integration and alertness",
+]
+
+safety = """
+Energising breath is vigorous but not hyperventilation. Always start slowly,
+build gradually, and stop if you feel lightheaded or unwell. This is not for
+people with high blood pressure, eye conditions, or certain injuries. Never
+describe this as competitive or a challenge to go faster. Pace is yours; listen
+to your body.
+"""
+
+banned = [
+    "hyperventilate yourself awake",
+    "breathe as fast as you can",
+    "push yourself to the limit",
+    "see how many you can do",
+    "go harder with each round",
+]
+
+[[angles]]
+name    = "the blacksmith's bellows"
+imagery = ["sharp, purposeful movements", "stoking heat with intention", "controlled force"]
+
+[[angles]]
+name    = "the boxer's breathing"
+imagery = ["a sharp exhale with each movement", "focus gathering with breath", "power without strain"]
+
+[[angles]]
+name    = "the wind through a canyon"
+imagery = ["air moving with visible purpose", "gusts that have direction", "natural power that builds and settles"]

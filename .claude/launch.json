@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "moodscape",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["app.py"],
+      "port": 7860
+    },
+    {
+      "name": "auto-tab-preview",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["scripts/preview_auto_tab.py"],
+      "port": 7861
+    }
+  ]
+}

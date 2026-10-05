@@ -13,6 +13,8 @@ brew install espeak-ng                 # Kokoro G2P dependency
 python app.py                          # Gradio UI at http://localhost:7860
 ```
 
+**Model weights** live in the default user-level HF cache `~/.cache/huggingface/hub` (no `HF_HOME` override; there is no project-local `models/` or `checkpoints/` dir). Models actually used: `hexgrad/Kokoro-82M`, `SWivid/F5-TTS`, `charactr/vocos-mel-24khz`, `ResembleAI/chatterbox`, `mlx-community/DeepFilterNet-mlx`, `openai/whisper-large-v3-turbo` (F5 ref-transcription fallback), plus HTDemucs weights in `~/.cache/torch/hub/checkpoints`. Anything else in that cache is a leftover from a removed engine and safe to delete.
+
 `.env` must define `HF_TOKEN` and `GOOGLE_API_KEY`. `app.py` sets `TOKENIZERS_PARALLELISM=false` and `PYTORCH_ENABLE_MPS_FALLBACK=1` at startup.
 
 ## Build & Test
@@ -37,21 +39,34 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 │   ├── qa_monitor.py                 # output validation
 │   ├── stem_separator.py             # Demucs source separation
 │   ├── text_utils.py · breath_sounds.py · stereo_upmix.py · deepfilter_enhancer.py
+│   ├── genres.py                     # Genre pack loader, angle rotation, GenrePack dataclass
+│   ├── originality.py                # Corpus management, TF-IDF similarity scoring, avoid-lists
+│   ├── background_tags.py            # Lazy background music tagging (measured + declared)
 │   ├── kokoro_tts/  f5_tts/             # TTS engines (engine + preproc + postproc + voices)
 │   ├── lyria/                             # Lyria RealTime music generation (Google API)
-│   └── upload_music/                      # Background instrumental (engine + arrange/length-fit)
-├── scripts/                          # generate.py · separate_worker.py · generate_breath_samples.py
+│   ├── upload_music/                      # Background instrumental (engine + arrange/length-fit)
+│   ├── script_gen/                    # prompt → validated script (planner + generator + judge + linter)
+│   │   └── planner.py                 # Pass 0: genre pack + angle → prose creative brief
+│   ├── auto_generate.py               # orchestrator: genre → planner → script → music → pipeline
+│   ├── background_picker.py           # tag-filtered pick from assets/backgrounds/
+│   ├── streaming_run.py               # threaded progress streaming for the UI
+│   └── auto_tab.py                    # Gradio "Auto-Generate" tab (peer of "Manual" under app.py's gr.Tabs())
+├── scripts/                          # generate.py · separate_worker.py · generate_breath_samples.py · tag_backgrounds.py · eval_genres.py
 ├── tests/unit/  tests/integration/
+│   └── conftest.py                   # pytest fixtures for genre tests
 ├── assets/                           # tracked in git
 │   ├── breath_sounds/                # [breath]/[inhale]/[exhale] samples
 │   ├── impulse_responses/            # convolution reverb IRs
+│   ├── backgrounds/                  # instrumental background tracks + tags.toml
 │   └── speakers/                     # F5-TTS voice pool
 │       ├── reference_audio/*.wav     #   speaker reference clips
 │       ├── reference_text/*.txt      #   transcripts (paired by slug)
 │       └── voices.toml               #   F5 multi-phase definitions
-├── models/                           # gitignored; all model weights
-│   └── hf_cache/                     # project-local HF cache
-└── docs/                             # see Where to Look below
+├── var/                              # gitignored; machine-local state
+│   └── originality/                  # corpus index + scripts for originality checks
+├── docs/
+│   ├── genre_packs/                  # 46 TOML pack definitions + README (field contract, tag vocabulary, prose guidelines)
+│   └── ...                           # other docs (see Where to Look below)
 ```
 
 ## Pipeline Flow (`core/pipeline.py :: MeditationPipeline.generate()`)
@@ -71,6 +86,57 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 
 Full breakdown with parameters: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## Auto-Generation Flow (`core/auto_generate.py :: run()`)
+
+Genre and duration band in, finished meditation out, with no human step.
+
+0. **Preflight** → `preflight()` verifies all LLM models exist (Ollama
+   `/api/tags`) and names any missing model before planning starts (fail in 2s,
+   not 5 min)
+1. **Load pack + rotate angle** → `genres.load_pack()` validates the genre
+   pack (required fields, known tags, valid `content_type`), then
+   `genres.pick_angle()` selects one of 3 distinct angles, excluding recently
+   used ones for this genre; `originality.avoid_terms()` extracts a do-not-reuse
+   list from the 5 most recent same-genre scripts (avoid-list), 100 same-genre scripts
+   (cosine comparison), and 500 all-genre scripts (IDF weighting)
+2. **Plan** (Pass 0) → `script_gen/planner.py :: plan()` takes the pack's
+   technique, arc, imagery angle, pause_ratio, and safety rules, plus the
+   avoid-list and duration band, and returns a **prose creative brief**
+   (plain text, no JSON) that shapes what the writer will generate
+3. **Write** (Pass 1) → `script_gen/generator.py :: draft()` ingests the brief,
+   the formatting guide, and safety rules, and returns a full script using
+   generator model (`MOODSCAPE_SCRIPT_GENERATOR` — shared load with planner)
+4. **Review** (Pass 2) → an *independent* judge model (`MOODSCAPE_SCRIPT_JUDGE`)
+   (`script_gen/judge.py :: review()`) returns a revised script plus a
+   changelog — it revises, it does not score
+5. **Validate** → `script_gen/linter.py :: check()` (format + mental-health
+   safety + originality + banned phrases) and `script_gen/duration.py`
+   (runtime estimate, no rendering)
+6. **Repair loop** → fatal violations go back to the judge as targeted
+   instructions, bounded by `MOODSCAPE_SCRIPT_MAX_REPAIRS` (default 2); advisory
+   violations render anyway and seed the next run's avoid-list
+7. **Pick music** → `background_picker.pick_background(prefer_tags=pack.music_tags)`
+   filters by the pack's two music tags, excluding recently used tracks
+8. **Render** → `MeditationPipeline.generate()`, unchanged, on the golden path
+   (F5 + uploaded background)
+9. **Calibrate** → measures the rendered file's actual duration and calls
+   `script_gen/duration.py :: log_estimate_accuracy()`, closing the loop that
+   calibrates `DEFAULT_WPM`; a failed duration read never fails a job that
+   already produced audio
+10. **Append corpus** → `originality.add_to_corpus(script, genre=pack.slug, angle=selected_angle)`
+    records the rendered script for use in future avoid-lists
+11. **Persist** → `<name>.wav`, `<name>.script.txt`, `<name>.meta.json`
+    (including `actual_sec` and `estimate_ratio`) as siblings
+
+The UI exposes this as an "Auto-Generate" tab (`core/auto_tab.py`), a peer
+of the "Manual" tab under one `gr.Tabs()` in `app.py` (Manual first, so it
+stays the default). Its generator/judge model calls retry transient
+failures (connection errors, timeouts, 429, 5xx) via
+`MOODSCAPE_SCRIPT_MAX_RETRIES` — see the adapter-asymmetry gotcha in
+[docs/GOTCHAS.md](docs/GOTCHAS.md).
+
+Full detail: [docs/auto_generation/README.md](docs/auto_generation/README.md).
+
 ## Code Conventions
 
 - `PascalCase` classes · `snake_case` functions · `UPPER_SNAKE_CASE` constants · `_leading_underscore` private
@@ -86,13 +152,33 @@ Full breakdown with parameters: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Top Gotchas
 
-The six that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
+The eight that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
 
 - **MPS bus error on exit** → `atexit.register(lambda: os._exit(0))` in `app.py` — do not remove.
 - **Kokoro forced to CPU** → MPS causes deallocation bus errors. British voices (`bf_*`, `bm_*`) need `KPipeline(lang_code="b")`.
 - **No pedalboard `Limiter`** → pedalboard 0.9.23's `Limiter` inflates sub-threshold signals ~+4.75 dB and adds broadband "static". It was removed from all music + master chains. Peak control is `mixer.true_peak_limit()` at export (LUFS-normalize → true-peak limit to −1 dBTP).
 - **Breathing duck** → `mixer.mix()` uses `apply_breathing_duck` (deep gradual S-curve, rises in pauses). Bed/duck levels are auto-calibrated per session (`calibrate_music_bed`, targets: bed 14.5 LU under voice in pauses, 30.5 LU under during speech); `MOODSCAPE_ADAPTIVE_BED=0` restores the fixed −16/−16 constants. The old multiband/`hold_ms` reactive ducker has been removed.
 - **Intro fade-in** → default **1.5 s**, gentle exponential (rising steepness **2.0**, not 4.0). A 3 s steepness-4 fade read as "2–3 s of silence then music". `apply_fades` uses steepness 2.0 for the rising curve only (fade-out stays 4.0). Slider in `app.py`, default in `pipeline.generate`.
+- **Fatal vs advisory violations** → `script_gen/linter.py` fails the job for
+  safety hard-blocks and malformed markers, but renders anyway (with a warning)
+  for duration drift and style issues. Treating every violation as fatal makes
+  a weaker local model unusable; treating none as fatal lets a safety failure
+  reach audio. Do not flatten this distinction.
+- **Ollama ignores `keep_alive` on `/v1`** → The `/v1/chat/completions` endpoint
+  silently disregards the `keep_alive` parameter; it is honoured only on
+  `/api/*` endpoints. `ScriptEngine.unload()` exists specifically to call the
+  native `/api/generate` with `keep_alive=0` for Ollama after each stage,
+  freeing 18 GB. Without this, an 18 GB planner/writer model stays resident
+  while F5-TTS (14 GB) loads, forcing 32 GB → swap, which is where the MPS bus
+  errors live. **Call `unload()` after each LLM stage.**
+- **Originality repair depends on `<problems>` stripping** → The judge repair
+  loop passes `check_originality()` violations into the prompt wrapped in
+  `<problems>…</problems>` so the model can see which phrases failed. But a weak
+  model frequently echoes that block verbatim, poisoning the script with the
+  violation report itself. `parse_judge_response()` strips `<problems>` *before*
+  anything else (commit `c372b18`). Removing that strip makes repair recursive
+  — violations compound, budget exhausts, and a fixable script fails. **This
+  behaviour is load-bearing and must not be removed.**
 
 ## Research Experiment Flags
 
@@ -116,6 +202,8 @@ Rejected research items (don't revisit): true-peak-limiter removal (false premis
 |------|-------|
 | Full pipeline, FX params, QA thresholds, memory patterns | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Engine internals (Kokoro, F5, Lyria, Pedalboard) | [docs/model_implementation_guides/](docs/model_implementation_guides/) |
+| Genre taxonomy, packs, music tagging, two-tier originality | [docs/auto_generation/README.md](docs/auto_generation/README.md) |
+| Genre pack field contract, tag vocabulary, prose guidelines | [docs/genre_packs/README.md](docs/genre_packs/README.md) |
 | Prompt writing per engine | [docs/prompting_guides/](docs/prompting_guides/) |
 | Mix / post-processing details | [docs/optimization_and_processing/](docs/optimization_and_processing/) |
 | Component & class map | [docs/COMPONENT_REGISTRY.md](docs/COMPONENT_REGISTRY.md) |

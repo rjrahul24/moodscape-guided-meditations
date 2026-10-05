@@ -176,6 +176,11 @@ def calculate_loudness_gain(
     if audio.shape[-1] < min_samples:
         return 1.0
 
+    # Guard against near-silence: if peak amplitude is negligible, do not boost into white noise
+    peak = float(np.max(np.abs(audio)))
+    if peak < 0.01:
+        return 1.0
+
     audio_for_meter = audio.T if audio.ndim == 2 else audio
     try:
         loudness = meter.integrated_loudness(audio_for_meter)
@@ -185,10 +190,13 @@ def calculate_loudness_gain(
     if not np.isfinite(loudness):
         return 1.0
 
-    if abs(actual_target - loudness) > 40.0:
+    # If the track is extremely quiet (silence/ambient floor), avoid catastrophic noise amplification
+    if loudness < -60.0 or abs(actual_target - loudness) > 30.0:
         return 1.0
 
     gain_db = actual_target - loudness
+    # Clamp positive gain to at most +18.0 dB (prevents amplifying low-level noise floors into hiss)
+    gain_db = min(gain_db, 18.0)
     gain_linear = 10.0 ** (gain_db / 20.0)
     return float(gain_linear)
 

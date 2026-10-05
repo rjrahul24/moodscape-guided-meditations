@@ -1,0 +1,47 @@
+label        = "Coherent Breathing"
+family       = "Breathwork"
+content_type = "meditation"
+music_tags   = ["drone", "steady"]
+pause_ratio  = 0.45
+
+technique = """
+Resonant breathing synchronized to approximately 5.5 breaths per minute: inhale
+and exhale at equal lengths, usually around five counts each. This pace aligns
+with the body's natural vagal tone, often producing a calm state without
+requiring forceful holds or complex patterns. Count gently; the breath leads.
+"""
+
+arc = [
+    "finding the breath's own rhythm",
+    "learning the five-count pattern",
+    "guided rounds at coherent pace",
+    "the rhythm becoming automatic",
+    "sustained ease",
+]
+
+safety = """
+No holds, no pushing. If the five-count feels too long, shorten it. If a
+shorter rhythm feels right, use it. This is invitation, not instruction. Anyone
+who feels uncomfortable should return to their natural breathing. The practice
+is finding ease, not achieving a target.
+"""
+
+banned = [
+    "control your breathing",
+    "force yourself to this pace",
+    "if it feels wrong push harder",
+    "you must hold",
+    "speed up your breathing",
+]
+
+[[angles]]
+name    = "the ocean's deep breathing"
+imagery = ["tides that rise and fall at their own pace", "a rhythm that has lasted millennia", "breathing that is vastly slow"]
+
+[[angles]]
+name    = "the bellows of a cathedral organ"
+imagery = ["steady, even pressures", "one note rising and falling", "a sound that resonates"]
+
+[[angles]]
+name    = "the pendulum in a grandfather clock"
+imagery = ["a rhythm that is ancient and reliable", "each swing the same", "time marked by repetition"]

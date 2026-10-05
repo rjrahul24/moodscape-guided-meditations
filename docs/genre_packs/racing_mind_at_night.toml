@@ -1,0 +1,48 @@
+label        = "Racing Mind at Night"
+family       = "Sleep & Rest"
+content_type = "meditation"
+music_tags   = ["warm", "steady"]
+pause_ratio  = 0.30
+
+technique = """
+Noting and release without judgment: the listener names each thought or worry
+as it arises — not to stop thinking, but to observe it pass. We use "it is
+a thought about X" rather than "I am thinking of X," creating distance without
+fighting.
+"""
+
+arc = [
+    "settling into restlessness",
+    "noticing the pattern of thoughts",
+    "releasing them one at a time",
+    "the space between thoughts",
+    "quieter arrival of sleep",
+]
+
+safety = """
+Do not instruct the listener to stop thinking or to empty the mind — this will
+amplify frustration. Normalize racing thoughts as a body in transition. Offer
+permission to get up and return to sleep later, rather than framing wakefulness
+as failure. Never suggest the thoughts are unimportant.
+"""
+
+banned = [
+    "clear your mind",
+    "stop thinking about",
+    "ignore these thoughts",
+    "empty your head",
+    "relax and forget",
+    "this will all be solved by morning",
+]
+
+[[angles]]
+name    = "clouds passing a moon"
+imagery = ["each cloud a thought drifting across", "the moon unchanged beneath", "shapes that appear and dissolve"]
+
+[[angles]]
+name    = "a river carrying leaves"
+imagery = ["each leaf a thought letting go", "the current steadier than the leaves", "no leaf stays in view for long"]
+
+[[angles]]
+name    = "the highway at night"
+imagery = ["headlights and taillights moving past", "you standing still at the edge", "traffic that does not concern you"]
