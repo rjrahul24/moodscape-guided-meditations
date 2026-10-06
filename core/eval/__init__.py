@@ -4,6 +4,7 @@ Every module imports without torch or Gradio; heavy dependencies are imported
 inside the functions that need them.
 """
 
+from core.eval.ab import build_pairs, cut_excerpts, find_case_audio, level_match, score, sign_test_p
 from core.eval.mix_metrics import loudness, mix_metrics, true_peak_dbtp
 from core.eval.report import compute_run_metrics, summarize
 from core.eval.script_metrics import script_metrics
@@ -45,4 +46,10 @@ __all__ = [
     "load_testset",
     "compute_run_metrics",
     "summarize",
+    "build_pairs",
+    "cut_excerpts",
+    "find_case_audio",
+    "level_match",
+    "score",
+    "sign_test_p",
 ]
