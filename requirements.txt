@@ -22,6 +22,7 @@ mlx-audio  # DeepFilterNet MLX for neural speech denoising
 accelerate>=0.26.0
 f5-tts>=1.0.0
 silero-vad
+num2words>=0.5.14   # core/eval: spell digits in CER/WER normalisation
 rapidfuzz>=3.9      # core/eval: CER/WER Levenshtein
 # protobuf: onnx 1.21+ (via s3tokenizer/f5-tts) needs builder (added in 3.20).
 # google-api-core 2.30+ needs >=4.25.8. descript-audiotools & tensorboard 2.9

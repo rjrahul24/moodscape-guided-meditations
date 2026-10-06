@@ -5,6 +5,7 @@ text; word timestamps plus frame energy find silences that land inside a word
 or mid-sentence (F5's mid-word gaps and stalls).
 """
 
+import contextlib
 import re
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -13,8 +14,9 @@ import numpy as np
 
 from core.script_gen.linter import _normalize_apostrophes, _strip_tags
 
-_SENTENCE_END = re.compile(r"[.!?][\"')\]]*$")
-_CLAUSE_END = re.compile(r"[.!?,;:][\"')\]]*$")
+_CLOSERS = "\"'\u2019\u201d)\\]"
+_SENTENCE_END = re.compile(rf"[.!?\u2026][{_CLOSERS}]*$")
+_CLAUSE_END = re.compile(rf"[.!?,;:\u2026\u2014\u2013][{_CLOSERS}]*$")
 
 
 @dataclass
@@ -32,6 +34,38 @@ class Transcript:
 
 class Transcriber(Protocol):
     def transcribe(self, audio: np.ndarray, sr: int) -> Transcript: ...
+
+
+@contextlib.contextmanager
+def _torchcodec_disabled():
+    """Make transformers' ASR pipeline treat torchcodec as unavailable.
+
+    The pipeline's preprocess does `import torchcodec` whenever
+    `is_torchcodec_available()` is true. torchcodec 0.10 is linked against
+    ffmpeg 4 (libavutil.56) but Homebrew ships ffmpeg 8.1, so that import
+    raises OSError. We pass raw numpy audio, so no decoding is needed.
+    Scoped to the pipeline call only; torchcodec stays installed for f5-tts.
+    """
+    from transformers.pipelines import automatic_speech_recognition as asr
+
+    original = asr.is_torchcodec_available
+    asr.is_torchcodec_available = lambda: False
+    try:
+        yield
+    finally:
+        asr.is_torchcodec_available = original
+
+
+def _words_from_chunks(chunks: list[dict], duration: float) -> list[Word]:
+    """Build Words; a missing end falls back to the next start, then the duration."""
+    valid = [c for c in chunks if c.get("timestamp") and c["timestamp"][0] is not None]
+    words: list[Word] = []
+    for i, c in enumerate(valid):
+        start, end = c["timestamp"][0], c["timestamp"][1]
+        if end is None:
+            end = valid[i + 1]["timestamp"][0] if i + 1 < len(valid) else duration
+        words.append(Word(c["text"].strip(), float(start), float(max(end, start))))
+    return words
 
 
 class WhisperTranscriber:
@@ -60,17 +94,14 @@ class WhisperTranscriber:
             self._load()
         mono = audio.mean(axis=1) if audio.ndim == 2 else audio
         audio16 = resample_poly(mono.astype(np.float64), 16000, sr).astype(np.float32)
-        result = self._pipe(
-            {"raw": audio16, "sampling_rate": 16000},
-            return_timestamps="word",
-            chunk_length_s=30,
-            generate_kwargs={"language": "english"},
-        )
-        words = [
-            Word(c["text"].strip(), float(c["timestamp"][0]), float(c["timestamp"][1] or c["timestamp"][0]))
-            for c in result.get("chunks", [])
-            if c.get("timestamp") and c["timestamp"][0] is not None
-        ]
+        with _torchcodec_disabled():
+            result = self._pipe(
+                {"raw": audio16, "sampling_rate": 16000},
+                return_timestamps="word",
+                chunk_length_s=30,
+                generate_kwargs={"language": "english"},
+            )
+        words = _words_from_chunks(result.get("chunks", []), len(mono) / float(sr))
         return Transcript(result["text"].strip(), words)
 
     def unload(self) -> None:
@@ -129,26 +160,42 @@ def _silent_frames(audio: np.ndarray, sr: int, frame_ms: float = 10.0) -> np.nda
     return rms_db < threshold
 
 
-def _longest_run(mask: np.ndarray) -> int:
-    best = run = 0
-    for value in mask:
-        run = run + 1 if value else 0
-        best = max(best, run)
-    return best
+def _silent_runs(mask: np.ndarray) -> list[tuple[int, int]]:
+    """(start, end_exclusive) of each run of True in mask."""
+    runs: list[tuple[int, int]] = []
+    start = None
+    for i, value in enumerate(mask):
+        if value and start is None:
+            start = i
+        elif not value and start is not None:
+            runs.append((start, i))
+            start = None
+    if start is not None:
+        runs.append((start, len(mask)))
+    return runs
 
 
 def internal_gaps(audio: np.ndarray, sr: int, words: list[Word], *, min_gap_ms: float = 250.0) -> int:
-    """Silences > min_gap_ms inside a word, or between words of one clause."""
+    """Silences >= min_gap_ms strictly inside a word span, or between words of one clause.
+
+    Silence touching a word span's edge is ignored (Whisper spans are loose and
+    absorb intended pauses); between words, the frames over the gap must
+    themselves be silent for min_gap_ms.
+    """
     mono = audio.mean(axis=1) if audio.ndim == 2 else audio
     silent = _silent_frames(mono, sr)
     frames_needed = int(min_gap_ms / 10.0)
     count = 0
     for word in words:
         a, b = int(word.start * 100), int(word.end * 100)
-        if _longest_run(silent[a:b]) >= frames_needed:
+        span = silent[a:b]
+        if any(e - s >= frames_needed and s > 0 and e < len(span) for s, e in _silent_runs(span)):
             count += 1
     for prev, nxt in zip(words, words[1:]):
-        if not _CLAUSE_END.search(prev.text) and (nxt.start - prev.end) * 1000.0 > min_gap_ms:
+        if _CLAUSE_END.search(prev.text):
+            continue
+        gap = silent[int(prev.end * 100) : int(nxt.start * 100)]
+        if any(e - s >= frames_needed for s, e in _silent_runs(gap)):
             count += 1
     return count
 
