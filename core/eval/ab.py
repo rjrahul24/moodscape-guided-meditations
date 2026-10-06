@@ -18,6 +18,7 @@ from core.eval.mix_metrics import loudness
 POSITIONS = (("start", 0.10), ("middle", 0.50), ("end", 0.85))
 SHIP_RATE = 0.60
 SHIP_P = 0.05
+TIE_CHOICES = ("SAME", "TIE", "=")
 
 
 def find_case_audio(run_dir: Path) -> dict[str, Path]:
@@ -76,10 +77,14 @@ def build_pairs(
         b_audio, sr_b = sf.read(chal[case], dtype="float32")
         if sr_a != sr_b:
             raise ValueError(f"{case}: sample rates differ ({sr_a} vs {sr_b})")
-        for (pos, a_ex, a_tr), (_pos, b_ex, b_tr) in zip(
-            cut_excerpts(a_audio, sr_a, excerpt_sec=excerpt_sec),
-            cut_excerpts(b_audio, sr_b, excerpt_sec=excerpt_sec),
-        ):
+        common = min(len(a_audio), len(b_audio))
+        a_audio, b_audio = a_audio[:common], b_audio[:common]
+        a_parts = cut_excerpts(a_audio, sr_a, excerpt_sec=excerpt_sec)
+        b_parts = cut_excerpts(b_audio, sr_b, excerpt_sec=excerpt_sec)
+        if a_parts[0][2]:  # shorter than one excerpt: one whole-file pair, not three identical ones
+            a_parts = [("whole", a_parts[0][1], True)]
+            b_parts = [("whole", b_parts[0][1], True)]
+        for (pos, a_ex, a_tr), (_pos, b_ex, b_tr) in zip(a_parts, b_parts):
             arms = [("baseline", a_ex), ("challenger", b_ex)]
             rng.shuffle(arms)
             pair_id = f"{index:02d}"
@@ -106,11 +111,13 @@ def sign_test_p(wins: int, n: int) -> float:
 
 def score(ab_dir: Path) -> dict:
     key = json.loads((Path(ab_dir) / "key.json").read_text(encoding="utf-8"))["pairs"]
-    challenger = baseline = ties = 0
+    challenger = baseline = ties = unanswered = 0
     by_position: dict[str, dict[str, int]] = {}
     with open(Path(ab_dir) / "sheet.csv", newline="", encoding="utf-8") as fh:
         for row in csv.DictReader(fh):
             choice = row["choice"].strip().upper()
+            if row["pair"] not in key:
+                raise ValueError(f"Pair {row['pair']!r} in sheet.csv is not in key.json")
             entry = key[row["pair"]]
             bucket = by_position.setdefault(entry["position"], {"challenger": 0, "baseline": 0, "ties": 0})
             if choice in ("A", "B"):
@@ -120,17 +127,23 @@ def score(ab_dir: Path) -> dict:
                 else:
                     baseline += 1
                 bucket[winner] += 1
-            elif choice:
+            elif choice in TIE_CHOICES:
                 ties += 1
                 bucket["ties"] += 1
+            elif choice:
+                raise ValueError(f"Pair {row['pair']}: invalid choice {row['choice']!r} (use A, B or same)")
+            else:
+                unanswered += 1
     n = challenger + baseline
     rate = challenger / n if n else 0.0
     p = sign_test_p(challenger, n)
-    if n and rate >= SHIP_RATE and p < SHIP_P:
+    if unanswered:
+        verdict = "INCOMPLETE"
+    elif n and rate >= SHIP_RATE and p < SHIP_P:
         verdict = "SHIP"
     elif n and (1 - rate) >= SHIP_RATE and sign_test_p(baseline, n) < SHIP_P:
         verdict = "NO-SHIP"
     else:
         verdict = "INCONCLUSIVE"
-    return {"challenger_wins": challenger, "baseline_wins": baseline, "ties": ties,
+    return {"challenger_wins": challenger, "baseline_wins": baseline, "ties": ties, "unanswered": unanswered,
             "rate": round(rate, 3), "p": round(p, 4), "verdict": verdict, "by_position": by_position}

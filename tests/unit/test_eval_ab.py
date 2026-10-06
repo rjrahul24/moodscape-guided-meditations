@@ -105,5 +105,46 @@ class TestScore(unittest.TestCase):
         self.assertEqual(self._scored(["B"] * 18 + ["A"] * 6)["verdict"], "NO-SHIP")
 
 
+class TestScoreValidation(unittest.TestCase):
+    _scored = TestScore._scored
+    def test_invalid_choice_raises(self):
+        with self.assertRaisesRegex(ValueError, "01.*maybe"):
+            self._scored(["A", "maybe"])
+
+    def test_blank_is_unanswered_and_incomplete(self):
+        result = self._scored(["A"] * 20 + ["B"] * 3 + [""])
+        self.assertEqual(result["unanswered"], 1)
+        self.assertEqual(result["verdict"], "INCOMPLETE")
+
+    def test_tie_spellings(self):
+        result = self._scored(["A", "Tie", "=", " SAME "])
+        self.assertEqual(result["ties"], 3)
+        self.assertEqual(result["unanswered"], 0)
+
+    def test_unknown_pair_raises(self):
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "key.json").write_text(json.dumps({"pairs": {}}))
+        (tmp / "sheet.csv").write_text("pair,choice,reason\n07,A,\n")
+        with self.assertRaisesRegex(ValueError, "07"):
+            score(tmp)
+
+
+class TestTruncatedPairs(unittest.TestCase):
+    def test_short_case_single_pair_equal_length(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a = _make_run(Path(tmp) / "a", {"x-short": 0.1})
+            b = _make_run(Path(tmp) / "b", {"x-short": 0.2})
+            sf.write(b / "x-short" / "med_1.wav", _noise(50, 0.2, 3), SR)  # shorter than a (300 s)
+            n = build_pairs(a, b, Path(tmp) / "ab", excerpt_sec=75)
+            self.assertEqual(n, 1)
+            key = json.loads((Path(tmp) / "ab" / "key.json").read_text())["pairs"]
+            self.assertEqual(key["00"]["position"], "whole")
+            self.assertTrue(key["00"]["truncated"])
+            la = len(sf.read(Path(tmp) / "ab" / "pairs" / "00_A.wav")[0])
+            lb = len(sf.read(Path(tmp) / "ab" / "pairs" / "00_B.wav")[0])
+            self.assertEqual(la, lb)
+            self.assertEqual(la, 50 * SR)
+
+
 if __name__ == "__main__":
     unittest.main()

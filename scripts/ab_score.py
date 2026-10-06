@@ -22,7 +22,7 @@ def main() -> int:
     result = score(Path(args.ab))
     print(json.dumps(result, indent=2))
     print(f"\nVerdict: {result['verdict']} (challenger {result['challenger_wins']}"
-          f" / baseline {result['baseline_wins']} / ties {result['ties']}, p={result['p']})")
+          f" / baseline {result['baseline_wins']} / ties {result['ties']} / unanswered {result['unanswered']}, p={result['p']})")
     return 0
 
 
