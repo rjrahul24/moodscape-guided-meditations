@@ -24,6 +24,8 @@ python app.py                          # Gradio UI at http://localhost:7860
 .venv/bin/python -m pytest tests/unit/test_mixer.py -v                       # single file
 .venv/bin/python -m pytest tests/integration/ -v                             # full pipeline (slow)
 python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
+.venv/bin/python scripts/eval_genres.py --testset eval/testset.toml --metrics --export-stems --configs "baseline=ollama:qwen3.8:27b|ollama:gemma4:31b" --out var/eval/base
+python scripts/ab_export.py --a <base>/<config> --b <new>/<config> --out var/eval/ab-001 && python scripts/ab_score.py --ab var/eval/ab-001
 ```
 
 ## Folder Map
@@ -41,6 +43,7 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 │   ├── text_utils.py · breath_sounds.py · stereo_upmix.py · deepfilter_enhancer.py
 │   ├── genres.py                     # Genre pack loader, angle rotation, GenrePack dataclass
 │   ├── originality.py                # Corpus management, TF-IDF similarity scoring, avoid-lists
+│   ├── eval/                         # eval harness: script/speech/mix metrics, test set, blind A/B
 │   ├── background_tags.py            # Lazy background music tagging (measured + declared)
 │   ├── kokoro_tts/  f5_tts/             # TTS engines (engine + preproc + postproc + voices)
 │   ├── lyria/                             # Lyria RealTime music generation (Google API)
@@ -51,6 +54,7 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 │   ├── background_picker.py           # tag-filtered pick from assets/backgrounds/
 │   ├── streaming_run.py               # threaded progress streaming for the UI
 │   └── auto_tab.py                    # Gradio "Auto-Generate" tab (peer of "Manual" under app.py's gr.Tabs())
+├── eval/testset.toml               # fixed 24-job evaluation set
 ├── scripts/                          # generate.py · separate_worker.py · generate_breath_samples.py · tag_backgrounds.py · eval_genres.py
 ├── tests/unit/  tests/integration/
 │   └── conftest.py                   # pytest fixtures for genre tests

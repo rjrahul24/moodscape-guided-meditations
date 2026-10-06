@@ -53,4 +53,5 @@ Authoritative map of every class and module in `core/`. Use this when you need t
 | Background picker (tag-filtered) | `core/background_picker.py` | — | `pick_background()`, `prefer_tags=` argument |
 | Model benchmark harness | `core/bench.py` | `BenchRow` | `run_bench()`, `format_bench_table()`, `BENCH_PROMPTS` |
 | Streaming progress runner | `core/streaming_run.py` | `StreamingRun`, `ProgressUpdate` | `__iter__()` — yields progress, exposes `.result` / `.error` |
+| Evaluation harness (metrics + blind A/B) | `core/eval/` | — | script/speech/mix metrics, fixed test set (`eval/testset.toml`), A/B export + sign-test scoring — see [Evaluating a change](auto_generation/README.md#evaluating-a-change) |
 | Auto-Generate UI tab | `core/auto_tab.py` | — | `build_auto_tab()`, `auto_generate_handler()` — genre dropdown, band radio, steer accordion |

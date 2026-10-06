@@ -386,6 +386,41 @@ still call `log_estimate_accuracy()` by hand for an ad-hoc comparison (or
 see `test_duration_estimate.py`) — production renders just no longer require
 that manual step.
 
+## Evaluating a change
+
+Every quality change is judged two ways: automatic metrics catch regressions,
+and a blind A/B listening test makes the ship decision. Metrics can disagree
+with ears, so metrics reject bad output and ears choose between good outputs.
+
+1. **Baseline** (before the change):
+   ```bash
+   caffeinate -i .venv/bin/python scripts/eval_genres.py --testset eval/testset.toml \
+       --metrics --export-stems --configs "baseline=ollama:qwen3.8:27b|ollama:gemma4:31b" \
+       --out var/eval/base
+   ```
+2. **Challenger:** apply the change (or set its flag) and run the same command
+   with `--out var/eval/new`.
+3. **Compare metrics:** read `summary.md` in both dirs. Columns: slop
+   density, judge edit ratio, Whisper CER, internal gaps, |1 - duration
+   ratio|, and dual-mono LUFS.
+4. **Export blind pairs:**
+   `python scripts/ab_export.py --a var/eval/base/baseline --b var/eval/new/baseline --out var/eval/ab-001`
+   A case shorter than one excerpt yields a single "whole" pair.
+5. **Listen:** play each `pairs/NN_A.wav` against `NN_B.wav` and fill
+   `sheet.csv` (`A`, `B` or `same`/`tie`/`=`, plus a one-word reason).
+6. **Score:** `python scripts/ab_score.py --ab var/eval/ab-001`. SHIP means
+   the challenger won >= 60% of non-tie pairs with p < 0.05 (e.g. 17 of 24).
+   The report includes an `unanswered` count; the verdict is `INCOMPLETE`
+   while any pair is unanswered.
+
+F5 renders are nondeterministic even with fixed seeds (up to ~4 LU
+short-term drift), so always compare two runs made in the same session.
+Never compare against a stored historical number. Speech metrics run on the
+exported voice stem when `--export-stems` is set, otherwise on the full mix.
+Whisper is unloaded after every job so it never sits beside an LLM under the
+32 GB ceiling. `WhisperTranscriber` contains a scoped workaround for the
+broken `torchcodec` in this venv.
+
 ## Where the pieces live
 
 | Responsibility | File |
