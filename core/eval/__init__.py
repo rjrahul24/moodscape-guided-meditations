@@ -19,6 +19,7 @@ from core.eval.speech_metrics import (
     speech_metrics,
     wer,
 )
+from core.eval.testset import DEFAULT_TESTSET, TestCase, load_testset
 
 __all__ = [
     "SlopHit",
@@ -38,4 +39,7 @@ __all__ = [
     "speech_metrics",
     "true_peak_dbtp",
     "wer",
+    "DEFAULT_TESTSET",
+    "TestCase",
+    "load_testset",
 ]

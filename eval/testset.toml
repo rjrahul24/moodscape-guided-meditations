@@ -1,0 +1,54 @@
+# eval/testset.toml — fixed evaluation set (R0). 12 genres x 2 bands = 24 jobs.
+# Seeds fix angle choice, background choice and the TTS base seed. F5 is still
+# nondeterministic (up to ~4 LU short-term drift), so always compare runs made
+# in the same session, never against a stored number.
+
+bands = ["short", "medium"]
+
+[[cases]]
+genre = "anxiety_relief"
+seed = 1100
+
+[[cases]]
+genre = "panic_sos"
+seed = 1200
+
+[[cases]]
+genre = "yoga_nidra"
+seed = 1300
+
+[[cases]]
+genre = "racing_mind_at_night"
+seed = 1400
+
+[[cases]]
+genre = "deep_sleep"
+seed = 1500
+
+[[cases]]
+genre = "fall_asleep"
+seed = 1600
+
+[[cases]]
+genre = "box_breathing"
+seed = 1700
+
+[[cases]]
+genre = "coherent_breathing"
+seed = 1800
+
+[[cases]]
+genre = "body_scan"
+seed = 1900
+
+[[cases]]
+genre = "workout_cool_down"
+seed = 2000
+
+[[cases]]
+genre = "self_compassion"
+seed = 2100
+
+[[cases]]
+genre = "grief_and_loss"
+seed = 2200
