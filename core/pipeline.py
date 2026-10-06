@@ -164,8 +164,14 @@ class MeditationPipeline:
         from core.engine_registry import get_engine_info
         engine_info = get_engine_info(tts_engine)
         base_engine = engine_info.get("base_engine", tts_engine) if engine_info else tts_engine
-        if base_engine not in ("f5", "kokoro", "chatterbox"):
-            base_engine = "f5" if "f5" in str(tts_engine).lower() else ("chatterbox" if "chatterbox" in str(tts_engine).lower() else "kokoro")
+        if base_engine not in ("f5", "kokoro", "chatterbox", "qwen3"):
+            lowered = str(tts_engine).lower()
+            base_engine = (
+                "f5" if "f5" in lowered
+                else "chatterbox" if "chatterbox" in lowered
+                else "qwen3" if "qwen3" in lowered
+                else "kokoro"
+            )
 
         mix_sr = 48000 if (use_lyria or use_upload or base_engine != "kokoro") else TARGET_SR
 
@@ -179,6 +185,8 @@ class MeditationPipeline:
 
                 if base_engine == "chatterbox":
                     from core.chatterbox_tts.preprocessor import prepare_segments as _prepare
+                elif base_engine == "qwen3":
+                    from core.qwen3_tts.preprocessor import prepare_segments as _prepare
                 elif base_engine == "f5":
                     from core.f5_tts.preprocessor import prepare_segments as _prepare
                 else:
@@ -212,7 +220,18 @@ class MeditationPipeline:
                     else:
                         cfg_val = float(os.environ.get("MOODSCAPE_F5_CFG", "2.0"))
                     microprosody = os.environ.get("MOODSCAPE_F5_MICROPROSODY", "0") == "1"
-                    cache_voice_id = f5_voice_slug if base_engine in ("f5", "chatterbox") else voice
+                    qwen3_extra = None
+                    if base_engine == "qwen3":
+                        from core.qwen3_tts import presets as _q3
+                        qwen3_extra = {
+                            "mode": _q3.mode_from_env(),
+                            "temperature": _q3.temperature_from_env(),
+                            "instruct": os.environ.get("MOODSCAPE_QWEN3_INSTRUCT", ""),
+                            "speaker": _q3.speaker_from_env(),
+                            "stretch": _q3.stretch_from_env(),
+                            "chunk_chars": _q3.chunk_chars_from_env(),
+                        }
+                    cache_voice_id = f5_voice_slug if base_engine in ("f5", "chatterbox", "qwen3") else voice
                     cache_key = compute_cache_key(
                         script=script,
                         content_type=content_type,
@@ -223,6 +242,7 @@ class MeditationPipeline:
                         f5_cfg_strength=cfg_val,
                         microprosody=microprosody,
                         seed=seed if seed_is_explicit else None,
+                        extra=qwen3_extra,
                     )
                     cached_voice = get_cached_tts(cache_key)
                     if cached_voice is not None:
@@ -269,6 +289,11 @@ class MeditationPipeline:
                             segments, voice=f5_voice_slug, speed=speed,
                             progress_cb=tts_progress, seed=seed,
                         )
+                    elif base_engine == "qwen3":
+                        voice_audio, voice_activity = tts.synthesize(
+                            segments, voice=f5_voice_slug, speed=speed,
+                            progress_cb=tts_progress, seed=seed, content_type=content_type,
+                        )
                     else:
                         voice_audio, voice_activity = tts.synthesize(
                             segments, voice=voice, speed=speed,
@@ -282,7 +307,7 @@ class MeditationPipeline:
                         from core.tts_cache import save_cached_tts
                         meta = {
                             "tts_engine": tts_engine,
-                            "voice": f5_voice_slug if base_engine in ("f5", "chatterbox") else voice,
+                            "voice": f5_voice_slug if base_engine in ("f5", "chatterbox", "qwen3") else voice,
                             "speed": speed,
                             "content_type": content_type,
                             "f5_target_wpm": f5_target_wpm,
@@ -337,6 +362,10 @@ class MeditationPipeline:
                     _progress(progress_cb, 0.38, "Preparing Chatterbox mastering chain...")
                     from core.chatterbox_tts.postprocessor import ChatterboxMasteringEngine
                     mastering_engine = ChatterboxMasteringEngine(sample_rate=SAMPLE_RATE)
+                elif base_engine == "qwen3":
+                    _progress(progress_cb, 0.38, "Preparing Qwen3-TTS mastering chain...")
+                    from core.qwen3_tts.postprocessor import Qwen3MasteringEngine
+                    mastering_engine = Qwen3MasteringEngine(sample_rate=SAMPLE_RATE)
 
                 # Upsample Voice to the mix sample rate:
                 #   Lyria / Upload path → 48 kHz (preserves native music resolution)
@@ -379,6 +408,8 @@ class MeditationPipeline:
                         df_wet = float(os.environ.get("MOODSCAPE_KOKORO_DF_WET", "0.25"))
                     elif base_engine == "chatterbox":
                         df_wet = float(os.environ.get("MOODSCAPE_CHATTERBOX_DF_WET", "1.0"))
+                    elif base_engine == "qwen3":
+                        df_wet = float(os.environ.get("MOODSCAPE_QWEN3_DF_WET", "0.5"))
                     else:
                         df_wet = 1.0
                     voice_audio = enhance_voice_deepfilter(voice_audio, sr=mix_sr, wet=df_wet)
@@ -515,6 +546,10 @@ class MeditationPipeline:
                     # explicitly overridden with MOODSCAPE_CHATTERBOX_REVERB=1.
                     chatterbox_reverb = reverb_amount if os.environ.get("MOODSCAPE_CHATTERBOX_REVERB", "0") == "1" else 0.0
                     voice_chain = build_chatterbox_voice_chain(reverb_amount=chatterbox_reverb, ir_name=reverb_ir)
+                elif base_engine == "qwen3":
+                    from core.qwen3_tts.postprocessor import build_qwen3_voice_chain
+                    from core.kokoro_tts.postprocessor import apply_fx
+                    voice_chain = build_qwen3_voice_chain(reverb_amount=reverb_amount, ir_name=reverb_ir)
                 else:
                     from core.kokoro_tts.postprocessor import build_voice_chain, apply_fx
                     voice_chain = build_voice_chain(reverb_amount=reverb_amount, ir_name=reverb_ir)

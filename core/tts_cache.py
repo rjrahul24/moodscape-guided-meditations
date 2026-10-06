@@ -43,6 +43,7 @@ def compute_cache_key(
     f5_cfg_strength: float = 2.0,
     microprosody: bool = False,
     seed: int | None = None,
+    extra: dict | None = None,
 ) -> str:
     """Compute a deterministic SHA-256 hash key for TTS inputs.
 
@@ -61,6 +62,8 @@ def compute_cache_key(
         "microprosody": bool(microprosody),
         "seed": int(seed) if seed is not None else None,
     }
+    if extra:
+        key_dict["extra"] = {str(k): extra[k] for k in sorted(extra)}
     payload = json.dumps(key_dict, sort_keys=True).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 

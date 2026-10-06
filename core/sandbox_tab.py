@@ -433,7 +433,7 @@ def handle_promote_model(
         description=f"Promoted from Sandbox for {content_type_choice}",
     )
 
-    choices = list_all_engines()
+    choices = list_all_engines(include_experimental=True)
     msg = f"<div style='color: #10b981; font-weight: 600;'>⭐ Successfully promoted '{record['name']}'! It is now active across Manual and Auto-Generate flows.</div>"
     return msg, gr.update(choices=choices, value=record["id"]), format_promoted_models_html()
 
@@ -450,7 +450,7 @@ def handle_demote_model(model_id: str):
     if not model_id:
         return "<div style='color: #ef4444;'>Select a model to demote.</div>", gr.update(), format_promoted_models_html()
     success = demote_model(model_id)
-    choices = list_all_engines()
+    choices = list_all_engines(include_experimental=True)
     if success:
         msg = f"<div style='color: #10b981;'>Model '{model_id}' removed from active registry.</div>"
     else:
@@ -530,7 +530,7 @@ def build_sandbox_tab() -> dict[str, Any]:
             with gr.Column(scale=2, elem_classes="settings-sidebar"):
                 with gr.Accordion("Model & Voice", open=True, elem_classes="accordion-section"):
                     engine_dropdown = gr.Dropdown(
-                        choices=list_all_engines(),
+                        choices=list_all_engines(include_experimental=True),
                         value="chatterbox",
                         label="TTS Model",
                         elem_classes="dropdown-container",

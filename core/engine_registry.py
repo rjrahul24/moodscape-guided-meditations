@@ -59,6 +59,22 @@ BUILTIN_ENGINES = {
             "repetition_penalty": 1.20,
         },
     },
+    "qwen3": {
+        "id": "qwen3",
+        "name": "Qwen3-TTS (experimental)",
+        "description": "Alibaba Qwen3-TTS on MLX (Apache-2.0): clone / custom-voice / voice-design modes.",
+        "base_engine": "qwen3",
+        "default_voice": "Brittney",
+        "experimental": True,
+        "presets": {
+            "speed": 1.0,
+            "reverb_amount": 0.10,
+            "duck_amount_db": -16.0,
+            "df_wet": 0.5,
+            "temperature": 0.7,
+            "mode": "clone",
+        },
+    },
 }
 
 
@@ -156,16 +172,22 @@ def demote_model(model_id: str) -> bool:
     return False
 
 
-def list_all_engines() -> list[tuple[str, str]]:
+def list_all_engines(include_experimental: bool = False) -> list[tuple[str, str]]:
     """Return all available engines as (label, id) pairs for dropdowns.
 
-    Built-in engines come first, followed by any promoted models.
+    Built-in engines come first, followed by any promoted models. Experimental
+    built-ins (e.g. Qwen3-TTS) appear only when include_experimental=True,
+    which the Sandbox tab passes and the Manual/Auto tabs do not.
     """
     choices: list[tuple[str, str]] = [
         ("F5-TTS", "f5"),
         ("Kokoro", "kokoro"),
         ("Chatterbox TTS", "chatterbox"),
     ]
+    if include_experimental:
+        choices.extend(
+            (info["name"], eid) for eid, info in BUILTIN_ENGINES.items() if info.get("experimental")
+        )
     promoted = load_promoted_models()
     for model_id, info in sorted(promoted.items(), key=lambda kv: kv[1].get("name", kv[0])):
         label = f"{info.get('name', model_id)} [Promoted]"
@@ -214,6 +236,10 @@ def get_engine(
     if norm_id == "chatterbox":
         from core.chatterbox_tts.engine import ChatterboxEngine
         return ChatterboxEngine(voice_slug=voice_slug)
+
+    if norm_id == "qwen3":
+        from core.qwen3_tts.engine import Qwen3Engine
+        return Qwen3Engine(voice_slug=voice_slug)
 
     # Check promoted models
     promoted = load_promoted_models()
