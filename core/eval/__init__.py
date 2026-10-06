@@ -4,6 +4,7 @@ Every module imports without torch or Gradio; heavy dependencies are imported
 inside the functions that need them.
 """
 
+from core.eval.script_metrics import script_metrics
 from core.eval.slop import SlopHit, slop_density, slop_hits
 
-__all__ = ["SlopHit", "slop_density", "slop_hits"]
+__all__ = ["SlopHit", "slop_density", "script_metrics", "slop_hits"]
