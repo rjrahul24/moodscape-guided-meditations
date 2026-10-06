@@ -17,7 +17,7 @@ class TestSlopHits(unittest.TestCase):
         self.assertEqual(slop_hits("[pause:3s] [breath]"), [])
 
     def test_curly_apostrophe_pattern(self):
-        hits = slop_hits("It's not a task, it's a rest.")
+        hits = slop_hits("It’s not a task, it’s a rest.")
         self.assertIn("not_x_its_y", [h.term for h in hits])
 
     def test_triple_soft_adjectives(self):
