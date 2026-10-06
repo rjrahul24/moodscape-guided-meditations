@@ -5,6 +5,7 @@ inside the functions that need them.
 """
 
 from core.eval.mix_metrics import loudness, mix_metrics, true_peak_dbtp
+from core.eval.report import compute_run_metrics, summarize
 from core.eval.script_metrics import script_metrics
 from core.eval.slop import SlopHit, slop_density, slop_hits
 from core.eval.speech_metrics import (
@@ -42,4 +43,6 @@ __all__ = [
     "DEFAULT_TESTSET",
     "TestCase",
     "load_testset",
+    "compute_run_metrics",
+    "summarize",
 ]

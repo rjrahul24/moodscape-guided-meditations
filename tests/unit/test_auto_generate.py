@@ -332,6 +332,7 @@ class TestRun(unittest.TestCase):
     def test_script_file_holds_the_final_script(self):
         result = self._run(StubPipeline(self.dir))
         self.assertEqual(Path(result.script_path).read_text(), CLEAN_SCRIPT)
+        self.assertTrue(result.draft_script)  # draft is carried through for eval edit ratio
 
     def test_meta_records_prompt_models_and_background(self):
         result = self._run(StubPipeline(self.dir))

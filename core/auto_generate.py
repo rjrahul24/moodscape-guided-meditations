@@ -242,6 +242,7 @@ class AutoResult:
     brief: str = ""
     genre: str = ""
     angle: str = ""
+    draft_script: str = ""
 
 
 def _violation_dicts(violations: list[Violation]) -> list[dict]:
@@ -703,4 +704,5 @@ def run(
         brief=outcome.brief,
         genre=config.genre,
         angle=config.angle,
+        draft_script=outcome.draft_script,
     )
