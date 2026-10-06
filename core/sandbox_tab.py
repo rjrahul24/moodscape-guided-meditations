@@ -28,6 +28,7 @@ from core.engine_registry import (
 )
 from core.f5_tts import voice_registry as _f5_registry
 from core.pipeline import MeditationPipeline
+from core.qwen3_tts import presets as qwen3_presets
 from core.qa_monitor import check_clipping, check_lufs, check_silence_ratio, check_spectral_rolloff, run_qa_checks
 from core.sandbox_scripts import (
     BENCHMARK_METADATA,
@@ -271,6 +272,25 @@ def format_promoted_models_html() -> str:
 
 _sandbox_pipeline: MeditationPipeline | None = None
 
+def apply_qwen3_env(mode: str, speaker: str, instruct: str, temperature: float,
+                    stretch: float, df_wet: float) -> None:
+    """Pass sandbox Qwen3 controls to the engine via its MOODSCAPE_QWEN3_* env vars."""
+    os.environ["MOODSCAPE_QWEN3_MODE"] = str(mode)
+    os.environ["MOODSCAPE_QWEN3_SPEAKER"] = str(speaker)
+    os.environ["MOODSCAPE_QWEN3_INSTRUCT"] = str(instruct or "")
+    os.environ["MOODSCAPE_QWEN3_TEMPERATURE"] = str(float(temperature))
+    os.environ["MOODSCAPE_QWEN3_STRETCH"] = str(float(stretch))
+    os.environ["MOODSCAPE_QWEN3_DF_WET"] = str(float(df_wet))
+
+
+def qwen3_instruct_preset(mode: str, content_type: str) -> str:
+    """Preset text for the Qwen3 instruct box: voice description for design,
+    delivery instruction otherwise. Deliberately ignores the env override."""
+    key = content_type if content_type in qwen3_presets.INSTRUCT_PRESETS else "meditation"
+    table = qwen3_presets.DESIGN_PRESETS if mode == "design" else qwen3_presets.INSTRUCT_PRESETS
+    return table[key]
+
+
 def _get_sandbox_pipeline() -> MeditationPipeline:
     global _sandbox_pipeline
     if _sandbox_pipeline is None:
@@ -295,6 +315,11 @@ def sandbox_generate_handler(
     fade_in: float,
     fade_out: float,
     uploaded_music_file: str,
+    qwen3_mode: str = "clone",
+    qwen3_speaker: str = qwen3_presets.DEFAULT_SPEAKER,
+    qwen3_instruct: str = "",
+    qwen3_temperature: float = 0.7,
+    qwen3_stretch: float = 1.0,
 ):
     """Orchestrates end-to-end sandbox synthesis with progress updates."""
     start_time = time.time()
@@ -317,6 +342,9 @@ def sandbox_generate_handler(
         os.environ["MOODSCAPE_CHATTERBOX_CFG"] = str(cb_cfg)
     else:
         os.environ["MOODSCAPE_CHATTERBOX_CFG"] = str(float(f5_cfg))
+    if base_engine == "qwen3":
+        apply_qwen3_env(qwen3_mode, qwen3_speaker, qwen3_instruct, qwen3_temperature,
+                        qwen3_stretch, df_wet_val)
 
     if base_engine == "kokoro":
         active_voice = voice_choice or "balanced_calm"
@@ -541,6 +569,21 @@ def build_sandbox_tab() -> dict[str, Any]:
                         label="Voice / Reference Voice",
                         elem_classes="dropdown-container",
                     )
+                    with gr.Group(visible=False) as qwen3_settings:
+                        qwen3_mode = gr.Dropdown(
+                            choices=list(qwen3_presets.MODES), value="clone",
+                            label="Qwen3 Mode",
+                            info="clone = our reference voice; custom = preset speaker + style; design = described voice",
+                        )
+                        qwen3_speaker = gr.Textbox(value=qwen3_presets.DEFAULT_SPEAKER, label="Preset Speaker (custom mode)")
+                        qwen3_instruct = gr.Textbox(
+                            value=qwen3_presets.INSTRUCT_PRESETS["meditation"], lines=3,
+                            label="Delivery Instruction / Voice Description",
+                            info="Ignored in clone mode.",
+                        )
+                        with gr.Row():
+                            qwen3_temperature = gr.Slider(0.3, 1.0, 0.7, step=0.05, label="Temperature")
+                            qwen3_stretch = gr.Slider(0.80, 1.0, 1.0, step=0.01, label="Time-Stretch (1.0 = off)")
 
                 with gr.Accordion("Sound Tuning", open=True, elem_classes="accordion-section"):
                     with gr.Row():
@@ -602,7 +645,7 @@ def build_sandbox_tab() -> dict[str, Any]:
 
         # ── Interactive Event Wiring ──────────────────────────────────────────
 
-        def on_benchmark_change(choice: str, engine: str):
+        def on_benchmark_change(choice: str, engine: str, q3_mode: str = "clone"):
             """Switch between 5-min guided meditation and 5-min sleep story scripts."""
             is_sleep = "Sleep Story" in choice
             content_type = "sleep_story" if is_sleep else "guided_meditation"
@@ -618,12 +661,25 @@ def build_sandbox_tab() -> dict[str, Any]:
                 gr.update(value=reverb_val),
                 gr.update(value=p["fade_in_sec"]),
                 gr.update(value=p["fade_out_sec"]),
+                gr.update(value=qwen3_instruct_preset(q3_mode, "sleep_story" if is_sleep else "meditation")),
             )
 
         benchmark_script_choice.change(
             fn=on_benchmark_change,
-            inputs=[benchmark_script_choice, engine_dropdown],
-            outputs=[script_input, speed_slider, duck_slider, reverb_slider, fade_in_slider, fade_out_slider],
+            inputs=[benchmark_script_choice, engine_dropdown, qwen3_mode],
+            outputs=[script_input, speed_slider, duck_slider, reverb_slider, fade_in_slider, fade_out_slider,
+                     qwen3_instruct],
+        )
+
+        def on_qwen3_mode_change(mode: str, choice: str):
+            """Refill the instruct box with the preset that fits the chosen mode."""
+            ctype = "sleep_story" if "Sleep Story" in choice else "meditation"
+            return gr.update(value=qwen3_instruct_preset(mode, ctype))
+
+        qwen3_mode.change(
+            fn=on_qwen3_mode_change,
+            inputs=[qwen3_mode, benchmark_script_choice],
+            outputs=[qwen3_instruct],
         )
 
         def on_reset_script(choice: str):
@@ -660,12 +716,14 @@ def build_sandbox_tab() -> dict[str, Any]:
                 gr.update(value=wpm_val),
                 gr.update(value=cfg_val),
                 gr.update(value=duck_val),
+                gr.update(visible=(base == "qwen3")),
             )
 
         engine_dropdown.change(
             fn=on_engine_change,
             inputs=[engine_dropdown],
-            outputs=[voice_dropdown, speed_slider, reverb_slider, df_wet_slider, f5_wpm_slider, f5_cfg_slider, duck_slider],
+            outputs=[voice_dropdown, speed_slider, reverb_slider, df_wet_slider, f5_wpm_slider, f5_cfg_slider, duck_slider,
+                     qwen3_settings],
         )
 
         def on_refresh_backgrounds():
@@ -697,6 +755,11 @@ def build_sandbox_tab() -> dict[str, Any]:
                 fade_in_slider,
                 fade_out_slider,
                 uploaded_music,
+                qwen3_mode,
+                qwen3_speaker,
+                qwen3_instruct,
+                qwen3_temperature,
+                qwen3_stretch,
             ],
             outputs=[audio_output, status_display],
             show_progress="full",
@@ -724,5 +787,11 @@ def build_sandbox_tab() -> dict[str, Any]:
         "fade_out_slider": fade_out_slider,
         "uploaded_music": uploaded_music,
         "refresh_backgrounds_btn": refresh_backgrounds_btn,
+        "qwen3_settings": qwen3_settings,
+        "qwen3_mode": qwen3_mode,
+        "qwen3_speaker": qwen3_speaker,
+        "qwen3_instruct": qwen3_instruct,
+        "qwen3_temperature": qwen3_temperature,
+        "qwen3_stretch": qwen3_stretch,
     }
 

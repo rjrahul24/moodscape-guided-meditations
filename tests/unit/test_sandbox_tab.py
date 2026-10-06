@@ -98,3 +98,47 @@ class TestBuildSandboxTab(unittest.TestCase):
         audio, msg, status = handle_discard_model()
         self.assertIsNone(audio)
         self.assertIn("discarded", msg)
+
+
+class TestQwen3SandboxControls(unittest.TestCase):
+    def test_components_exposed(self):
+        with gr.Blocks():
+            components = build_sandbox_tab()
+        for key in ("qwen3_settings", "qwen3_mode", "qwen3_speaker", "qwen3_instruct",
+                    "qwen3_temperature", "qwen3_stretch"):
+            self.assertIn(key, components)
+
+    def test_engine_dropdown_offers_qwen3(self):
+        with gr.Blocks():
+            components = build_sandbox_tab()
+        values = [c[1] if isinstance(c, (tuple, list)) else c for c in components["engine_dropdown"].choices]
+        self.assertIn("qwen3", values)
+
+    def test_apply_qwen3_env(self):
+        import os
+        from unittest.mock import patch
+        from core.sandbox_tab import apply_qwen3_env
+        with patch.dict(os.environ, {}):
+            apply_qwen3_env("custom", "serena", "Soft.", 0.6, 0.95, 0.4)
+            self.assertEqual(os.environ["MOODSCAPE_QWEN3_MODE"], "custom")
+            self.assertEqual(os.environ["MOODSCAPE_QWEN3_SPEAKER"], "serena")
+            self.assertEqual(os.environ["MOODSCAPE_QWEN3_INSTRUCT"], "Soft.")
+            self.assertEqual(float(os.environ["MOODSCAPE_QWEN3_TEMPERATURE"]), 0.6)
+            self.assertEqual(float(os.environ["MOODSCAPE_QWEN3_STRETCH"]), 0.95)
+            self.assertEqual(float(os.environ["MOODSCAPE_QWEN3_DF_WET"]), 0.4)
+
+    def test_instruct_preset_per_mode_and_content_type(self):
+        from core.qwen3_tts.presets import DESIGN_PRESETS, INSTRUCT_PRESETS
+        from core.sandbox_tab import qwen3_instruct_preset
+        self.assertEqual(qwen3_instruct_preset("design", "sleep_story"), DESIGN_PRESETS["sleep_story"])
+        self.assertEqual(qwen3_instruct_preset("custom", "meditation"), INSTRUCT_PRESETS["meditation"])
+        self.assertEqual(qwen3_instruct_preset("clone", "sleep_story"), INSTRUCT_PRESETS["sleep_story"])
+        self.assertEqual(qwen3_instruct_preset("custom", "guided_meditation"), INSTRUCT_PRESETS["meditation"])
+
+    def test_instruct_preset_ignores_env_override(self):
+        import os
+        from unittest.mock import patch
+        from core.qwen3_tts.presets import INSTRUCT_PRESETS
+        from core.sandbox_tab import qwen3_instruct_preset
+        with patch.dict(os.environ, {"MOODSCAPE_QWEN3_INSTRUCT": "Override."}):
+            self.assertEqual(qwen3_instruct_preset("custom", "meditation"), INSTRUCT_PRESETS["meditation"])
