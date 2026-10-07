@@ -3,6 +3,7 @@
 import re
 
 from core.script_gen.engine import ScriptEngine
+from core.script_gen.sampling import SamplingParams
 
 _FENCE = re.compile(r"^\s*```[a-zA-Z]*\s*\n(.*?)\n\s*```\s*$", re.DOTALL)
 
@@ -25,6 +26,7 @@ def draft(
     system: str,
     *,
     max_tokens: int = 4096,
+    sampling: SamplingParams | None = None,
 ) -> str:
     """Generate a draft script from the user's natural-language prompt."""
     user = (
@@ -32,4 +34,4 @@ def draft(
         f"{prompt}\n\n"
         "Output only the script."
     )
-    return strip_wrapper(engine.complete(system, user, max_tokens=max_tokens))
+    return strip_wrapper(engine.complete(system, user, max_tokens=max_tokens, sampling=sampling))

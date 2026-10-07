@@ -34,6 +34,7 @@ from core.script_gen.rules import (
     build_judge_system_prompt,
     build_planner_system_prompt,
 )
+from core.script_gen.sampling import sampling_for
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +224,7 @@ class ScriptOutcome:
     originality_cosine: float = 0.0
     originality_shared_span: int = 0
     brief: str = ""
+    sampling: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -341,6 +343,16 @@ def generate_script(
 
     brief = ""
     try:
+        stage_sampling = {
+            "planner": sampling_for("planner", planner_engine.name) if planner_engine is not None else None,
+            "writer": sampling_for("writer", generator_engine.name),
+            "judge": sampling_for("judge", judge_engine.name),
+            "repair": sampling_for("repair", judge_engine.name),
+        }
+    except ValueError as exc:
+        raise ScriptGenerationError(str(exc)) from exc
+
+    try:
         if pack is not None and angle is not None and planner_engine is not None:
             if progress_cb:
                 progress_cb(0.02, f"Planning a {pack.label} session")
@@ -360,6 +372,7 @@ def generate_script(
                 target_max_sec=config.target_max_sec,
                 avoid=avoid,
                 steer=steer,
+                sampling=stage_sampling["planner"],
             )
             prompt = brief
             # Only unload if the writer is a different model. The default
@@ -371,7 +384,11 @@ def generate_script(
         if progress_cb:
             progress_cb(0.05, "Writing draft script")
         draft_script = draft(
-            generator_engine, prompt, gen_system, max_tokens=config.max_tokens
+            generator_engine,
+            prompt,
+            gen_system,
+            max_tokens=config.max_tokens,
+            sampling=stage_sampling["writer"],
         )
         # Same reasoning as the planner/generator share above, mirrored for
         # generator/judge: don't evict a model that review() is about to use
@@ -382,7 +399,11 @@ def generate_script(
         if progress_cb:
             progress_cb(0.12, "Reviewing script")
         script, changelog = review(
-            judge_engine, draft_script, judge_system, max_tokens=config.max_tokens
+            judge_engine,
+            draft_script,
+            judge_system,
+            max_tokens=config.max_tokens,
+            sampling=stage_sampling["judge"],
         )
 
         repairs_used = 0
@@ -431,6 +452,9 @@ def generate_script(
                     originality_cosine=report.max_cosine if report else 0.0,
                     originality_shared_span=report.shared_span if report else 0,
                     brief=brief,
+                    sampling={
+                        k: v.as_dict() for k, v in stage_sampling.items() if v is not None
+                    },
                 )
 
             if repairs_used >= config.max_repairs:
@@ -452,7 +476,12 @@ def generate_script(
             if progress_cb:
                 progress_cb(0.15, f"Repairing script (attempt {repairs_used})")
             script, repair_log = repair(
-                judge_engine, script, fatal, judge_system, max_tokens=config.max_tokens
+                judge_engine,
+                script,
+                fatal,
+                judge_system,
+                max_tokens=config.max_tokens,
+                sampling=stage_sampling["repair"],
             )
             changelog = f"{changelog}\n{repair_log}".strip()
     finally:
@@ -684,6 +713,7 @@ def run(
                 "originality_cosine": outcome.originality_cosine,
                 "originality_shared_span": outcome.originality_shared_span,
                 "brief": outcome.brief,
+                "sampling": outcome.sampling,
             },
             indent=2,
         ),

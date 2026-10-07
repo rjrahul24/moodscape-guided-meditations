@@ -180,3 +180,15 @@ class TestEchoedProblemsBlock(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSamplingForwarding(unittest.TestCase):
+    def test_draft_review_repair_forward_sampling(self):
+        from core.script_gen.sampling import SamplingParams
+
+        s = SamplingParams(0.7, 0.8, 1.5)
+        eng = FakeScriptEngine(["Rest here.", "<script>Rest.</script><changelog>-</changelog>"])
+        draft(eng, "p", "sys", sampling=s)
+        review(eng, "Rest here.", "sys", sampling=s)
+        repair(eng, "Rest.", [Violation("X", "fatal", "m")], "sys", sampling=s)
+        self.assertEqual([c["sampling"] for c in eng.calls], [s, s, s])

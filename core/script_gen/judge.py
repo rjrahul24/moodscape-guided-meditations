@@ -10,6 +10,7 @@ linter's findings supplied as the instruction.
 import re
 
 from core.script_gen.engine import ScriptEngine
+from core.script_gen.sampling import SamplingParams
 from core.script_gen.generator import strip_wrapper
 from core.script_gen.linter import Violation, format_for_repair
 
@@ -74,6 +75,7 @@ def review(
     system: str,
     *,
     max_tokens: int = 4096,
+    sampling: SamplingParams | None = None,
 ) -> tuple[str, str]:
     """Review a draft and return (revised_script, changelog)."""
     user = (
@@ -82,7 +84,7 @@ def review(
         f"{draft_script}\n"
         "</draft>"
     )
-    return parse_judge_response(engine.complete(system, user, max_tokens=max_tokens))
+    return parse_judge_response(engine.complete(system, user, max_tokens=max_tokens, sampling=sampling))
 
 
 def repair(
@@ -92,6 +94,7 @@ def repair(
     system: str,
     *,
     max_tokens: int = 4096,
+    sampling: SamplingParams | None = None,
 ) -> tuple[str, str]:
     """Fix specific, named violations. Returns (repaired_script, changelog)."""
     user = (
@@ -105,4 +108,4 @@ def repair(
         f"{script}\n"
         "</script>"
     )
-    return parse_judge_response(engine.complete(system, user, max_tokens=max_tokens))
+    return parse_judge_response(engine.complete(system, user, max_tokens=max_tokens, sampling=sampling))

@@ -10,6 +10,7 @@ from collections.abc import Sequence
 
 from core.genres import Angle, GenrePack
 from core.script_gen.engine import ScriptEngine
+from core.script_gen.sampling import SamplingParams
 from core.script_gen.generator import strip_wrapper
 
 
@@ -28,6 +29,7 @@ def plan(
     avoid: Sequence[str] = (),
     steer: str | None = "",
     max_tokens: int = 1024,
+    sampling: SamplingParams | None = None,
 ) -> str:
     """Produce a creative brief for one run of one genre.
 
@@ -75,4 +77,4 @@ def plan(
         + "\n\nOutput only the brief."
     )
 
-    return strip_wrapper(engine.complete(system, user, max_tokens=max_tokens))
+    return strip_wrapper(engine.complete(system, user, max_tokens=max_tokens, sampling=sampling))

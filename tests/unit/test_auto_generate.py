@@ -291,6 +291,94 @@ class EngineUnloadOnEveryExitPathTest(unittest.TestCase):
 FAKE_SCAN = lambda: [("Healing Forest — 23:12", "/bg/forest.mp3")]
 
 
+class _NamedFake(FakeScriptEngine):
+    """FakeScriptEngine reporting a chosen model name, to select sampling."""
+
+    def __init__(self, responses, model_name):
+        super().__init__(responses)
+        self._model_name = model_name
+
+    @property
+    def name(self) -> str:
+        return self._model_name
+
+
+class TestPerStageSampling(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.config = AutoConfig(
+            target_min_sec=1.0,
+            target_max_sec=100000.0,
+            corpus_dir=Path(self._tmp.name) / "corpus",
+            failure_dir=Path(self._tmp.name) / "failures",
+        )
+        # Isolate from any MOODSCAPE_SAMPLING_* set in the developer's shell.
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("MOODSCAPE_SAMPLING_")}
+        env_patch = patch.dict(os.environ, clean, clear=True)
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_generate_script_uses_per_stage_sampling(self):
+        from core.genres import load_pack, pick_angle
+        from core.script_gen.sampling import SamplingParams
+
+        pack = load_pack("grief_and_loss")
+        angle = pick_angle(pack)
+        qwen = "ollama:qwen3.8:27b"
+        planner = _NamedFake(["A short creative brief."], qwen)
+        writer = _NamedFake([CLEAN_SCRIPT], qwen)
+        judge = _NamedFake([judged(CLEAN_SCRIPT)], "ollama:gemma4:31b")
+
+        outcome = generate_script(
+            "p",
+            generator_engine=writer,
+            judge_engine=judge,
+            planner_engine=planner,
+            pack=pack,
+            angle=angle,
+            config=self.config,
+        )
+
+        qwen_params = SamplingParams(0.7, 0.80, 1.5)
+        gemma_params = SamplingParams(1.0, 0.95, None)
+        self.assertEqual(planner.calls[0]["sampling"], qwen_params)
+        self.assertEqual(writer.calls[0]["sampling"], qwen_params)
+        self.assertEqual(judge.calls[0]["sampling"], gemma_params)
+        self.assertEqual(set(outcome.sampling), {"planner", "writer", "judge", "repair"})
+        self.assertEqual(outcome.sampling["planner"], qwen_params.as_dict())
+        self.assertEqual(outcome.sampling["writer"], qwen_params.as_dict())
+        self.assertEqual(outcome.sampling["judge"], gemma_params.as_dict())
+        self.assertEqual(outcome.sampling["repair"], gemma_params.as_dict())
+
+    def test_prompt_path_without_planner_still_works(self):
+        writer = _NamedFake([CLEAN_SCRIPT], "ollama:qwen3.8:27b")
+        judge = _NamedFake([judged(CLEAN_SCRIPT)], "ollama:gemma4:31b")
+        outcome = generate_script(
+            "p", generator_engine=writer, judge_engine=judge, config=self.config
+        )
+        self.assertEqual(set(outcome.sampling), {"writer", "judge", "repair"})
+
+    def test_malformed_sampling_env_raises_before_any_engine_call(self):
+        planner = _NamedFake(["brief"], "ollama:qwen3.8:27b")
+        writer = _NamedFake([CLEAN_SCRIPT], "ollama:qwen3.8:27b")
+        judge = _NamedFake([judged(CLEAN_SCRIPT)], "ollama:gemma4:31b")
+        with patch.dict(os.environ, {"MOODSCAPE_SAMPLING_WRITER_TEMPERATURE": "hot"}):
+            with self.assertRaises(ScriptGenerationError) as ctx:
+                generate_script(
+                    "p",
+                    generator_engine=writer,
+                    judge_engine=judge,
+                    planner_engine=planner,
+                    config=self.config,
+                )
+        self.assertIn("MOODSCAPE_SAMPLING_WRITER_TEMPERATURE", str(ctx.exception))
+        for eng in (planner, writer, judge):
+            self.assertEqual(eng.calls, [])
+
+
 class TestRun(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -340,6 +428,7 @@ class TestRun(unittest.TestCase):
         self.assertEqual(meta["prompt"], "I feel anxious")
         self.assertIn("generator", meta)
         self.assertIn("judge", meta)
+        self.assertEqual(set(meta["sampling"]), {"writer", "judge", "repair"})
         self.assertEqual(meta["background"], "Healing Forest — 23:12")
         self.assertEqual(meta["background_path"], "/bg/forest.mp3")
 
