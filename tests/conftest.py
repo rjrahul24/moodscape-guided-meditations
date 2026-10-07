@@ -79,3 +79,28 @@ def _isolated_originality_corpus(monkeypatch):
     yield
     for path in created:
         shutil.rmtree(path, ignore_errors=True)
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "real_voice_selection: do not stub core.voice_selection.voice_for_family",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_voice_selection(request, monkeypatch, tmp_path_factory):
+    """Keep unit tests off the real reference clips and var/voice_traits.json.
+
+    The trait cache is pointed at a throw-away path, and voice_for_family
+    returns a fixed slug so from_genre() never runs librosa on assets/speakers.
+    Mark a test `real_voice_selection` to opt out of the stub.
+    """
+    import core.voice_selection as voice_selection
+
+    monkeypatch.setattr(
+        voice_selection, "DEFAULT_CACHE",
+        tmp_path_factory.mktemp("voice-cache") / "voice_traits.json",
+    )
+    if request.node.get_closest_marker("real_voice_selection") is None:
+        monkeypatch.setattr(voice_selection, "voice_for_family", lambda family, **kw: "TestVoice")

@@ -830,6 +830,21 @@ class VoiceSelectionWiringTest(unittest.TestCase):
         self.assertIsNone(meta["voice"])
         self.assertEqual(result.voice, "")
 
+    def test_kokoro_run_ignores_voice_slug(self):
+        call, meta, result = self._run(AutoConfig(tts_engine="kokoro", voice_slug="Delilah"))
+        self.assertNotIn("f5_voice_slug", call)
+        self.assertIsNone(meta["voice"])
+        self.assertEqual(result.voice, "")
+
+    def test_from_genre_does_not_touch_real_trait_cache(self):
+        real = Path(__file__).resolve().parent.parent.parent / "var" / "voice_traits.json"
+        before = real.stat().st_mtime_ns if real.exists() else None
+        AutoConfig.from_genre(self._pack(), band="short")
+        after = real.stat().st_mtime_ns if real.exists() else None
+        self.assertEqual(before, after)
+        import core.voice_selection as vs
+        self.assertNotEqual(vs.DEFAULT_CACHE, real)
+
     def test_explicit_pipeline_kwarg_wins(self):
         call, _, _ = self._run(AutoConfig(voice_slug="Delilah"), f5_voice_slug="Eryn")
         self.assertEqual(call["f5_voice_slug"], "Eryn")

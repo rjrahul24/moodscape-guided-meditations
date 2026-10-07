@@ -38,6 +38,9 @@ from core.script_gen.sampling import sampling_for
 
 logger = logging.getLogger(__name__)
 
+# Engines whose voice is a reference-clip slug (Kokoro uses `voice` instead).
+_VOICE_SLUG_ENGINES = ("f5", "chatterbox", "qwen3")
+
 # Benchmarked 2026-09-17 against EQ-Bench Creative Writing v3 and Judgemark v4.
 # qwen3.8:27b has the best slop score of any model that fits a 32 GB M1 Max
 # (1.7) and plans as well as it writes, so one load covers both stages.
@@ -208,7 +211,7 @@ class AutoConfig:
             "target_max_sec": target_max_sec,
         }
         engine = overrides.get("tts_engine", config.tts_engine)
-        if engine in ("f5", "chatterbox", "qwen3") and "voice_slug" not in overrides:
+        if engine in _VOICE_SLUG_ENGINES and "voice_slug" not in overrides:
             try:
                 from core.voice_selection import voice_for_family
                 pack_values["voice_slug"] = voice_for_family(pack.family)
@@ -663,8 +666,9 @@ def run(
     elif config.tts_engine == "kokoro":
         generate_kwargs["voice"] = "balanced_calm"
 
-    if config.voice_slug:
-        generate_kwargs["f5_voice_slug"] = config.voice_slug
+    voice_slug = config.voice_slug if config.tts_engine in _VOICE_SLUG_ENGINES else None
+    if voice_slug:
+        generate_kwargs["f5_voice_slug"] = voice_slug
 
     generate_kwargs.update(pipeline_kwargs)
 
@@ -718,7 +722,7 @@ def run(
                 "tts_engine": config.tts_engine,
                 "generator": generator_engine.name,
                 "judge": judge_engine.name,
-                "voice": config.voice_slug,
+                "voice": voice_slug,
                 "background": background_label,
                 "background_path": background_path,
                 "changelog": outcome.changelog,
@@ -752,5 +756,5 @@ def run(
         genre=config.genre,
         angle=config.angle,
         draft_script=outcome.draft_script,
-        voice=config.voice_slug or "",
+        voice=voice_slug or "",
     )

@@ -162,5 +162,34 @@ class TestAutoGenerateHandlerErrorGuard(unittest.TestCase):
         self.assertEqual(outputs[-1][3], "Failed: ")
 
 
+class TestStatusLineVoice(unittest.TestCase):
+    def _status(self, voice):
+        from types import SimpleNamespace
+
+        class FakeRun(_FakeEmptyErrorRun):
+            def __init__(self, prompt, config=None, **kwargs):
+                super().__init__(prompt, config=config, **kwargs)
+                self.error = None
+                self.result = SimpleNamespace(
+                    genre="g", angle="a", background="bg", voice=voice,
+                    estimated_sec=300.0, violations=[], audio_path="", script="",
+                    changelog="",
+                )
+
+        with patch.dict(os.environ, {}, clear=False):
+            with patch("core.auto_tab.StreamingRun", FakeRun):
+                outputs = list(auto_generate_handler(
+                    "stress_relief", "medium", "", "meditation", "f5",
+                    "ollama:x", "ollama:x", "ollama:x",
+                ))
+        return outputs[-1][3]
+
+    def test_status_names_the_voice(self):
+        self.assertIn("Voice: Delilah.", self._status("Delilah"))
+
+    def test_status_says_default_when_no_voice(self):
+        self.assertIn("Voice: default.", self._status(""))
+
+
 if __name__ == "__main__":
     unittest.main()
