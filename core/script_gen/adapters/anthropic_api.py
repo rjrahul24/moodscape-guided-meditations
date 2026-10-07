@@ -21,6 +21,7 @@ and stays consistent (in attempt count) with the openai_compat adapter.
 import os
 
 from core.script_gen.engine import ScriptEngine
+from core.script_gen.sampling import SamplingParams
 
 # Total attempts (1 initial + retries) the SDK will make on a retryable
 # error. Overridable with the same env var openai_compat.py uses, so the
@@ -95,11 +96,12 @@ class AnthropicEngine(ScriptEngine):
         *,
         max_tokens: int = 4096,
         temperature: float = 1.0,
+        sampling: SamplingParams | None = None,
     ) -> str:
         client = self._get_client()
 
-        # temperature is deliberately not forwarded: sampling parameters are
-        # rejected on current thinking-enabled models.
+        # sampling (temperature/top_p/presence_penalty) is deliberately not forwarded:
+        # thinking-enabled models reject sampling parameters.
         try:
             with client.messages.stream(
                 model=self._model,

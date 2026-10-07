@@ -11,6 +11,8 @@ Only Claude needs its own adapter.
 
 from abc import ABC, abstractmethod
 
+from core.script_gen.sampling import SamplingParams
+
 # Every entry here is OpenAI-compatible and served by OpenAICompatEngine.
 PROVIDER_BASE_URLS: dict[str, str] = {
     "ollama": "http://localhost:11434/v1",
@@ -45,6 +47,7 @@ class ScriptEngine(ABC):
         *,
         max_tokens: int = 4096,
         temperature: float = 1.0,
+        sampling: SamplingParams | None = None,
     ) -> str:
         """Run one completion and return the assistant's text.
 
@@ -53,6 +56,8 @@ class ScriptEngine(ABC):
             user: User message.
             max_tokens: Ceiling on generated tokens.
             temperature: Sampling temperature.
+            sampling: When given, overrides temperature and adds
+                top_p/presence_penalty where the provider supports them.
 
         Returns:
             The assistant's response as plain text.
@@ -111,6 +116,7 @@ class FakeScriptEngine(ScriptEngine):
         *,
         max_tokens: int = 4096,
         temperature: float = 1.0,
+        sampling: SamplingParams | None = None,
     ) -> str:
         self.calls.append(
             {
@@ -118,6 +124,7 @@ class FakeScriptEngine(ScriptEngine):
                 "user": user,
                 "max_tokens": max_tokens,
                 "temperature": temperature,
+                "sampling": sampling,
             }
         )
         response = self._responses[min(self._index, len(self._responses) - 1)]

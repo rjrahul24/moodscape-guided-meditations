@@ -37,6 +37,7 @@ from core.script_gen.engine import (
     build_engine,
     parse_engine_spec,
 )
+from core.script_gen.sampling import SamplingParams, sampling_for
 from core.script_gen.generator import draft, strip_wrapper
 from core.script_gen.judge import parse_judge_response, repair, review
 from core.script_gen.planner import plan
@@ -73,4 +74,6 @@ __all__ = [
     "repair",
     "review",
     "plan",
+    "SamplingParams",
+    "sampling_for",
 ]

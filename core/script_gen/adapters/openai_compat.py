@@ -19,6 +19,7 @@ import time
 import httpx
 
 from core.script_gen.engine import ScriptEngine
+from core.script_gen.sampling import SamplingParams
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +201,7 @@ class OpenAICompatEngine(ScriptEngine):
         *,
         max_tokens: int = 4096,
         temperature: float = 1.0,
+        sampling: SamplingParams | None = None,
     ) -> str:
         url = f"{self._base_url}/chat/completions"
         payload = {
@@ -211,6 +213,12 @@ class OpenAICompatEngine(ScriptEngine):
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
+        if sampling is not None:
+            payload["temperature"] = sampling.temperature
+            if sampling.top_p is not None:
+                payload["top_p"] = sampling.top_p
+            if sampling.presence_penalty is not None:
+                payload["presence_penalty"] = sampling.presence_penalty
         if self._provider == "ollama":
             payload["reasoning_effort"] = "none"
         # Raises immediately (not retried) if the key is missing -- this is

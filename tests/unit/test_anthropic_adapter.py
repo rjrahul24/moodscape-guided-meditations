@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from unittest.mock import patch
 
 from core.script_gen.adapters.anthropic_api import AnthropicEngine
+from core.script_gen.sampling import SamplingParams
 
 
 @contextmanager
@@ -63,6 +64,14 @@ class StubClient:
 
 
 class TestAnthropicEngine(unittest.TestCase):
+    def test_sampling_accepted_but_not_forwarded(self):
+        client = StubClient([StubBlock("out")])
+        engine = AnthropicEngine("claude-opus-5", client=client)
+        engine.complete("sys", "usr", sampling=SamplingParams(0.7, 0.8, 1.5))
+        kwargs = client.calls[0]
+        for key in ("temperature", "top_p", "presence_penalty"):
+            self.assertNotIn(key, kwargs)
+
     def test_returns_concatenated_text_blocks(self):
         client = StubClient([StubBlock("Hello "), StubBlock("world")])
         engine = AnthropicEngine("claude-opus-5", client=client)
