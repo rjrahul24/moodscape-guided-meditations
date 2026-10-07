@@ -272,8 +272,8 @@ _SAFETY_RULES: list[tuple[str, re.Pattern, str]] = [
         re.compile(
             r"\bhyperventilat\w*"
             r"|\bbreath\s+of\s+fire\b"
-            r"|\b(?:breath\w*|inhal\w*|exhal\w*)\b(?:\W+\w+){0,6}?\W+as\s+fast\s+as\s+(?:you\s+)?(?:can|possible)\b"
-            r"|\b(?:thirty|forty|fifty|sixty|[3-9]\d|\d{3,})\s+(?:fast|quick|rapid|sharp)\s+(?:breaths|exhales|exhalations)\b",
+            r"|\b(?:breath\w*|inhal\w*|exhal\w*)\b(?:\W+\w+){0,6}?\W+as\s+(?:fast|quickly)\s+as\s+(?:you\s+)?(?:can|possible)\b"
+            r"|\b(?:thirty|forty|fifty|sixty|[3-9]\d|\d{3,})\s+(?:fast|quick|quickly|rapid|sharp)(?:,?\s+\w+)?,?\s+(?:breaths|exhales|exhalations)\b",
             re.IGNORECASE,
         ),
         "Rapid or forced breathing. Hyperventilation can trigger panic, dizziness "
@@ -283,9 +283,9 @@ _SAFETY_RULES: list[tuple[str, re.Pattern, str]] = [
         "PAIN_ELIMINATION",
         re.compile(
             r"\b(?:breathe|send|move|direct)\b(?:\W+\w+){0,4}?\W+(?:into|toward)\s+(?:the|your)\s+pain\b"
-            r"(?:\W+\w+){0,6}?\W+until\s+it\s+(?:disappears|vanishes|goes\s+away|is\s+gone|dissolves)\b"
+            r"(?:\W+\w+){0,6}?\W+until\s+(?:it|(?:the|your)\s+pain)\s+(?:(?:is|has|gets)\s+)?(?:\w+ly\s+)?(?:disappears|vanishes|goes\s+away|gone|dissolves|fades(?:\s+away)?|melts(?:\s+away)?)\b"
             r"|\bmake\s+(?:the|your)\s+pain\s+(?:disappear|vanish|go\s+away)\b"
-            r"|\b(?:the|your)\s+pain\s+will\s+(?:disappear|vanish|go\s+away|dissolve)\b",
+            r"|\b(?:the|your)\s+pain\s+will\s+(?:\w+ly\s+)?(?:disappear|vanish|go\s+away|dissolve|fade(?:\s+away)?|melt(?:\s+away)?|be\s+gone)\b",
             re.IGNORECASE,
         ),
         "Promises to remove pain. That is a medical outcome claim. Invite the "
@@ -294,7 +294,7 @@ _SAFETY_RULES: list[tuple[str, re.Pattern, str]] = [
     (
         "ENERGY_HEALING_CLAIM",
         re.compile(
-            r"\b(?:chakras?|energy|energies|vibrations?|frequenc(?:y|ies)|aura)\s+(?:will\s+)?(?:heal|cure|cleanse|repair)s?\b",
+            r"\b(?:chakras?|energy|energies|vibrations?|frequenc(?:y|ies)|aura)\s+(?:(?:will|can|could|may)\s+)?(?:heal|cure|cleanse|repair)s?\b",
             re.IGNORECASE,
         ),
         "Energetic-healing claim. Describe the practice, never a healing power.",

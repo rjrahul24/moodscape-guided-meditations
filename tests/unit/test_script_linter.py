@@ -535,3 +535,36 @@ class TestNewSafetyRules(unittest.TestCase):
     def test_tags_and_curly_quotes_do_not_defeat_new_rules(self):
         self.assertIn("RAPID_BREATHING", self.codes("Don’t stop, breathe as fast as [pause:2s] you can."))
         self.assertIn("PAIN_ELIMINATION", self.codes("Breathe into the pain [pause:3s] until it disappears."))
+
+
+class TestNewSafetyRulesFixRound1(unittest.TestCase):
+    def codes(self, text):
+        from core.script_gen.linter import check_safety
+        return [v.code for v in check_safety(text)]
+
+    def test_widened_positives(self):
+        cases = {
+            "RAPID_BREATHING": ("Breathe in and out as quickly as you can.",
+                                "Breathe in and out as quickly as possible.",
+                                "Take thirty fast, deep breaths."),
+            "PAIN_ELIMINATION": ("Breathe into the pain until it fully disappears.",
+                                 "Breathe into the pain until the pain is gone.",
+                                 "Your pain will fade away.",
+                                 "Your pain will melt away.",
+                                 "The pain will be gone."),
+            "ENERGY_HEALING_CLAIM": ("This energy can heal you.",
+                                     "Vibrations could cure you."),
+        }
+        for code, texts in cases.items():
+            for text in texts:
+                self.assertIn(code, self.codes(text), text)
+
+    def test_widened_negatives(self):
+        for text in ("Notice the energy in your hands.",
+                     "Breathe toward the pain, letting it be as it is.",
+                     "The sound will fade away.",
+                     "An exhale as long as you can comfortably make it.",
+                     "Take thirty slow breaths.",
+                     "Take twenty gentle pumps at your own pace."):
+            self.assertEqual([c for c in self.codes(text) if c in
+                              ("RAPID_BREATHING", "PAIN_ELIMINATION", "ENERGY_HEALING_CLAIM")], [], text)
