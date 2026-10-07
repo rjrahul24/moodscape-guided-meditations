@@ -160,6 +160,33 @@ configuration: `MOODSCAPE_E2E=1` enables the real-audio end-to-end test
 (`tests/integration/test_script_gen_live.py`), which reads
 `MOODSCAPE_SCRIPT_GENERATOR` / `_JUDGE` to know what to call.
 
+## Sampling
+
+Each model call uses per-stage sampling from `script_gen/sampling.py :: sampling_for(stage, engine_name)`, recorded in `meta.json` under `"sampling"`. Stages: `planner`, `writer`, `judge`, `repair`. First matching row wins; unmatched models get temperature 1.0 only.
+
+| Model family | Stages | temperature | top_p | presence_penalty |
+|---|---|---|---|---|
+| `qwen3*` | planner, writer | 0.7 | 0.80 | 1.5 |
+| `qwen3*` | judge, repair | 0.7 | 0.80 | 0.0 |
+| `gemma4*` | all | 1.0 | 0.95 | unset |
+
+Override any value with `MOODSCAPE_SAMPLING_<STAGE>_<FIELD>` (for example `MOODSCAPE_SAMPLING_WRITER_TEMPERATURE=0.9`; `FIELD` is `TEMPERATURE`, `TOP_P` or `PRESENCE_PENALTY`; `none` unsets). A non-numeric value raises an error naming the variable.
+
+`top_k` and `min_p` are deliberately absent. The installed Ollama Modelfiles already set `top_k` (qwen 20, gemma 64), and the OpenAI-compatible `/v1` endpoint cannot override it anyway, so `/v1` is enough.
+
+## Voices
+
+For engines that take a voice slug (f5, chatterbox, qwen3), `core/voice_selection.py` picks the narrator per genre family from measured reference-clip traits (speaking rate, median pitch, pitch range, brightness). Each family maps to a profile and the voice scoring highest on it (z-scored across the pool) narrates:
+
+| Family | Profile | Current pick |
+|---|---|---|
+| Sleep & Rest, Stress & Anxiety | calm | Delilah |
+| Morning & Energy, Body & Movement | energy | Eryn |
+| Emotional, Presence | expressive | Brittney |
+| Focus & Work, Breathwork | steady | Clara |
+
+Override per family in `assets/speakers/voice_map.toml` (copy `voice_map.example.toml`); an unknown slug raises an error. Measured traits are cached in `var/voice_traits.json`, keyed by filename, size and mtime. The chosen voice is recorded in `meta.json` under `"voice"`. Kokoro is unaffected. Tests stub selection through an autouse fixture in `tests/conftest.py`; mark a test `real_voice_selection` to opt out.
+
 ## Model spec format
 
 Every generator and judge is named by a `provider:model` string, parsed by
@@ -270,12 +297,20 @@ codes except the two advisory ones below are **FATAL**.
 | `OUTCOME_PROMISE` | FATAL | Safety | A guaranteed emotional outcome ("you will be completely calm", "this will eliminate your stress"). |
 | `INVALIDATING` | FATAL | Safety | Instructions like "don't feel anxious" or "there's nothing wrong with you" that dismiss the listener's actual state. |
 | `DISSOCIATION` | FATAL | Safety | Dissociation-adjacent imagery ("leave your body", "float away from yourself") — contraindicated for trauma survivors. |
-| `BREATH_HOLD` | FATAL | Safety | An instructed breath hold longer than 7 seconds — a real risk for listeners with panic disorder or asthma. |
+| `BREATH_HOLD` | FATAL | Safety | An instructed breath hold longer than 7 seconds (or the pack's stricter `max_breath_hold_sec`) — a real risk for listeners with panic disorder or asthma. |
+| `RAPID_BREATHING` | FATAL | Safety | Hyperventilation, "breath of fire", "as fast as you can" breathing, or a count of 30+ fast breaths. |
+| `PAIN_ELIMINATION` | FATAL | Safety | A promise that breathing or attention will make pain disappear. |
+| `ENERGY_HEALING_CLAIM` | FATAL | Safety | Chakras, energy, vibrations, frequencies or aura said to heal, cure, cleanse or repair. |
+| `MISSING_DISCLAIMER` | FATAL | Safety | Pack has `requires_disclaimer = true` and the opening lacks a breathwork contraindication line (pregnancy, heart or respiratory condition, lightheadedness: return to natural breathing). |
 | `ORIGINALITY_COSINE_HIGH` | FATAL | Originality | Cosine similarity to same-genre corpus ≥ `MOODSCAPE_ORIGINALITY_FATAL` (default 0.80) — near-verbatim regeneration. |
 | `ORIGINALITY_RARE_NGRAM` | FATAL | Originality | A lifted 5-gram passage (document frequency ≤ 2 across entire corpus) found in the script. |
 | `ORIGINALITY_COSINE_MID` | ADVISORY | Originality | Cosine similarity to same-genre corpus ≥ `MOODSCAPE_ORIGINALITY_ADVISORY` (default 0.65, < fatal threshold) — close enough to concern, seeded into next run's avoid-list. |
 | `BANNED_PHRASE` | FATAL | Originality | A genre's `banned` list contains this substring (case-insensitive match). |
 | `DURATION_OUT_OF_WINDOW` | ADVISORY | Duration | The estimated runtime falls outside the selected duration band's range. |
+| `SLOP_DENSITY` | ADVISORY | Style | Stock meditation phrasing above 2.0 hits per 150 words (`script_gen/slop.py`). |
+| `SLOP_HARD` | ADVISORY | Style | A hard-listed cliche ("tapestry", "melt away", "healing light", ...). |
+
+Slop advisories ride along in repair prompts under a "Style (lower priority, fix only while making the changes above)" section, but they never trigger a repair on their own. Keep them ADVISORY: a weaker local model would otherwise fail on style alone.
 
 The safety patterns are matched case-insensitively against tag-stripped
 prose, with typographic apostrophes (U+2019, U+2018, U+02BC, U+00B4, U+0060)

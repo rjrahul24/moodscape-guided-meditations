@@ -50,7 +50,9 @@ python scripts/ab_export.py --a <base>/<config> --b <new>/<config> --out var/eva
 │   ├── upload_music/                      # Background instrumental (engine + arrange/length-fit)
 │   ├── script_gen/                    # prompt → validated script (planner + generator + judge + linter)
 │   │   └── planner.py                 # Pass 0: genre pack + angle → prose creative brief
+│   │   # also: sampling.py (per-stage sampling) · slop.py (slop lexicon) · guide_context.py (guide placeholders)
 │   ├── auto_generate.py               # orchestrator: genre → planner → script → music → pipeline
+│   ├── voice_selection.py             # per-genre-family narrator voice from measured clip traits
 │   ├── background_picker.py           # tag-filtered pick from assets/backgrounds/
 │   ├── streaming_run.py               # threaded progress streaming for the UI
 │   └── auto_tab.py                    # Gradio "Auto-Generate" tab (peer of "Manual" under app.py's gr.Tabs())
@@ -156,13 +158,14 @@ Full detail: [docs/auto_generation/README.md](docs/auto_generation/README.md).
 
 ## Top Gotchas
 
-The eight that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
+The nine that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
 
 - **MPS bus error on exit** → `atexit.register(lambda: os._exit(0))` in `app.py` — do not remove.
 - **Kokoro forced to CPU** → MPS causes deallocation bus errors. British voices (`bf_*`, `bm_*`) need `KPipeline(lang_code="b")`.
 - **No pedalboard `Limiter`** → pedalboard 0.9.23's `Limiter` inflates sub-threshold signals ~+4.75 dB and adds broadband "static". It was removed from all music + master chains. Peak control is `mixer.true_peak_limit()` at export (LUFS-normalize → true-peak limit to −1 dBTP).
 - **Breathing duck** → `mixer.mix()` uses `apply_breathing_duck` (deep gradual S-curve, rises in pauses). Bed/duck levels are auto-calibrated per session (`calibrate_music_bed`, targets: bed 14.5 LU under voice in pauses, 30.5 LU under during speech); `MOODSCAPE_ADAPTIVE_BED=0` restores the fixed −16/−16 constants. The old multiband/`hold_ms` reactive ducker has been removed.
 - **Intro fade-in** → default **1.5 s**, gentle exponential (rising steepness **2.0**, not 4.0). A 3 s steepness-4 fade read as "2–3 s of silence then music". `apply_fades` uses steepness 2.0 for the rising curve only (fade-out stays 4.0). Slider in `app.py`, default in `pipeline.generate`.
+- **Prompting guides are templates.** `{{NAME}}` placeholders in `docs/prompting_guides/vocal_*` are rendered from code constants by `script_gen/guide_context.py`. Never hard-code a chunk limit, speed, WPM or pause length in a guide. An unknown placeholder fails the run before any LLM call.
 - **Fatal vs advisory violations** → `script_gen/linter.py` fails the job for
   safety hard-blocks and malformed markers, but renders anyway (with a warning)
   for duration drift and style issues. Treating every violation as fatal makes
