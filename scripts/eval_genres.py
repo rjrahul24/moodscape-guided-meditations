@@ -24,9 +24,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.auto_generate import AutoConfig, run  # noqa: E402
+from core.eval.runner_support import (  # noqa: E402
+    fresh_job_corpus,
+    prepare_snapshot,
+    stale_case_dirs,
+    write_results,
+)
 from core.eval.report import compute_run_metrics, summarize  # noqa: E402
 from core.eval.testset import load_testset  # noqa: E402
 from core.genres import load_all_packs, load_pack  # noqa: E402
+from core.originality import CORPUS_DIR  # noqa: E402
 
 
 def _parse_config(spec: str) -> tuple[str, str, str]:
@@ -49,6 +56,8 @@ def main() -> int:
     parser.add_argument("--metrics", action="store_true", help="compute script/speech/mix metrics per run")
     parser.add_argument("--export-stems", action="store_true", help="export voice stem so speech metrics avoid the bed")
     parser.add_argument("--engine", default="f5", help="TTS engine for AutoConfig.tts_engine (f5, qwen3, ...)")
+    parser.add_argument("--corpus-from", default="",
+                        help="earlier eval --out dir; reuse its corpus_snapshot instead of snapshotting the live corpus")
     args = parser.parse_args()
 
     slugs = (
@@ -56,7 +65,21 @@ def main() -> int:
         or sorted(load_all_packs())
     )
     out_root = Path(args.out)
+    parsed_configs = [_parse_config(spec) for spec in args.configs]
+    for name, _w, _j in parsed_configs:
+        stale = stale_case_dirs(out_root / name)
+        if stale:
+            print(f"Refusing to start: {out_root / name} already contains case dirs "
+                  f"({', '.join(stale[:5])}{'...' if len(stale) > 5 else ''}). Stale mixes would confuse "
+                  "A/B export; use a new --out or delete the directory.", file=sys.stderr)
+            return 2
     out_root.mkdir(parents=True, exist_ok=True)
+    try:
+        snapshot = prepare_snapshot(out_root, CORPUS_DIR, Path(args.corpus_from) if args.corpus_from else None)
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(f"Originality corpus snapshot: {snapshot} (live corpus is never written)", flush=True)
     rows = []
 
     if args.testset:
@@ -69,8 +92,7 @@ def main() -> int:
         from core.eval.speech_metrics import WhisperTranscriber
         transcriber = WhisperTranscriber()
 
-    for spec in args.configs:
-        name, writer, judge = _parse_config(spec)
+    for name, writer, judge in parsed_configs:
         os.environ["MOODSCAPE_SCRIPT_PLANNER"] = writer
         os.environ["MOODSCAPE_SCRIPT_GENERATOR"] = writer
         os.environ["MOODSCAPE_SCRIPT_JUDGE"] = judge
@@ -78,6 +100,7 @@ def main() -> int:
         for job_id, slug, band, seed in jobs:
             out_dir = out_root / name / job_id
             out_dir.mkdir(parents=True, exist_ok=True)
+            job_corpus = fresh_job_corpus(snapshot, out_dir)
             started = time.monotonic()
             try:
                 from core.pipeline import MeditationPipeline
@@ -90,7 +113,9 @@ def main() -> int:
                 result = run(
                     "",
                     genre=slug,
-                    config=AutoConfig.from_genre(load_pack(slug), band=band, tts_engine=args.engine),
+                    config=AutoConfig.from_genre(
+                        load_pack(slug), band=band, tts_engine=args.engine, corpus_dir=job_corpus,
+                    ),
                     pipeline=pipeline,
                     rng=random.Random(seed) if seed is not None else None,
                     **extra,
@@ -116,17 +141,19 @@ def main() -> int:
                         moved = out_dir / "narration_stem.wav"
                         shutil.move(voice_stem, moved)
                         voice_stem = str(moved)
-                    metrics = compute_run_metrics(
-                        script=result.script,
-                        draft=result.draft_script or None,
-                        engine=args.engine,
-                        content_type=load_pack(slug).content_type,
-                        audio_path=str(audio_out),
-                        voice_stem_path=voice_stem,
-                        estimated_sec=result.estimated_sec,
-                        transcriber=transcriber,
-                    )
-                    transcriber.unload()  # keep Whisper out of RAM while the next job's LLM loads
+                    try:
+                        metrics = compute_run_metrics(
+                            script=result.script,
+                            draft=result.draft_script or None,
+                            engine=args.engine,
+                            content_type=load_pack(slug).content_type,
+                            audio_path=str(audio_out),
+                            voice_stem_path=voice_stem,
+                            estimated_sec=result.estimated_sec,
+                            transcriber=transcriber,
+                        )
+                    finally:
+                        transcriber.unload()  # never leave Whisper resident, even after an exception
                     (out_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
                     row["metrics"] = metrics
                 rows.append(row)
@@ -137,14 +164,15 @@ def main() -> int:
                     "seconds": round(time.monotonic() - started, 1),
                     "error": f"{type(exc).__name__}: {exc}",
                 })
+            finally:
+                shutil.rmtree(job_corpus, ignore_errors=True)
+            write_results(out_root, rows, summarize(rows))
             print(json.dumps({k: v for k, v in rows[-1].items() if k != "metrics"}), flush=True)
 
     if transcriber is not None:
         transcriber.unload()
-    (out_root / "summary.md").write_text(summarize(rows), encoding="utf-8")
+    write_results(out_root, rows, summarize(rows))
     print("\n" + summarize(rows))
-
-    (out_root / "results.json").write_text(json.dumps(rows, indent=2), encoding="utf-8")
     ok = sum(1 for row in rows if row["ok"])
     print(f"\n{ok}/{len(rows)} runs succeeded. Results: {out_root / 'results.json'}")
     return 0 if ok else 1

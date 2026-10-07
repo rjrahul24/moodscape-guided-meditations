@@ -392,24 +392,38 @@ Every quality change is judged two ways: automatic metrics catch regressions,
 and a blind A/B listening test makes the ship decision. Metrics can disagree
 with ears, so metrics reject bad output and ears choose between good outputs.
 
-1. **Baseline** (before the change):
+1. **Baseline** (before the change). The runner does not take the heavy-model
+   lock itself, so hold `var/heavy-model.lock` for the whole run (`mkdir
+   var/heavy-model.lock` to acquire, `rm -rf var/heavy-model.lock` to release):
    ```bash
    caffeinate -i .venv/bin/python scripts/eval_genres.py --testset eval/testset.toml \
        --metrics --export-stems --configs "baseline=ollama:qwen3.8:27b|ollama:gemma4:31b" \
        --out var/eval/base
    ```
 2. **Challenger:** apply the change (or set its flag) and run the same command
-   with `--out var/eval/new`.
+   with `--out var/eval/new --corpus-from var/eval/base`. Every run works on a
+   frozen copy of the originality corpus (`<out>/corpus_snapshot`, copied from
+   `var/originality` at start) and each job gets its own fresh copy, so the live
+   corpus is never read mid-run or written, and `--corpus-from` gives the
+   challenger the baseline's exact corpus state. The runner refuses to start if
+   `--out/<config>` already holds case dirs. `results.json` and `summary.md`
+   are rewritten after every job.
 3. **Compare metrics:** read `summary.md` in both dirs. Columns: slop
    density, judge edit ratio, Whisper CER, internal gaps, |1 - duration
-   ratio|, and dual-mono LUFS.
+   ratio|, and dual-mono LUFS. Each cell is `median (n=count)`; CER and gaps
+   use only rows scored on the voice stem (`stem/passed` counts them).
 4. **Export blind pairs:**
    `python scripts/ab_export.py --a var/eval/base/baseline --b var/eval/new/baseline --out var/eval/ab-001`
-   A case shorter than one excerpt yields a single "whole" pair.
+   A case shorter than one excerpt yields a single "whole" pair; otherwise each
+   case gives up to 3 excerpts (24 cases = up to 72 pairs). The shuffle seed is
+   random unless `--seed` is passed; it is printed and recorded in the hidden
+   `.key.json` (do not open it before scoring).
 5. **Listen:** play each `pairs/NN_A.wav` against `NN_B.wav` and fill
    `sheet.csv` (`A`, `B` or `same`/`tie`/`=`, plus a one-word reason).
 6. **Score:** `python scripts/ab_score.py --ab var/eval/ab-001`. SHIP means
-   the challenger won >= 60% of non-tie pairs with p < 0.05 (e.g. 17 of 24).
+   the challenger won >= 60% of non-tie pairs with p < 0.05 (e.g. 44 of
+   72 decided pairs; 17 of 24 only applies when a run yields 24 pairs).
+   Sheet pairs missing from `sheet.csv` count as unanswered; duplicate ids raise.
    The report includes an `unanswered` count; the verdict is `INCOMPLETE`
    while any pair is unanswered.
 
