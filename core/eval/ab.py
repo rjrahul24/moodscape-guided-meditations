@@ -2,13 +2,14 @@
 """Blind A/B listening: excerpt cutting, level matching, pairing, scoring.
 
 Convention: run A is the baseline, run B the challenger. On disk the arms are
-shuffled per pair into files labelled A/B; only key.json knows which is which.
+shuffled per pair into files labelled A/B; only the hidden .key.json knows which is which.
 """
 
 import csv
 import json
 import math
 import random
+import secrets
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +20,9 @@ POSITIONS = (("start", 0.10), ("middle", 0.50), ("end", 0.85))
 SHIP_RATE = 0.60
 SHIP_P = 0.05
 TIE_CHOICES = ("SAME", "TIE", "=")
+KEY_NAME = ".key.json"
+LEGACY_KEY_NAME = "key.json"
+PEAK_LIMIT = 0.98
 
 
 def find_case_audio(run_dir: Path) -> dict[str, Path]:
@@ -44,12 +48,37 @@ def cut_excerpts(audio: np.ndarray, sr: int, *, excerpt_sec: float = 75.0) -> li
     return out
 
 
-def level_match(audio: np.ndarray, sr: int, target_lufs: float = -20.0) -> np.ndarray:
+def level_gain(audio: np.ndarray, sr: int, target_lufs: float = -20.0) -> float:
+    """Linear gain that brings audio to target_lufs (1.0 when loudness is unmeasurable)."""
     measured = loudness(audio, sr)["integrated_lufs_dual_mono"]
     if measured is None:
-        return audio
-    gain = 10.0 ** ((target_lufs - measured) / 20.0)
-    return np.clip(audio * gain, -1.0, 1.0).astype(np.float32)
+        return 1.0
+    return 10.0 ** ((target_lufs - measured) / 20.0)
+
+
+def level_match(audio: np.ndarray, sr: int, target_lufs: float = -20.0, *, gain_scale: float = 1.0) -> np.ndarray:
+    """Scale audio to target_lufs without clipping.
+
+    If the gain would push the peak past PEAK_LIMIT it is reduced instead of
+    hard-clipping. gain_scale lets a caller apply the same extra reduction to
+    both arms of a pair so their relative level is preserved.
+    """
+    gain = level_gain(audio, sr, target_lufs) * gain_scale
+    peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
+    if peak * gain > PEAK_LIMIT:
+        gain = PEAK_LIMIT / peak
+    return (audio * gain).astype(np.float32)
+
+
+def pair_gain_scale(a: np.ndarray, b: np.ndarray, sr: int, target_lufs: float = -20.0) -> float:
+    """Shared reduction (<= 1) so neither arm exceeds PEAK_LIMIT at its matched gain."""
+    scale = 1.0
+    for audio in (a, b):
+        peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
+        needed = peak * level_gain(audio, sr, target_lufs)
+        if needed > PEAK_LIMIT:
+            scale = min(scale, PEAK_LIMIT / needed)
+    return scale
 
 
 def build_pairs(
@@ -57,7 +86,7 @@ def build_pairs(
     challenger_dir: Path,
     out_dir: Path,
     *,
-    seed: int = 0,
+    seed: int | None = None,
     excerpt_sec: float = 75.0,
 ) -> int:
     import soundfile as sf
@@ -67,6 +96,8 @@ def build_pairs(
     if missing:
         raise ValueError(f"Cases present in only one run: {', '.join(missing)}")
 
+    if seed is None:
+        seed = secrets.randbits(32)
     rng = random.Random(seed)
     pairs_dir = Path(out_dir) / "pairs"
     pairs_dir.mkdir(parents=True, exist_ok=True)
@@ -88,13 +119,14 @@ def build_pairs(
             arms = [("baseline", a_ex), ("challenger", b_ex)]
             rng.shuffle(arms)
             pair_id = f"{index:02d}"
+            scale = pair_gain_scale(arms[0][1], arms[1][1], sr_a)
             for label, (_arm, excerpt) in zip(("A", "B"), arms):
-                sf.write(pairs_dir / f"{pair_id}_{label}.wav", level_match(excerpt, sr_a), sr_a)
+                sf.write(pairs_dir / f"{pair_id}_{label}.wav", level_match(excerpt, sr_a, gain_scale=scale), sr_a)
             key[pair_id] = {"A": arms[0][0], "B": arms[1][0], "case": case, "position": pos,
                             "truncated": bool(a_tr or b_tr)}
             index += 1
 
-    (Path(out_dir) / "key.json").write_text(json.dumps({"seed": seed, "pairs": key}, indent=2), encoding="utf-8")
+    (Path(out_dir) / KEY_NAME).write_text(json.dumps({"seed": seed, "pairs": key}, indent=2), encoding="utf-8")
     with open(Path(out_dir) / "sheet.csv", "w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
         writer.writerow(["pair", "choice", "reason"])
@@ -109,31 +141,48 @@ def sign_test_p(wins: int, n: int) -> float:
     return sum(math.comb(n, k) for k in range(wins, n + 1)) / 2 ** n
 
 
+def _load_key(ab_dir: Path) -> dict:
+    path = Path(ab_dir) / KEY_NAME
+    if not path.is_file():
+        path = Path(ab_dir) / LEGACY_KEY_NAME
+    return json.loads(path.read_text(encoding="utf-8"))["pairs"]
+
+
 def score(ab_dir: Path) -> dict:
-    key = json.loads((Path(ab_dir) / "key.json").read_text(encoding="utf-8"))["pairs"]
+    key = _load_key(ab_dir)
     challenger = baseline = ties = unanswered = 0
     by_position: dict[str, dict[str, int]] = {}
     with open(Path(ab_dir) / "sheet.csv", newline="", encoding="utf-8") as fh:
-        for row in csv.DictReader(fh):
-            choice = row["choice"].strip().upper()
-            if row["pair"] not in key:
-                raise ValueError(f"Pair {row['pair']!r} in sheet.csv is not in key.json")
-            entry = key[row["pair"]]
-            bucket = by_position.setdefault(entry["position"], {"challenger": 0, "baseline": 0, "ties": 0})
-            if choice in ("A", "B"):
-                winner = entry[choice]
-                if winner == "challenger":
-                    challenger += 1
-                else:
-                    baseline += 1
-                bucket[winner] += 1
-            elif choice in TIE_CHOICES:
-                ties += 1
-                bucket["ties"] += 1
-            elif choice:
-                raise ValueError(f"Pair {row['pair']}: invalid choice {row['choice']!r} (use A, B or same)")
+        reader = csv.DictReader(fh)
+        missing_cols = [c for c in ("pair", "choice") if c not in (reader.fieldnames or [])]
+        if missing_cols:
+            raise ValueError(f"sheet.csv is missing required column(s): {', '.join(missing_cols)}")
+        rows = list(reader)
+    seen: set[str] = set()
+    duplicates = sorted({r["pair"] for r in rows if r["pair"] in seen or seen.add(r["pair"])})
+    if duplicates:
+        raise ValueError(f"Duplicate pair id(s) in sheet.csv: {', '.join(duplicates)}")
+    unanswered += len(set(key) - seen)  # pairs absent from the sheet were never answered
+    for row in rows:
+        choice = (row["choice"] or "").strip().upper()
+        if row["pair"] not in key:
+            raise ValueError(f"Pair {row['pair']!r} in sheet.csv is not in the answer key")
+        entry = key[row["pair"]]
+        bucket = by_position.setdefault(entry["position"], {"challenger": 0, "baseline": 0, "ties": 0})
+        if choice in ("A", "B"):
+            winner = entry[choice]
+            if winner == "challenger":
+                challenger += 1
             else:
-                unanswered += 1
+                baseline += 1
+            bucket[winner] += 1
+        elif choice in TIE_CHOICES:
+            ties += 1
+            bucket["ties"] += 1
+        elif choice:
+            raise ValueError(f"Pair {row['pair']}: invalid choice {row['choice']!r} (use A, B or same)")
+        else:
+            unanswered += 1
     n = challenger + baseline
     rate = challenger / n if n else 0.0
     p = sign_test_p(challenger, n)

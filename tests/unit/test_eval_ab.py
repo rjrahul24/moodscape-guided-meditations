@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from core.eval.ab import build_pairs, cut_excerpts, find_case_audio, level_match, score, sign_test_p
+from core.eval.ab import build_pairs, cut_excerpts, find_case_audio, level_gain, level_match, pair_gain_scale, score, sign_test_p
 from core.eval.mix_metrics import loudness
 
 SR = 8000
@@ -64,8 +64,8 @@ class TestPairs(unittest.TestCase):
             n = build_pairs(a, b, Path(tmp) / "ab1", seed=7, excerpt_sec=30)
             build_pairs(a, b, Path(tmp) / "ab2", seed=7, excerpt_sec=30)
             self.assertEqual(n, 6)
-            key1 = json.loads((Path(tmp) / "ab1" / "key.json").read_text())
-            key2 = json.loads((Path(tmp) / "ab2" / "key.json").read_text())
+            key1 = json.loads((Path(tmp) / "ab1" / ".key.json").read_text())
+            key2 = json.loads((Path(tmp) / "ab2" / ".key.json").read_text())
             self.assertEqual(key1, key2)
             self.assertEqual({k["A"] for k in key1["pairs"].values()} | {k["B"] for k in key1["pairs"].values()},
                              {"baseline", "challenger"})
@@ -105,6 +105,40 @@ class TestScore(unittest.TestCase):
         self.assertEqual(self._scored(["B"] * 18 + ["A"] * 6)["verdict"], "NO-SHIP")
 
 
+class TestLevelMatchNoClip(unittest.TestCase):
+    def test_reduces_gain_instead_of_clipping(self):
+        quiet_peaky = _noise(20, 0.01, 0)
+        quiet_peaky[100] = 0.9  # high crest factor: loudness gain would push this past 1.0
+        out = level_match(quiet_peaky, SR, target_lufs=-20.0)
+        self.assertLessEqual(float(np.max(np.abs(out))), 0.98 + 1e-6)
+        self.assertGreater(float(np.max(np.abs(out))), 0.97)  # scaled, not flattened
+
+    def test_pair_keeps_relative_level(self):
+        a = _noise(20, 0.01, 0)
+        a[100] = 0.9
+        b = _noise(20, 0.05, 1)
+        scale = pair_gain_scale(a, b, SR)
+        self.assertLess(scale, 1.0)
+        ma = level_match(a, SR, gain_scale=scale)
+        mb = level_match(b, SR, gain_scale=scale)
+        want = level_gain(a, SR) / level_gain(b, SR)
+        got = (np.max(np.abs(ma)) / np.max(np.abs(a))) / (np.max(np.abs(mb)) / np.max(np.abs(b)))
+        self.assertAlmostEqual(float(got), want, places=3)
+        self.assertLessEqual(float(np.max(np.abs(mb))), 0.98 + 1e-6)
+
+
+class TestRandomSeedAndHiddenKey(unittest.TestCase):
+    def test_default_seed_is_random_and_recorded_and_key_is_hidden(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a = _make_run(Path(tmp) / "a", {"x-short": 0.1})
+            b = _make_run(Path(tmp) / "b", {"x-short": 0.2})
+            build_pairs(a, b, Path(tmp) / "ab1", excerpt_sec=30)
+            build_pairs(a, b, Path(tmp) / "ab2", excerpt_sec=30)
+            seeds = [json.loads((Path(tmp) / d / ".key.json").read_text())["seed"] for d in ("ab1", "ab2")]
+            self.assertNotEqual(seeds[0], seeds[1])
+            self.assertFalse((Path(tmp) / "ab1" / "key.json").exists())
+
+
 class TestScoreValidation(unittest.TestCase):
     _scored = TestScore._scored
     def test_invalid_choice_raises(self):
@@ -129,6 +163,33 @@ class TestScoreValidation(unittest.TestCase):
             score(tmp)
 
 
+class TestSheetCompleteness(unittest.TestCase):
+    def _dir(self, sheet: str, n_keys: int = 3, key_name: str = ".key.json") -> Path:
+        tmp = Path(tempfile.mkdtemp())
+        pairs = {f"{i:02d}": {"A": "challenger", "B": "baseline", "case": "c", "position": "start"}
+                 for i in range(n_keys)}
+        (tmp / key_name).write_text(json.dumps({"pairs": pairs}))
+        (tmp / "sheet.csv").write_text(sheet)
+        return tmp
+
+    def test_missing_ids_count_as_unanswered(self):
+        result = score(self._dir("pair,choice,reason\n00,A,\n"))
+        self.assertEqual(result["unanswered"], 2)
+        self.assertEqual(result["verdict"], "INCOMPLETE")
+
+    def test_duplicate_ids_raise(self):
+        with self.assertRaisesRegex(ValueError, "01"):
+            score(self._dir("pair,choice,reason\n00,A,\n01,A,\n01,B,\n02,A,\n"))
+
+    def test_missing_columns_raise(self):
+        with self.assertRaisesRegex(ValueError, "choice"):
+            score(self._dir("pair,reason\n00,\n"))
+
+    def test_legacy_key_json_still_read(self):
+        result = score(self._dir("pair,choice,reason\n00,A,\n01,A,\n02,B,\n", key_name="key.json"))
+        self.assertEqual(result["challenger_wins"], 2)
+
+
 class TestTruncatedPairs(unittest.TestCase):
     def test_short_case_single_pair_equal_length(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -137,7 +198,7 @@ class TestTruncatedPairs(unittest.TestCase):
             sf.write(b / "x-short" / "med_1.wav", _noise(50, 0.2, 3), SR)  # shorter than a (300 s)
             n = build_pairs(a, b, Path(tmp) / "ab", excerpt_sec=75)
             self.assertEqual(n, 1)
-            key = json.loads((Path(tmp) / "ab" / "key.json").read_text())["pairs"]
+            key = json.loads((Path(tmp) / "ab" / ".key.json").read_text())["pairs"]
             self.assertEqual(key["00"]["position"], "whole")
             self.assertTrue(key["00"]["truncated"])
             la = len(sf.read(Path(tmp) / "ab" / "pairs" / "00_A.wav")[0])

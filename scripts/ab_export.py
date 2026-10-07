@@ -7,6 +7,7 @@ Then listen to pairs/NN_A.wav vs NN_B.wav and fill sheet.csv (choice = A, B or s
 """
 
 import argparse
+import secrets
 import sys
 from pathlib import Path
 
@@ -21,9 +22,15 @@ def main() -> int:
     parser.add_argument("--b", required=True, help="challenger config dir")
     parser.add_argument("--out", required=True)
     parser.add_argument("--excerpt-sec", type=float, default=75.0)
-    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=None, help="shuffle seed (default: random, recorded in .key.json)")
     args = parser.parse_args()
-    n = build_pairs(Path(args.a), Path(args.b), Path(args.out), seed=args.seed, excerpt_sec=args.excerpt_sec)
+    seed = args.seed if args.seed is not None else secrets.randbits(32)
+    print(f"A/B shuffle seed: {seed}")
+    try:
+        n = build_pairs(Path(args.a), Path(args.b), Path(args.out), seed=seed, excerpt_sec=args.excerpt_sec)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     print(f"Wrote {n} blind pairs to {Path(args.out) / 'pairs'}. Fill {Path(args.out) / 'sheet.csv'}.")
     return 0
 
