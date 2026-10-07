@@ -766,6 +766,75 @@ class FromGenrePrecedenceTest(unittest.TestCase):
         self.assertEqual(config.target_min_sec, 42.0)
 
 
+class VoiceSelectionWiringTest(unittest.TestCase):
+    def _pack(self):
+        from core.genres import load_pack
+
+        return load_pack("deep_sleep")
+
+    def test_from_genre_sets_voice_slug_from_family(self):
+        pack = self._pack()
+        with patch("core.voice_selection.voice_for_family", return_value="Delilah") as m:
+            config = AutoConfig.from_genre(pack, band="short")
+        self.assertEqual(config.voice_slug, "Delilah")
+        m.assert_called_once_with(pack.family)
+
+    def test_explicit_voice_slug_is_kept(self):
+        with patch("core.voice_selection.voice_for_family", return_value="Delilah") as m:
+            config = AutoConfig.from_genre(self._pack(), band="short", voice_slug="Eryn")
+        self.assertEqual(config.voice_slug, "Eryn")
+        m.assert_not_called()
+
+    def test_kokoro_engine_override_leaves_voice_slug_none(self):
+        with patch("core.voice_selection.voice_for_family", return_value="Delilah") as m:
+            config = AutoConfig.from_genre(self._pack(), band="short", tts_engine="kokoro")
+        self.assertIsNone(config.voice_slug)
+        m.assert_not_called()
+
+    def test_measurement_failure_falls_back_to_none(self):
+        with patch("core.voice_selection.voice_for_family", side_effect=RuntimeError("boom")):
+            with self.assertLogs("core.auto_generate", level="WARNING"):
+                config = AutoConfig.from_genre(self._pack(), band="short")
+        self.assertIsNone(config.voice_slug)
+
+    def test_bad_override_value_error_propagates(self):
+        with patch("core.voice_selection.voice_for_family", side_effect=ValueError("bad map")):
+            with self.assertRaisesRegex(ValueError, "bad map"):
+                AutoConfig.from_genre(self._pack(), band="short")
+
+    def _run(self, config, **kw):
+        with tempfile.TemporaryDirectory() as tmp:
+            pipeline = StubPipeline(Path(tmp))
+            config.background_scan = FAKE_SCAN
+            config.failure_dir = Path(tmp) / "failures"
+            config.target_min_sec, config.target_max_sec = 1.0, 100000.0
+            config.originality = False
+            result = run(
+                "I feel anxious", config=config, pipeline=pipeline,
+                generator_engine=FakeScriptEngine([CLEAN_SCRIPT]),
+                judge_engine=FakeScriptEngine([judged(CLEAN_SCRIPT)]),
+                **kw,
+            )
+            meta = json.loads(Path(result.meta_path).read_text())
+            return pipeline.calls[0], meta, result
+
+    def test_run_passes_voice_and_records_it(self):
+        call, meta, result = self._run(AutoConfig(voice_slug="Delilah"))
+        self.assertEqual(call["f5_voice_slug"], "Delilah")
+        self.assertEqual(meta["voice"], "Delilah")
+        self.assertEqual(result.voice, "Delilah")
+
+    def test_run_without_voice_slug_passes_nothing(self):
+        call, meta, result = self._run(AutoConfig())
+        self.assertNotIn("f5_voice_slug", call)
+        self.assertIsNone(meta["voice"])
+        self.assertEqual(result.voice, "")
+
+    def test_explicit_pipeline_kwarg_wins(self):
+        call, _, _ = self._run(AutoConfig(voice_slug="Delilah"), f5_voice_slug="Eryn")
+        self.assertEqual(call["f5_voice_slug"], "Eryn")
+
+
 class OriginalityIntegrationTest(unittest.TestCase):
     """The core requirement: the same script twice must be caught."""
 

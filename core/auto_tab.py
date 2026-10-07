@@ -93,6 +93,7 @@ def auto_generate_handler(
     status = (
         f"Done. {result.genre} / {result.angle}. "
         f"Background: {result.background}. "
+        f"Voice: {result.voice or 'default'}. "
         f"Estimated {result.estimated_sec / 60:.1f} min."
     )
     advisories = "\n".join(f"- [{v.code}] {v.message}" for v in result.violations)

@@ -131,6 +131,8 @@ class AutoConfig:
     tts_engine: str = "f5"
     speed: float | None = None
     voice: str | None = None
+    # F5/Chatterbox/Qwen3 reference voice; set per genre family by from_genre.
+    voice_slug: str | None = None
     target_min_sec: float = 300.0
     target_max_sec: float = 420.0
     max_repairs: int = 2
@@ -205,6 +207,15 @@ class AutoConfig:
             "target_min_sec": target_min_sec,
             "target_max_sec": target_max_sec,
         }
+        engine = overrides.get("tts_engine", config.tts_engine)
+        if engine in ("f5", "chatterbox", "qwen3") and "voice_slug" not in overrides:
+            try:
+                from core.voice_selection import voice_for_family
+                pack_values["voice_slug"] = voice_for_family(pack.family)
+            except ValueError:
+                raise
+            except Exception as exc:
+                logger.warning("voice selection failed for %s (%s); using engine default voice", pack.family, exc)
         config = replace(config, **pack_values)
         if overrides:
             config = replace(config, **overrides)
@@ -245,6 +256,7 @@ class AutoResult:
     genre: str = ""
     angle: str = ""
     draft_script: str = ""
+    voice: str = ""
 
 
 def _violation_dicts(violations: list[Violation]) -> list[dict]:
@@ -651,6 +663,9 @@ def run(
     elif config.tts_engine == "kokoro":
         generate_kwargs["voice"] = "balanced_calm"
 
+    if config.voice_slug:
+        generate_kwargs["f5_voice_slug"] = config.voice_slug
+
     generate_kwargs.update(pipeline_kwargs)
 
     audio_path, _status = pipeline.generate(
@@ -703,6 +718,7 @@ def run(
                 "tts_engine": config.tts_engine,
                 "generator": generator_engine.name,
                 "judge": judge_engine.name,
+                "voice": config.voice_slug,
                 "background": background_label,
                 "background_path": background_path,
                 "changelog": outcome.changelog,
@@ -736,4 +752,5 @@ def run(
         genre=config.genre,
         angle=config.angle,
         draft_script=outcome.draft_script,
+        voice=config.voice_slug or "",
     )
