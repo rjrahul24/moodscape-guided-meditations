@@ -86,7 +86,7 @@ A double newline (`\n\n`) is automatically converted to a `[pause:{{PARA_PAUSE}}
 
 **Exception:** If one side of a `\n\n` boundary contains only a pause marker (e.g. `[pause:5s]` on its own line), the paragraph break is treated as formatting and no extra pause is added.
 
-**Next to an explicit pause:** A blank line adds {{PARA_PAUSE}}s only when no `[pause:Xs]` is adjacent to it; when a paragraph ends or begins with an explicit pause, the longer of the two wins (they are not added). So `...body. [pause:6s]` followed by a blank line gives 6 seconds, not 6 + {{PARA_PAUSE}}.
+**Next to an explicit pause:** A blank line adds {{PARA_PAUSE}}s only when no `[pause:Xs]` is adjacent to it; when a paragraph ends or begins with an explicit pause, the longer of the two wins (they are not added). So `the body. [pause:6s]` followed by a blank line gives 6 seconds, not 6 + {{PARA_PAUSE}}.
 
 ### Voice Phase Switching
 
@@ -385,7 +385,7 @@ Every pause must be between {{PAUSE_MIN}} and {{PAUSE_MAX}} seconds.
 This is a well-formed script demonstrating all features for F5-TTS:
 
 ```
-Welcome. This is a few quiet minutes, just for you. [pause:3s]
+Welcome to these few quiet minutes, just for you. [pause:3s]
 
 You can keep your eyes open or let them close, whichever feels easier, and you can shift your position at any time. [pause:4s]
 

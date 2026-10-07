@@ -80,8 +80,8 @@ the story winds down:
 ### 4. Punctuation — natural rhythm
 Kokoro reads punctuation for intonation, and the app's prosody pass adds gentle phrasing.
 - **Commas** at every natural clause boundary: "The air is cool, and very still."
-- **Ellipses** (`...`) create a gentle drift on Kokoro (~1.2s settle after). Use them
-  sparingly; an explicit `[pause:Xs]` is exact and counts toward the duration budget:
+- **Pauses:** prefer an explicit `[pause:Xs]` for any deliberate pause; it is exact and
+  counts toward the duration budget. Ellipses (`...`) are rarely, if ever, needed:
   "The light fades slowly. [pause:4s] The water is still."
 - **Periods** keep sentences short and clean.
 
