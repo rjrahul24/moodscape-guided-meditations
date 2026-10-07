@@ -63,17 +63,28 @@ def _value(row: dict, group: str, key: str):
     return abs(1.0 - value) if key == "duration_ratio" else float(value)
 
 
+def _on_stem(row: dict) -> bool:
+    return (row.get("metrics") or {}).get("speech_input") == "voice_stem"
+
+
 def summarize(rows: list[dict]) -> str:
-    """Markdown table: one line per config with pass rate and metric medians."""
+    """Markdown table: one line per config with pass rate and metric medians.
+
+    Each cell is `median (n=count)`. Speech columns use only rows scored on the
+    voice stem (mix-scored speech metrics are contaminated by the bed);
+    `stem/passed` shows how many passed rows that is.
+    """
     configs = list(dict.fromkeys(row["config"] for row in rows))
-    header = "| config | pass | " + " | ".join(c[0] for c in _COLUMNS) + " |"
-    lines = [header, "|" + "---|" * (len(_COLUMNS) + 2)]
+    header = "| config | pass | stem/passed | " + " | ".join(c[0] for c in _COLUMNS) + " |"
+    lines = [header, "|" + "---|" * (len(_COLUMNS) + 3)]
     for config in configs:
         mine = [r for r in rows if r["config"] == config]
         passed = [r for r in mine if r.get("ok")]
+        stem = [r for r in passed if _on_stem(r)]
         cells = []
         for _label, group, key, fmt in _COLUMNS:
-            values = [v for v in (_value(r, group, key) for r in passed) if v is not None]
-            cells.append(fmt.format(statistics.median(values)) if values else "–")
-        lines.append(f"| {config} | {len(passed)}/{len(mine)} | " + " | ".join(cells) + " |")
+            source = stem if group == "speech" else passed
+            values = [v for v in (_value(r, group, key) for r in source) if v is not None]
+            cells.append(f"{fmt.format(statistics.median(values))} (n={len(values)})" if values else "–")
+        lines.append(f"| {config} | {len(passed)}/{len(mine)} | {len(stem)}/{len(passed)} | " + " | ".join(cells) + " |")
     return "\n".join(lines) + "\n"
