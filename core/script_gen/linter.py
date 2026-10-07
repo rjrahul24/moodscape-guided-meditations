@@ -584,12 +584,11 @@ def check_originality(
 
 
 _DISCLAIMER_CONDITION = re.compile(
-    r"\b(?:pregnan\w*|heart|respiratory|light-?headed|dizzy|uncomfortable|unwell)\b", re.IGNORECASE
+    r"\b(?:pregnan\w*|heart\s+(?:condition|disease|problem)\w*|respiratory|light-?headed|dizzy|uncomfortable|unwell)\b", re.IGNORECASE
 )
 _DISCLAIMER_ACTION = re.compile(
     r"\b(?:"
-    r"(?:natural|normal)\s+breath\w*"
-    r"|(?:ordinary|usual|regular|normal|natural|own)\s+(?:breath\w*|rhythm|pace)"
+    r"(?:ordinary|usual|regular|normal|natural)\s+breath\w*"
     r"|breathe\s+(?:normally|naturally|as\s+you\s+usually\s+do)"
     r"|(?:let\s+)?(?:your\s+)?breath\s+return\s+to\s+normal"
     r")\b",
@@ -654,7 +653,10 @@ def check_pack_rules(script: str, pack) -> list[Violation]:
         prose = _normalize_apostrophes(_strip_tags(script))
         words = prose.split()
         opening = " ".join(words[: max(1, int(len(words) * DISCLAIMER_WINDOW))])
-        if not (_DISCLAIMER_CONDITION.search(opening) and _DISCLAIMER_ACTION.search(opening)):
+        # Condition and action must share a sentence, or unrelated phrases
+        # ("your own pace ... uncomfortable") could satisfy the check.
+        sentences = re.split(r"[.!?]+", opening)
+        if not any(_DISCLAIMER_CONDITION.search(s) and _DISCLAIMER_ACTION.search(s) for s in sentences):
             violations.append(Violation(
                 code="MISSING_DISCLAIMER", severity=FATAL,
                 message=("Breathwork session without an early safety line. In the opening, say once: "

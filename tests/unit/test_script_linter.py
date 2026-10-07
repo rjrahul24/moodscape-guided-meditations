@@ -616,6 +616,27 @@ class TestPackRules(unittest.TestCase):
                 text = opening + " " + "Breathe in slowly. " * 40
                 self.assertEqual(check_pack_rules(text, self._pack(requires_disclaimer=True)), [])
 
+    def test_disclaimer_lookalikes_rejected(self):
+        from core.script_gen.linter import check_pack_rules
+        openings = [
+            "Settle in at your own pace. If your seat feels uncomfortable, shift.",
+            "Find your natural rhythm. If the posture is uncomfortable, adjust.",
+            "Let the day's usual rhythm fall away. Nothing here is unwell or wrong.",
+            "Begin at a regular pace. It may feel uncomfortable at first; push on.",
+            "Rest a hand over your heart and notice your natural breath.",
+        ]
+        for opening in openings:
+            with self.subTest(opening=opening):
+                text = opening + " " + "Breathe in slowly. " * 40
+                v = check_pack_rules(text, self._pack(requires_disclaimer=True))
+                self.assertEqual([x.code for x in v], ["MISSING_DISCLAIMER"])
+
+    def test_disclaimer_canonical_planner_line(self):
+        from core.script_gen.linter import check_pack_rules
+        text = ("If you are pregnant, have a heart or respiratory condition, or feel "
+                "lightheaded at any point, return to natural breathing. " + "Breathe in slowly. " * 40)
+        self.assertEqual(check_pack_rules(text, self._pack(requires_disclaimer=True)), [])
+
     def test_disclaimer_too_late(self):
         from core.script_gen.linter import check_pack_rules
         text = ("Breathe in slowly. " * 40
