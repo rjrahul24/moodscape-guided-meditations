@@ -267,6 +267,38 @@ _SAFETY_RULES: list[tuple[str, re.Pattern, str]] = [
         "Dissociation-adjacent imagery, which is contraindicated for trauma "
         "survivors. Keep the listener grounded in the body and the room.",
     ),
+    (
+        "RAPID_BREATHING",
+        re.compile(
+            r"\bhyperventilat\w*"
+            r"|\bbreath\s+of\s+fire\b"
+            r"|\b(?:breath\w*|inhal\w*|exhal\w*)\b(?:\W+\w+){0,6}?\W+as\s+fast\s+as\s+(?:you\s+)?(?:can|possible)\b"
+            r"|\b(?:thirty|forty|fifty|sixty|[3-9]\d|\d{3,})\s+(?:fast|quick|rapid|sharp)\s+(?:breaths|exhales|exhalations)\b",
+            re.IGNORECASE,
+        ),
+        "Rapid or forced breathing. Hyperventilation can trigger panic, dizziness "
+        "or seizures. Keep the pace slow and within the listener's own capacity.",
+    ),
+    (
+        "PAIN_ELIMINATION",
+        re.compile(
+            r"\b(?:breathe|send|move|direct)\b(?:\W+\w+){0,4}?\W+(?:into|toward)\s+(?:the|your)\s+pain\b"
+            r"(?:\W+\w+){0,6}?\W+until\s+it\s+(?:disappears|vanishes|goes\s+away|is\s+gone|dissolves)\b"
+            r"|\bmake\s+(?:the|your)\s+pain\s+(?:disappear|vanish|go\s+away)\b"
+            r"|\b(?:the|your)\s+pain\s+will\s+(?:disappear|vanish|go\s+away|dissolve)\b",
+            re.IGNORECASE,
+        ),
+        "Promises to remove pain. That is a medical outcome claim. Invite the "
+        "listener to notice and soften around sensation instead.",
+    ),
+    (
+        "ENERGY_HEALING_CLAIM",
+        re.compile(
+            r"\b(?:chakras?|energy|energies|vibrations?|frequenc(?:y|ies)|aura)\s+(?:will\s+)?(?:heal|cure|cleanse|repair)s?\b",
+            re.IGNORECASE,
+        ),
+        "Energetic-healing claim. Describe the practice, never a healing power.",
+    ),
 ]
 
 _BREATH_HOLD = re.compile(

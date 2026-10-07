@@ -495,3 +495,43 @@ class TestSlopModuleLocation(unittest.TestCase):
         g = slop_guidance(5)
         self.assertIn("Avoid:", g)
         self.assertEqual(len(g.split("Avoid:")[1].split(",")), 5)
+
+
+class TestNewSafetyRules(unittest.TestCase):
+    def codes(self, text):
+        from core.script_gen.linter import check_safety
+        return [v.code for v in check_safety(text)]
+
+    def test_rapid_breathing_blocked(self):
+        for text in ("Now hyperventilate for a moment.",
+                     "Try the breath of fire.",
+                     "Breathe in and out as fast as you can.",
+                     "Take thirty fast breaths.",
+                     "Do 40 rapid exhales."):
+            self.assertIn("RAPID_BREATHING", self.codes(text), text)
+
+    def test_kapalabhati_phrasing_allowed(self):
+        text = ("Take a short, sharp exhale through the nose, and let the inhale happen "
+                "on its own. Twenty gentle pumps, at your own pace.")
+        self.assertNotIn("RAPID_BREATHING", self.codes(text))
+
+    def test_pain_elimination_blocked(self):
+        for text in ("Breathe into the pain until it disappears.",
+                     "We will make the pain go away.",
+                     "Your pain will dissolve."):
+            self.assertIn("PAIN_ELIMINATION", self.codes(text), text)
+
+    def test_noticing_pain_allowed(self):
+        self.assertNotIn("PAIN_ELIMINATION", self.codes("Notice the pain, and let your breath move around it."))
+
+    def test_energy_healing_blocked(self):
+        for text in ("Your chakras will heal you.", "This energy cleanses your body.",
+                     "Healing vibrations repair the body.", "Feel how vibrations heal."):
+            self.assertIn("ENERGY_HEALING_CLAIM", self.codes(text), text)
+
+    def test_energy_word_alone_allowed(self):
+        self.assertNotIn("ENERGY_HEALING_CLAIM", self.codes("Notice your energy as you stand."))
+
+    def test_tags_and_curly_quotes_do_not_defeat_new_rules(self):
+        self.assertIn("RAPID_BREATHING", self.codes("Don’t stop, breathe as fast as [pause:2s] you can."))
+        self.assertIn("PAIN_ELIMINATION", self.codes("Breathe into the pain [pause:3s] until it disappears."))

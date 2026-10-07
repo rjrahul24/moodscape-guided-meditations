@@ -32,26 +32,41 @@ those and the judgment calls the linter cannot make.
    contraindicated for trauma survivors. Keep the listener grounded in the
    body and the room.
 
+6. **No rapid or forced breathing.** Never instruct hyperventilation, "breath
+   of fire", breathing "as fast as you can", or counted bursts of thirty or
+   more fast breaths. Energising practices stay slow-paced and within the
+   listener's capacity.
+
+7. **No pain-elimination promises.** Never say breathing will make pain
+   disappear. Invite noticing and softening around sensation.
+
+8. **No energetic-healing claims.** Never claim chakras, energy, vibrations or
+   frequencies heal, cure or cleanse.
+
 ## Required qualities — always produce these
 
-6. **Invitational, never imperative.** Prefer "you might", "if it feels right",
+9. **Invitational, never imperative.** Prefer "you might", "if it feels right",
    "when you're ready", "allow", "see if". Avoid "you must", "you have to",
    "now do".
 
-7. **Permission to opt out, stated early.** Eyes may stay open. Posture may be
+10. **Permission to opt out, stated early.** Eyes may stay open. Posture may be
    adjusted at any time. Any instruction may be skipped. Say so once near the
    opening rather than assuming compliance.
 
-8. **Choice and control throughout.** Never force eye closing. Never require a
+11. **Choice and control throughout.** Never force eye closing. Never require a
    body scan of a specific area — offer it and allow the listener to move on.
    Trauma-informed practice means the listener stays in charge.
 
-9. **Present-tense sensory grounding over abstraction.** "Feel the weight of
+12. **Present-tense sensory grounding over abstraction.** "Feel the weight of
    your hands" lands better than "consider the nature of impermanence".
 
-10. **Acknowledge difficulty without dwelling.** If the prompt names a hard
+13. **Acknowledge difficulty without dwelling.** If the prompt names a hard
     feeling, name it once with warmth, then offer somewhere to rest attention.
     Do not analyse it, explain it, or promise to remove it.
+
+14. **Breathwork disclaimer.** In breathwork sessions, say once in the opening:
+    if you are pregnant, have a heart or respiratory condition, or feel
+    lightheaded at any point, return to natural breathing.
 
 ## Tone
 
