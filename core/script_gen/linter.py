@@ -27,7 +27,10 @@ SLOP_DENSITY_MAX = 2.0
 MIN_PAUSE_SEC = 0.5
 MAX_PAUSE_SEC = 60.0
 
-# The guide's ideal band is 8-20 words. Allow headroom before complaining.
+# The guide's ideal sentence band. MAX_SENTENCE_WORDS allows headroom before
+# complaining. The guides quote all three via guide_context.
+IDEAL_SENTENCE_MIN_WORDS = 8
+IDEAL_SENTENCE_MAX_WORDS = 20
 MAX_SENTENCE_WORDS = 25
 
 KNOWN_BARE_TAGS = {"breath", "inhale", "exhale"}
@@ -183,7 +186,8 @@ def check_format(script: str) -> list[Violation]:
                     severity=ADVISORY,
                     message=(
                         f"Sentence is {len(words)} words; keep sentences to "
-                        "8-20 words so the pacing stays calm."
+                        f"{IDEAL_SENTENCE_MIN_WORDS}-{IDEAL_SENTENCE_MAX_WORDS} "
+                        "words so the pacing stays calm."
                     ),
                 )
             )

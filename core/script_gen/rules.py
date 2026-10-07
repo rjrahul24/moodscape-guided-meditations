@@ -7,6 +7,8 @@ and no restart.
 
 from pathlib import Path
 
+from core.script_gen.guide_context import guide_context, render_guide
+
 GUIDES_DIR = (
     Path(__file__).resolve().parent.parent.parent / "docs" / "prompting_guides"
 )
@@ -27,10 +29,14 @@ def _read(path: Path) -> str:
 def load_guide(
     engine: str, content_type: str, guides_dir: Path | None = None
 ) -> str:
-    """Load the engine- and content-type-specific formatting guide."""
+    """Load the engine- and content-type-specific formatting guide.
+
+    ``{{NAME}}`` placeholders are rendered from ``guide_context`` so the guide
+    quotes the values the code actually enforces.
+    """
     root = guides_dir if guides_dir is not None else GUIDES_DIR
     filename = GUIDE_TEMPLATE.format(content_type=content_type, engine=engine)
-    return _read(root / filename)
+    return render_guide(_read(root / filename), guide_context(engine, content_type))
 
 
 def load_safety_rules(guides_dir: Path | None = None) -> str:

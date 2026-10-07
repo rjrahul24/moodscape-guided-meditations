@@ -1,7 +1,8 @@
 <!-- QUICK-REF ──────────────────────────────────────────────────────── -->
 **Engine files:** `core/f5_tts/preprocessor.py` · `core/f5_tts/engine.py` · `core/f5_tts/voice_registry.py`
-**Script tags:** `[pause:Xs]` · `[breath]` · `\n\n` paragraph break (3.0s) · `[voice:phase_name]` for multi-phase
-**Chunk limit:** 300 chars (auto-split at sentence boundaries)
+**Script tags:** `[pause:Xs]` · `[breath]` · `\n\n` paragraph break ({{PARA_PAUSE}}s) · `[voice:phase_name]` for multi-phase (hand-written scripts only)
+**Chunk limit:** {{CHUNK_CHARS}} chars (auto-split at sentence boundaries)
+**Speed:** {{SPEED}}, set by the Content Type preset (not by the script) · about {{WPM}} words per minute
 **F5-specific text rules:** colons → commas · ellipses → periods · em-dashes → commas · hyphens in compounds removed
 **Voice assets:** `assets/speakers/*.wav` (24kHz mono, ~10s) + matching `.txt` transcripts
 **Multi-phase:** defined in `voices.toml` — opening / body / closing phases with different reference audio
@@ -30,13 +31,13 @@ List of segments: {"type": "speech", "text": "..."},
                   {"type": "voice", "voice": "phase_name"}
       │
       ▼ core/f5_tts/preprocessor.py — split_into_chunks()
-Each speech block split into ≤300-character chunks at sentence boundaries
+Each speech block split into ≤{{CHUNK_CHARS}}-character chunks at sentence boundaries
       │
       ▼ core/f5_tts/engine.py — F5Engine.synthesize()
 For each "speech" chunk:
   - Normalise text (collapse whitespace, lowercase ALL_CAPS)
   - Select reference audio (always the static reference for consistent voice)
-  - Call F5TTS infer() with speed=0.88, nfe_step=32, cfg_strength=2.0, seed
+  - Call F5TTS infer() with speed={{SPEED}} (Content Type preset), nfe_step=32, cfg_strength=2.0, seed
   - Trim trailing silence, build activity mask
 For each "pause" segment:
   - Insert digital silence
@@ -58,39 +59,30 @@ For each "breath" segment:
 
 ### Pause Syntax
 
-```
-[pause:Xs]
-```
-
-Where `X` is an integer or decimal number. Examples:
+Write `[pause:Xs]`, where `X` is an integer or decimal number of seconds between {{PAUSE_MIN}} and {{PAUSE_MAX}}. Examples:
 
 ```
 [pause:3s]       ← 3 seconds of silence
 [pause:2.5s]     ← 2.5 seconds of silence
 [pause:10s]      ← 10 seconds of silence
-[pause:0.5s]     ← half-second (minimum useful value)
+[pause:{{PAUSE_MIN}}s]     ← the shortest allowed pause
 ```
 
-Alternate format (also accepted):
-
-```
-[3 second pause]     ← normalised to [pause:3s]
-[5 sec pause]        ← normalised to [pause:5s]
-```
+The preprocessor also normalises `[3 second pause]` and `[5 sec pause]` to `[pause:3s]` and `[pause:5s]`, but generated scripts must use the `[pause:Xs]` form only: the script validator rejects any other bracket tag.
 
 ### Breath Markers
 
 ```
 [breath]       ← 1.2s natural breath sound
-[inhale]       ← 1.2s inhale sound
-[exhale]       ← 1.2s exhale sound
+[inhale]       ← 1.5s inhale sound
+[exhale]       ← 1.8s exhale sound
 ```
 
 These insert real breath audio samples.
 
 ### Paragraph Breaks
 
-A double newline (`\n\n`) is automatically converted to a `[pause:3.0s]` marker — a paragraph-level pause. Single newlines are treated as a space within the same speech segment.
+A double newline (`\n\n`) is automatically converted to a `[pause:{{PARA_PAUSE}}s]` marker — a paragraph-level pause. Single newlines are treated as a space within the same speech segment.
 
 **Exception:** If one side of a `\n\n` boundary contains only a pause marker (e.g. `[pause:5s]` on its own line), the paragraph break is treated as formatting and no extra pause is added.
 
@@ -101,6 +93,8 @@ A double newline (`\n\n`) is automatically converted to a `[pause:3.0s]` marker 
 ```
 
 Switches to a different reference audio phase mid-script. This requires multi-phase voice definitions in `voices.toml`. See the Multi-Phase Voices section below.
+
+**Do not use `[voice:...]` in generated scripts.** The automated script validator accepts only `[pause:Xs]`, `[breath]`, `[inhale]` and `[exhale]`, and rejects any other bracket tag. Phase switching is for hand-written scripts in the Manual tab.
 
 ### Consecutive Pause Merging
 
@@ -120,11 +114,11 @@ Back-to-back pauses are merged, keeping only the **longest** duration:
 | G2P | External (misaki + espeak-ng) | Internal (F5's own G2P from raw text) |
 | IPA injection | Supported (`[word](/ˈaɪpə/)`) | Not supported — do not use |
 | Text expansion | Auto (digits, abbreviations) | Auto (digits, abbreviations, punctuation normalization) |
-| Chunk limit | 150 tokens | 300 characters |
-| Paragraph pause | 2.5 seconds | 3.0 seconds |
+| Chunk limit | Token-based, one sentence per call | {{CHUNK_CHARS}} characters |
+| Paragraph pause | Set by the Content Type preset (longer) | {{PARA_PAUSE}} seconds |
 | Inter-sentence gap | 0.8s (1.2s after `...`) | 0.4s silent gap + 300ms crossfade |
-| Breath sounds | Not supported | `[breath]`, `[inhale]`, `[exhale]` |
-| Speed default | 0.70 | 0.88 |
+| Breath sounds | `[breath]` | `[breath]`, `[inhale]`, `[exhale]` |
+| Speed default | Content Type preset | {{SPEED}} (Content Type preset) |
 | Pacing default | N/A | Natural rhythm (WPM disabled) |
 
 **Important:** Do not use IPA phoneme injection syntax with F5-TTS. It will not be parsed and will be spoken as literal text.
@@ -138,7 +132,7 @@ F5-TTS performs its own grapheme-to-phoneme conversion from raw text. Write natu
 ### Do
 
 - Write in natural prose — spell words as they should be read
-- Keep sentences short (under 200 characters ideal, under 300 maximum)
+- Keep sentences short: {{SENT_IDEAL_MIN}}–{{SENT_IDEAL_MAX}} words is ideal, and never more than {{SENT_MAX}} words or {{CHUNK_CHARS}} characters
 - Use explicit `[pause:Xs]` markers for precise timing control
 - Use `[breath]` markers between breathing instructions for natural rhythm
 - Use `[pause:Xs]` instead of `...` for pauses — ellipses are normalized to periods by the preprocessor
@@ -151,9 +145,13 @@ F5-TTS performs its own grapheme-to-phoneme conversion from raw text. Write natu
 - Do not use ALL CAPS for emphasis — the engine auto-lowercases them to prevent letter-by-letter G2P spelling
 - Digits are auto-expanded (10 → ten), but writing words is still preferred for clarity
 - Do not include stage directions or notes in the script — F5 will attempt to speak them
-- Do not write sentences longer than 300 characters — they will be split mid-sentence
+- Do not write sentences longer than {{CHUNK_CHARS}} characters — they will be split mid-sentence
 - Do not rely on single newlines for pauses — they are treated as spaces
 - Do not use parenthetical asides — they disrupt F5's prosody model
+
+### Style
+
+{{SLOP_GUIDANCE}}
 
 ---
 
@@ -183,25 +181,13 @@ The slug is derived from the filename (e.g. `your_voice_name.wav` → slug `your
 
 ### Speed — Primary Pacing Control
 
-The **speed** parameter (default 0.88) is the primary pacing control. At 0.88, F5-TTS produces meditation-pace delivery (~95-100 WPM) while preserving the model's natural prosodic timing — allowing it to insert natural pauses, emphasis, and rhythm variation.
+The **speed** parameter is the primary pacing control. It preserves the model's natural prosodic timing, allowing it to insert natural pauses, emphasis, and rhythm variation. Do not write speed into the script.
 
-| Speed | Approximate WPM | Use Case |
-|---|---|---|
-| 0.80 | ~85-90 | Very slow, spacious delivery |
-| **0.88** | **~95-100** | **Meditation pace (default)** |
-| 0.95 | ~110-115 | Gentle narration |
-| 1.00 | ~120-130 | Natural speaking pace |
+Pace is set by the Content Type preset (speed {{SPEED}}); the voice reads at about {{WPM}} words per minute.
 
 ### Pacing (WPM) — Optional Fixed Pacing
 
-The **Pacing (WPM)** slider (default: 0 = disabled) provides optional fixed pacing via F5's `fix_duration` mechanism. When set above 0, the engine calculates exact output duration per chunk based on word count and target WPM.
-
-| Use Case | WPM |
-|---|---|
-| Very slow, spacious delivery | 80 – 90 |
-| Meditation pace | 100 – 110 |
-| Gentle narration | 120 – 130 |
-| Normal speaking pace | 140 – 150 |
+The **Pacing (WPM)** slider (default: 0 = disabled) provides optional fixed pacing via F5's `fix_duration` mechanism. When set above 0, the engine calculates exact output duration per chunk based on word count and target WPM. Script word budgets assume it is left at 0.
 
 **Recommendation:** Leave WPM at 0 (natural rhythm) for most meditations. Fixed WPM is useful for timed breathing exercises where consistent pacing matters more than expressiveness. Fixed WPM constrains the model's prosodic freedom, which can flatten expression.
 
@@ -222,7 +208,7 @@ The quality of F5-TTS output depends heavily on the reference audio. Follow thes
 | Bit depth | 16-bit or 32-bit float |
 
 Convert any recording:
-```bash
+```
 ffmpeg -i input.mp3 -ar 24000 -ac 1 -sample_fmt s16 voice_name.wav
 ```
 
@@ -230,7 +216,7 @@ ffmpeg -i input.mp3 -ar 24000 -ac 1 -sample_fmt s16 voice_name.wav
 
 **Pace and delivery:**
 - Speak at the exact pace you want in the output — F5's duration predictor learns from the reference
-- Target approximately 100–120 words per minute (significantly slower than conversational ~150 WPM)
+- Speak at a slow meditation pace, well below conversational speech
 - Leave natural micro-pauses between sentences (do not rush from one sentence to the next)
 - Use a calm, warm, compassionate tone — not whispered, not monotone
 
@@ -272,13 +258,13 @@ These are the recommended settings for top quality meditation audio generation w
 |---|---|---|
 | **TTS Voice Engine** | F5-TTS | Zero-shot voice cloning |
 | **Voice Personality** | (select your voice) | Choose from registered voices |
-| **Pacing (WPM)** | 0 | Natural rhythm (recommended). Set 90-110 for fixed meditation pacing. |
-| **Speaking Speed** | 0.88 | Primary pacing control. ~95-100 WPM meditation pace. |
+| **Pacing (WPM)** | 0 | Natural rhythm (recommended). |
+| **Speaking Speed** | {{SPEED}} | Set by the Content Type preset. About {{WPM}} words per minute. |
 | **Voice Reverb** | 0.15 | Subtle room presence. Increase to 0.25 for spacious feel. |
 | **Reverb Space** | Warm Studio | Intimate, short decay — best for meditation. Use Wooden Hall for longer sessions. |
-| **Music Ducking** | -20 dB | Music drops 20 dB during speech. Use -25 dB if music is overpowering voice. |
-| **Fade In** | 3 seconds | Gentle entry |
-| **Fade Out** | 6 seconds | Gradual ending |
+| **Music Ducking** | Content Type preset | Increase the ducking depth if the music overpowers the voice. |
+| **Fade In** | Content Type preset | Gentle entry |
+| **Fade Out** | Content Type preset | Gradual ending |
 | **Output Format** | WAV | Lossless. Use MP3 only for distribution. |
 
 ### Music Engine Pairing
@@ -298,7 +284,7 @@ A single voice can have multiple **phases** for different sections of a meditati
 
 ### Defining Phases in voices.toml
 
-```toml
+```
 # assets/speakers/voices.toml
 
 [female_meditative_warm]
@@ -310,17 +296,7 @@ Each phase needs its own reference audio + transcript pair in the assets directo
 
 ### Using Phases in Scripts
 
-```
-Welcome to this meditation. [pause:3s]
-
-Find a comfortable position and close your eyes. [pause:5s]
-
-[voice:closing]
-
-Thank you for joining. Carry this peace with you into the rest of your day. [pause:3s]
-```
-
-The `[voice:closing]` marker switches to the "closing" phase's reference audio for all subsequent speech chunks.
+In a hand-written script, a line containing only `[voice:closing]` switches to the "closing" phase's reference audio for all subsequent speech chunks. Generated scripts must not use it: the automated script validator rejects every tag except `[pause:Xs]`, `[breath]`, `[inhale]` and `[exhale]`.
 
 ### Breaking Monotony with Phases
 
@@ -336,7 +312,7 @@ Because F5-TTS uses the same reference clip for every chunk, long meditations ca
 | `closing` | Uplifting, grateful, warm | Slightly brighter tone, gentle energy |
 
 Record each phase as a separate 10–12s WAV clip with the same speaker. Define them in `voices.toml`:
-```toml
+```
 [female_meditative_warm]
 default = { audio = "female_meditative_warm.wav", transcript = "female_meditative_warm.txt" }
 body = { audio = "female_meditative_warm_body.wav", transcript = "female_meditative_warm_body.txt" }
@@ -348,12 +324,12 @@ closing = { audio = "female_meditative_warm_closing.wav", transcript = "female_m
 
 ## Sentence Length & Structure Guidelines
 
-F5-TTS chunks text at sentence boundaries (`.`, `!`, `?`, `…`) up to 300 characters per chunk. Each chunk is synthesised in a single model call within a 30-second context window.
+F5-TTS chunks text at sentence boundaries (`.`, `!`, `?`, `…`) up to {{CHUNK_CHARS}} characters per chunk. Each chunk is synthesised in a single model call within a 30-second context window.
 
 ### Optimal Sentence Structure
 
-- **Ideal length:** 8–20 words per sentence
-- **Maximum:** Keep sentences under 200 characters for best quality (300 is the hard limit)
+- **Ideal length:** {{SENT_IDEAL_MIN}}–{{SENT_IDEAL_MAX}} words per sentence
+- **Maximum:** {{SENT_MAX}} words; {{CHUNK_CHARS}} characters is the hard chunk limit
 - **Minimum:** Avoid 1–2 word standalone sentences — they produce unreliable audio
 - **One idea per sentence** — do not nest complex subordinate clauses
 
@@ -376,9 +352,12 @@ Breathe in slowly through your nose. [pause:4s] Feel the cool air entering your 
 | After a body awareness cue | `[pause:3s]` – `[pause:5s]` |
 | After a visualisation sentence | `[pause:5s]` – `[pause:7s]` |
 | Deep stillness / spacious silence | `[pause:8s]` – `[pause:10s]` |
-| Between major sections | Use paragraph break (auto 3.0s) or `[pause:6s]` – `[pause:8s]` |
+| Between major sections | Use paragraph break (auto {{PARA_PAUSE}}s) or `[pause:6s]` – `[pause:8s]` |
 | Opening / setting the space | `[pause:3s]` – `[pause:5s]` |
 | Closing / return to awareness | `[pause:3s]` – `[pause:5s]` |
+| A breath hold, if the practice uses one | Never longer than {{MAX_HOLD}} seconds, and shorter if the brief sets a lower limit |
+
+Every pause must be between {{PAUSE_MIN}} and {{PAUSE_MAX}} seconds.
 
 ---
 
@@ -389,11 +368,11 @@ Breathe in slowly through your nose. [pause:4s] Feel the cool air entering your 
 | IPA injection `[word](/ˈaɪpə/)` | Spoken as literal text | Remove — F5 does its own G2P |
 | ALL CAPS words like "RELAX" | Auto-lowercased, but stylistically avoid | Write "relax" in normal case |
 | Digits ("breathe for 4 counts") | Auto-expanded, but words are clearer | Write "breathe for four counts" |
-| Sentences > 300 chars | Split mid-sentence at arbitrary point | Break into shorter sentences |
+| Sentences > {{CHUNK_CHARS}} chars | Split mid-sentence at arbitrary point | Break into shorter sentences |
 | Stage directions in script | Spoken aloud by F5 | Remove all non-spoken text |
 | Single newline for pause | Treated as a space, no pause effect | Use `[pause:Xs]` or double newline |
 | Very short standalone sentences (1–2 words) | Unreliable audio quality | Attach to adjacent sentence |
-| Fast-paced reference audio | Output will be fast even at speed 1.0 | Re-record reference at meditation pace (~100–120 WPM) |
+| Fast-paced reference audio | Output will be fast even at speed 1.0 | Re-record reference at a slow meditation pace |
 | Reference transcript mismatch | Metallic artefacts, pitch drift, stutter | Ensure transcript is verbatim |
 | Very long unbroken paragraphs | Many consecutive chunks without pauses | Break with explicit pauses every 2–3 sentences |
 
@@ -404,49 +383,37 @@ Breathe in slowly through your nose. [pause:4s] Feel the cool air entering your 
 This is a well-formed script demonstrating all features for F5-TTS:
 
 ```
-Welcome to this moment of stillness. [pause:3s]
+Welcome. This is a few quiet minutes, just for you. [pause:3s]
 
-Allow yourself to arrive, just as you are. [pause:5s]
+You can keep your eyes open or let them close, whichever feels easier, and you can shift your position at any time. [pause:4s]
 
-Find a comfortable position. [pause:2s] Let your body settle into the surface beneath you. [pause:4s]
-
-Gently close your eyes. [pause:5s]
+Let your body settle into whatever is holding you. [pause:3s] Notice where you are touching the chair, the floor, or the bed. [pause:5s]
 
 [breath]
 
-Take a slow breath in through your nose... [pause:4s] and release through your mouth. [pause:6s]
+If it feels right, take a slow breath in through your nose. [pause:4s] And let it go through your mouth. [pause:6s]
+
+Notice the weight of your hands. [pause:3s] Notice the air on your face. [pause:5s]
+
+Thoughts may come and go. That is fine. When one pulls you away, you can return to the feeling of your breath. [pause:8s]
 
 [breath]
 
-Again, breathe in... [pause:4s] and let go. [pause:6s]
+With each exhale, see if your shoulders can soften a little. [pause:6s]
 
-Notice the weight of your body. [pause:3s] Feel how you are fully supported. [pause:5s]
+Rest here for a few breaths. [pause:10s]
 
-There is nothing you need to do right now. [pause:4s] Nothing to fix, nothing to change. [pause:6s]
+When you are ready, let your breathing deepen. [pause:4s] Notice the sounds in the room around you. [pause:4s] Move your fingers and your toes. [pause:3s]
 
-Let any thoughts that arise drift past, like clouds moving slowly across a wide sky. [pause:8s]
-
-[breath]
-
-With each exhale, release a little more. [pause:5s]
-
-You are here. [pause:3s] You are safe. [pause:3s] You are completely at peace. [pause:10s]
-
-When you are ready, begin to deepen your breath. [pause:4s]
-
-Gently bring your awareness back to the room around you. [pause:5s]
-
-Slowly open your eyes. [pause:3s]
-
-Thank you for taking this time for yourself. [pause:3s]
+Open your eyes when it suits you. Thank you for taking this time. [pause:3s]
 ```
 
 **What this script produces (approximately):**
-- At speed 0.88 with a calm reference, approximately 3–4 minutes of audio
+- At the preset speed of {{SPEED}} with a calm reference, approximately 3–4 minutes of audio
 - Each `[pause:Xs]` creates silence of that exact duration
 - `[breath]` markers insert real breath audio samples (1.2s each)
 - Automatic 0.4s silent gaps + 300ms crossfades between speech chunks within the same paragraph
-- Paragraph breaks (blank lines) add 3.0s pauses
+- Paragraph breaks (blank lines) add {{PARA_PAUSE}}s pauses
 
 ---
 
@@ -463,14 +430,13 @@ The F5-TTS engine outputs:
 
 ## Duration Estimation
 
-At the default speed of 0.88 (natural rhythm mode), F5-TTS generates approximately 8–10 seconds of audio per 300 characters of text (roughly 50–60 words).
+At the preset speed of {{SPEED}} (natural rhythm mode), the voice reads at about {{WPM}} words per minute.
 
 Rough rules of thumb:
-- **~100–130 words of speech** ≈ 1 minute of audio (before adding pauses)
+- **About {{WPM}} words of speech** ≈ 1 minute of audio (before adding pauses)
 - Add all explicit pause durations to the speech duration
-- `[breath]` markers add ~1.2 seconds each
+- Each paragraph break adds {{PARA_PAUSE}} seconds
+- `[breath]`, `[inhale]` and `[exhale]` add about 1.2, 1.5 and 1.8 seconds each
 
-**Target length examples:**
-- 5-minute meditation: ~400–500 words of speech + 90–120s of total explicit pauses
-- 10-minute meditation: ~800–1000 words of speech + 150–200s of total explicit pauses
-- 20-minute meditation: ~1600–2000 words of speech + 300–400s of total explicit pauses
+Budget words as minutes × {{WPM}}, then add your explicit pauses.
+Count only the spoken minutes here: speech plus pauses, paragraph breaks and breath sounds must together land inside the target length.
