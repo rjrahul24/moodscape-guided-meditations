@@ -86,6 +86,8 @@ A double newline (`\n\n`) is automatically converted to a `[pause:{{PARA_PAUSE}}
 
 **Exception:** If one side of a `\n\n` boundary contains only a pause marker (e.g. `[pause:5s]` on its own line), the paragraph break is treated as formatting and no extra pause is added.
 
+**Next to an explicit pause:** A blank line adds {{PARA_PAUSE}}s only when no `[pause:Xs]` is adjacent to it; when a paragraph ends or begins with an explicit pause, the longer of the two wins (they are not added). So `...body. [pause:6s]` followed by a blank line gives 6 seconds, not 6 + {{PARA_PAUSE}}.
+
 ### Voice Phase Switching
 
 ```
@@ -208,7 +210,7 @@ The quality of F5-TTS output depends heavily on the reference audio. Follow thes
 | Bit depth | 16-bit or 32-bit float |
 
 Convert any recording:
-```
+```bash
 ffmpeg -i input.mp3 -ar 24000 -ac 1 -sample_fmt s16 voice_name.wav
 ```
 
@@ -284,7 +286,7 @@ A single voice can have multiple **phases** for different sections of a meditati
 
 ### Defining Phases in voices.toml
 
-```
+```toml
 # assets/speakers/voices.toml
 
 [female_meditative_warm]
@@ -312,7 +314,7 @@ Because F5-TTS uses the same reference clip for every chunk, long meditations ca
 | `closing` | Uplifting, grateful, warm | Slightly brighter tone, gentle energy |
 
 Record each phase as a separate 10–12s WAV clip with the same speaker. Define them in `voices.toml`:
-```
+```toml
 [female_meditative_warm]
 default = { audio = "female_meditative_warm.wav", transcript = "female_meditative_warm.txt" }
 body = { audio = "female_meditative_warm_body.wav", transcript = "female_meditative_warm_body.txt" }
@@ -340,7 +342,7 @@ As you breathe in slowly and deeply through your nostrils while feeling the cool
 
 **Better:**
 ```
-Breathe in slowly through your nose. [pause:4s] Feel the cool air entering your body. [pause:3s] Notice your ribcage gently expanding. [pause:3s] Allow your mind to become quiet. [pause:5s]
+Breathe in through your nose. [pause:4s] Feel the cool air entering your body. [pause:3s] Notice your ribcage expanding. [pause:3s] Allow your mind to become quiet. [pause:5s]
 ```
 
 ### Pause Duration Reference
@@ -352,7 +354,7 @@ Breathe in slowly through your nose. [pause:4s] Feel the cool air entering your 
 | After a body awareness cue | `[pause:3s]` – `[pause:5s]` |
 | After a visualisation sentence | `[pause:5s]` – `[pause:7s]` |
 | Deep stillness / spacious silence | `[pause:8s]` – `[pause:10s]` |
-| Between major sections | Use paragraph break (auto {{PARA_PAUSE}}s) or `[pause:6s]` – `[pause:8s]` |
+| Between major sections | Use paragraph break (auto {{PARA_PAUSE}}s when no explicit pause is next to it) or `[pause:6s]` – `[pause:8s]` |
 | Opening / setting the space | `[pause:3s]` – `[pause:5s]` |
 | Closing / return to awareness | `[pause:3s]` – `[pause:5s]` |
 | A breath hold, if the practice uses one | Never longer than {{MAX_HOLD}} seconds, and shorter if the brief sets a lower limit |
@@ -413,7 +415,7 @@ Open your eyes when it suits you. Thank you for taking this time. [pause:3s]
 - Each `[pause:Xs]` creates silence of that exact duration
 - `[breath]` markers insert real breath audio samples (1.2s each)
 - Automatic 0.4s silent gaps + 300ms crossfades between speech chunks within the same paragraph
-- Paragraph breaks (blank lines) add {{PARA_PAUSE}}s pauses
+- Every spoken paragraph here ends in an explicit pause, so those blank lines add nothing extra: the longer of the explicit pause and the {{PARA_PAUSE}}s paragraph pause wins. The blank line after each `[breath]` line does add a {{PARA_PAUSE}}s pause, because a breath marker is not a pause marker
 
 ---
 
@@ -435,7 +437,7 @@ At the preset speed of {{SPEED}} (natural rhythm mode), the voice reads at about
 Rough rules of thumb:
 - **About {{WPM}} words of speech** ≈ 1 minute of audio (before adding pauses)
 - Add all explicit pause durations to the speech duration
-- Each paragraph break adds {{PARA_PAUSE}} seconds
+- A paragraph break adds {{PARA_PAUSE}} seconds only when no `[pause:Xs]` is next to it; otherwise the longer of the two counts, once
 - `[breath]`, `[inhale]` and `[exhale]` add about 1.2, 1.5 and 1.8 seconds each
 
 Budget words as minutes × {{WPM}}, then add your explicit pauses.

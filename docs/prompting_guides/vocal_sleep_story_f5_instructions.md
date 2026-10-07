@@ -74,7 +74,7 @@ Do not write speed into the script. Leave **Pacing (WPM)** at 0 (natural rhythm)
 own prosodic timing — fixed WPM flattens expression and is wrong for storytelling.
 
 ### 2. Paragraph breaks — your main structural pause
-A blank line inserts a **{{PARA_PAUSE}}-second** pause in Sleep Story mode. This is your primary
+A blank line inserts a **{{PARA_PAUSE}}-second** pause in Sleep Story mode. A blank line adds {{PARA_PAUSE}}s only when no `[pause:Xs]` is adjacent to it; when a paragraph ends or begins with an explicit pause, the longer of the two wins (they are not added). This is your primary
 scene breath. Use paragraph breaks between scene shifts so the narrative does not feel
 continuous and rushed.
 
@@ -129,7 +129,7 @@ For topic "a quiet forest at twilight", ~2 minutes, tone "warm and still":
 
 ```
 The path is soft underfoot. Pine needles cushion each step. The air carries something
-green and cool. You walk slowly, and there is nowhere to be.
+green and cool. You walk on, and there is nowhere to be.
 
 Above you, the last light moves through the branches. It turns the leaves to gold.
 [pause:2s] A bird calls once, far away. Then stillness.

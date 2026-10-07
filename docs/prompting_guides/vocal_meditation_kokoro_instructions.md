@@ -68,6 +68,7 @@ Write `[pause:Xs]`, where `X` is an integer or a decimal number (float) of secon
 
 **Invalid forms that will not be parsed:**
 ```
+(invalid forms, do not copy)
 [pause: 3s]      ← space before number — NOT parsed
 [pause:3]        ← missing "s" — NOT parsed (will be spoken as text)
 [Pause:3s]       ← capital P — NOT parsed (case-sensitive)
@@ -77,23 +78,27 @@ Write `[pause:Xs]`, where `X` is an integer or a decimal number (float) of secon
 
 ### Paragraph Breaks as Automatic Pauses
 
-Any double newline (`\n\n`) in the script is automatically converted to a `[pause:{{PARA_PAUSE}}s]` pause before parsing. The {{PARA_PAUSE}}-second duration comes from the Content Type preset and was chosen for spacious pacing — it provides a generous breath between major script sections. Single newlines have no special effect — they are treated as a space within the same speech segment. Use explicit `[pause:Xs]` markers if you need a shorter or longer inter-paragraph pause.
+Any double newline (`\n\n`) in the script is automatically converted to a `[pause:{{PARA_PAUSE}}s]` pause before parsing. The {{PARA_PAUSE}}-second duration comes from the Content Type preset and was chosen for spacious pacing — it provides a generous breath between major script sections. Single newlines have no special effect — they are treated as a space within the same speech segment. Use explicit `[pause:Xs]` markers if you need a shorter or longer inter-paragraph pause. A blank line adds {{PARA_PAUSE}}s only when no `[pause:Xs]` is adjacent to it; when a paragraph ends or begins with an explicit pause, the explicit pause stands and the paragraph pause is dropped.
 
 ```
-This is one sentence on a single line. [pause:3s]      ← explicit 3-second pause
+This is one sentence on a single line.
 
 This is a new paragraph.                               ← blank line above → auto {{PARA_PAUSE}}s pause
+
+This paragraph ends with a pause. [pause:3s]           ← explicit 3-second pause
+
+The blank line above adds nothing; the 3s pause stands.
 ```
 
 ### Consecutive Pause Merging
 
-The parser **merges consecutive pauses** into one. If two pause markers appear back-to-back (or a paragraph break falls next to an explicit pause), their durations are summed:
+The parser **merges consecutive pauses** into one. Two explicit pause markers back-to-back are summed. A paragraph break next to an explicit pause is not added: the explicit pause replaces it.
 
 ```
 [pause:3s] [pause:2s]    →  becomes a single 5-second pause
 [pause:3s]               }
-                         }  blank line adds a further {{PARA_PAUSE}}s,
-Next sentence            }  so the total is longer than 3s
+                         }  blank line is dropped,
+Next sentence            }  total pause = 3s before "Next sentence"
 ```
 
 This means you should not rely on stacking small pauses; be explicit with a single adequate duration.
@@ -217,7 +222,7 @@ Kokoro's StyleTTS2 architecture interprets punctuation to shape intonation. Use 
 | Punctuation | Effect | Best Use in Meditation |
 |---|---|---|
 | `.` period | Falling intonation, definitive close | End of most sentences |
-| `...` or `…` | Trailing, drifting quality; adds 1.2s auto-pause before next sentence | Inhale cues, dreamlike transitions, incomplete thoughts |
+| `...` or `…` | Trailing, drifting quality; adds 1.2s auto-pause before next sentence | Use rarely. For any deliberate pause, write `[pause:Xs]` instead |
 | `;` semicolon | Brief connected pause with anticipation | Linking related thoughts with a slight breath |
 | `—` em dash | Rhythmic break mid-sentence | Natural speech rhythm variation |
 | `?` question mark | Rising intonation | Use very sparingly; questions disrupt the meditative hypnotic effect |
@@ -254,7 +259,7 @@ As you breathe in and feel the air moving through your nostrils into your lungs 
 
 **Better:**
 ```
-Breathe in slowly. [pause:3s] Feel the air entering your nostrils. [pause:2s] Notice your ribcage expand. [pause:3s] Allow your mind to become quiet. [pause:5s]
+Breathe in through your nose. [pause:3s] Feel the air entering your nostrils. [pause:2s] Notice your ribcage expand. [pause:3s] Allow your mind to become quiet. [pause:5s]
 ```
 
 ### Pause Duration Reference
@@ -274,7 +279,7 @@ Breathe in slowly. [pause:3s] Feel the air entering your nostrils. [pause:2s] No
 
 Every pause must be between {{PAUSE_MIN}} and {{PAUSE_MAX}} seconds.
 
-Note: the automatic 0.8s inter-sentence pause is added on top of these. A `[pause:3s]` after a sentence ending in `.` will result in approximately 3.8 seconds of silence total if there is speech on both sides.
+Note: the automatic 0.8s inter-sentence gap is not added before an explicit pause. A `[pause:3s]` after a sentence gives 3 seconds of silence.
 
 ### Language Style for TTS
 
@@ -354,7 +359,8 @@ Open your eyes when it suits you. Thank you for taking this time. [pause:3s]
 - Total duration depends on the speaking speed setting
 - At the preset speed of {{SPEED}}, this script is approximately 3–4 minutes of audio
 - Each `[pause:Xs]` creates exact silence of that duration at 24 kHz
-- Automatic 0.8s gaps appear between sentences within each paragraph
+- Automatic 0.8s gaps appear between sentences that are not followed by a pause marker
+- Every paragraph here ends in an explicit pause, so the blank lines add nothing extra
 
 ---
 
@@ -373,7 +379,8 @@ The TTS engine outputs:
 A rough rule of thumb at the preset speed of {{SPEED}}:
 - **About {{WPM}} words of speech** ≈ 1 minute of audio (before adding pauses)
 - Add all explicit pause durations (in seconds) to the speech duration
-- Each paragraph break adds {{PARA_PAUSE}} seconds, and each sentence adds about 0.8 seconds of automatic gap
+- A paragraph break adds {{PARA_PAUSE}} seconds only when no `[pause:Xs]` is next to it; otherwise the explicit pause stands alone
+- Each sentence not followed by a pause marker adds about 0.8 seconds of automatic gap
 
 Budget words as minutes × {{WPM}}, then add your explicit pauses.
 Count only the spoken minutes here: speech plus pauses, paragraph breaks and automatic gaps must together land inside the target length.

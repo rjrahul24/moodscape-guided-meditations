@@ -8,6 +8,7 @@ from core.script_gen.rules import (
 )
 
 COMBOS = [(e, c) for e in ("f5", "kokoro") for c in ("meditation", "sleep_story")]
+COUNTER_EXAMPLE_MARKER = "(invalid forms, do not copy)"
 STALE = ["300 char", "300-char", "0.88", "100–130", "100-130", "1.5s in Sleep Story", "1.5s in sleep story"]
 
 
@@ -64,14 +65,56 @@ class TestShippedGuides(unittest.TestCase):
         build_planner_system_prompt("meditation", 360, 600)
 
     def test_example_scripts_pass_the_linter_safety_and_format(self):
-        """Every fenced example script in the F5 guides must itself obey the rules."""
+        """Every fenced example script in every guide must itself obey the rules.
+
+        Blocks marked with COUNTER_EXAMPLE_MARKER are deliberate invalid-syntax
+        demonstrations and are the only ones skipped.
+        """
         import re
         from core.script_gen.linter import FATAL, check_format, check_safety
-        for engine, ct in [("f5", "meditation"), ("f5", "sleep_story")]:
+        for engine, ct in COMBOS:
             text = load_guide(engine, ct)
-            examples = [b for b in re.findall(r"```\n(.*?)```", text, re.S) if "[pause:" in b]
+            blocks = re.findall(r"^```[a-z]*\n(.*?)^```", text, re.S | re.M)
+            examples = [
+                b for b in blocks if "[pause:" in b and COUNTER_EXAMPLE_MARKER not in b
+            ]
             self.assertTrue(examples, (engine, ct))
             for block in examples:
                 fatal = [v.code for v in check_format(block) + check_safety(block) if v.severity == FATAL]
                 self.assertEqual(fatal, [], (engine, ct, block[:80]))
                 self.assertNotIn("...", block)
+
+    def test_example_scripts_respect_the_slop_rate(self):
+        import re
+        from core.script_gen.linter import SLOP_DENSITY_MAX
+        from core.script_gen.slop import slop_density
+        for engine, ct in COMBOS:
+            text = load_guide(engine, ct)
+            blocks = re.findall(r"^```[a-z]*\n(.*?)^```", text, re.S | re.M)
+            for block in blocks:
+                if "[pause:" in block and COUNTER_EXAMPLE_MARKER not in block:
+                    self.assertLessEqual(slop_density(block), SLOP_DENSITY_MAX, (engine, ct, block[:80]))
+
+    def test_counter_example_block_is_the_only_skip(self):
+        import re
+        text = load_guide("kokoro", "meditation")
+        blocks = re.findall(r"^```[a-z]*\n(.*?)^```", text, re.S | re.M)
+        self.assertEqual(sum(COUNTER_EXAMPLE_MARKER in b for b in blocks), 1)
+
+
+class TestDurationClause(unittest.TestCase):
+    def test_writer_and_judge_state_the_engine_wpm(self):
+        from core.script_gen.duration import DEFAULT_WPM
+        for engine, ct in COMBOS:
+            wpm = f"about {DEFAULT_WPM[engine]:.0f} words per minute"
+            for build in (build_generator_system_prompt, build_judge_system_prompt):
+                prompt = build(engine, ct, 360, 600)
+                self.assertIn(wpm, prompt, (engine, ct, build.__name__))
+                self.assertNotIn("85-95", prompt)
+
+    def test_planner_states_the_range_across_engines(self):
+        from core.script_gen.duration import DEFAULT_WPM
+        lo, hi = min(DEFAULT_WPM.values()), max(DEFAULT_WPM.values())
+        prompt = build_planner_system_prompt("meditation", 360, 600)
+        self.assertIn(f"roughly {lo:.0f}-{hi:.0f} words per minute", prompt)
+        self.assertNotIn("85-95", prompt)

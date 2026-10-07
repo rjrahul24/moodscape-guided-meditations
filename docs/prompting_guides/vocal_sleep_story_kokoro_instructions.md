@@ -66,7 +66,7 @@ never below the 0.65 floor. You do not write speed into the script.
 Leave the slider where the preset puts it unless you want to fine-tune.
 
 ### 2. Paragraph breaks — your main structural pause
-A blank line between paragraphs inserts a **{{PARA_PAUSE}}-second** pause in Sleep Story mode. This
+A blank line between paragraphs inserts a **{{PARA_PAUSE}}-second** pause in Sleep Story mode. A blank line adds {{PARA_PAUSE}}s only when no `[pause:Xs]` is adjacent to it; when a paragraph ends or begins with an explicit pause, the explicit pause stands and the paragraph pause is dropped. This
 is your primary "scene breath." Use paragraph breaks generously between scene shifts to
 give the story room to breathe and let the music softly shine through.
 
@@ -147,7 +147,7 @@ And you drift with it, slow and easy. [pause:6s] Down into sleep. [pause:8s]
 ```
 
 Notice: unhurried narrative flow with pauses every few sentences that lengthen toward the end;
-{{PARA_PAUSE}}-second paragraph breaks let the music bed breathe; no ellipses; emotion in the imagery; progressive slowing toward the end.
+{{PARA_PAUSE}}-second paragraph breaks (where no explicit pause ends the paragraph) let the music bed breathe; no ellipses; emotion in the imagery; progressive slowing toward the end.
 
 ## Before you output — self-check
 

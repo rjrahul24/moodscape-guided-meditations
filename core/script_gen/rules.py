@@ -45,10 +45,23 @@ def load_safety_rules(guides_dir: Path | None = None) -> str:
     return _read(root / SAFETY_RULES_FILENAME)
 
 
-def _duration_clause(target_min_sec: float, target_max_sec: float) -> str:
+def _duration_clause(
+    target_min_sec: float, target_max_sec: float, engine: str | None = None
+) -> str:
+    """State the duration window and the speaking rate the estimator assumes.
+
+    With an engine (writer, judge) the rate is that engine's DEFAULT_WPM. The
+    planner has no engine, so it gets the range across engines.
+    """
+    from core.script_gen.duration import DEFAULT_WPM
+
+    if engine is not None:
+        rate = f"about {DEFAULT_WPM[engine]:.0f}"
+    else:
+        rate = f"roughly {min(DEFAULT_WPM.values()):.0f}-{max(DEFAULT_WPM.values()):.0f}"
     return (
         f"The finished audio must run between {target_min_sec / 60:.0f} and "
-        f"{target_max_sec / 60:.0f} minutes. Spoken delivery is roughly 85-95 "
+        f"{target_max_sec / 60:.0f} minutes. Spoken delivery is {rate} "
         "words per minute and explicit [pause:Xs] markers add their full "
         "duration, so budget both words and silence deliberately."
     )
@@ -67,7 +80,7 @@ def build_generator_system_prompt(
             "You write production-ready scripts for a text-to-speech "
             "meditation pipeline. Your output is consumed directly by a TTS "
             "engine, so it must obey the formatting contract exactly.",
-            _duration_clause(target_min_sec, target_max_sec),
+            _duration_clause(target_min_sec, target_max_sec, engine),
             "# Formatting guide\n\n" + load_guide(engine, content_type, guides_dir),
             "# Content safety rules\n\n" + load_safety_rules(guides_dir),
             "Output the script and nothing else. No preamble, no explanation, "
@@ -93,7 +106,7 @@ def build_judge_system_prompt(
             "Read the draft against the formatting guide and the safety rules "
             "below. Fix every violation you find. Preserve what works — do not "
             "rewrite wholesale when a targeted edit will do.",
-            _duration_clause(target_min_sec, target_max_sec),
+            _duration_clause(target_min_sec, target_max_sec, engine),
             "# Formatting guide\n\n" + load_guide(engine, content_type, guides_dir),
             "# Content safety rules\n\n" + load_safety_rules(guides_dir),
             "Respond in exactly this format and nothing else:\n\n"
