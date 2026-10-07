@@ -334,7 +334,7 @@ If you do not use IPA injection, common Sanskrit terms that Kokoro typically mis
 This is a well-formed script demonstrating all features correctly:
 
 ```
-Welcome. This is a few quiet minutes, just for you. [pause:3s]
+Welcome to these few quiet minutes, just for you. [pause:3s]
 
 You can keep your eyes open or let them close, whichever feels easier, and you can shift your position at any time. [pause:4s]
 
