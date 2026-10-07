@@ -127,6 +127,14 @@ class TestQwen3SandboxControls(unittest.TestCase):
             self.assertEqual(float(os.environ["MOODSCAPE_QWEN3_STRETCH"]), 0.95)
             self.assertEqual(float(os.environ["MOODSCAPE_QWEN3_DF_WET"]), 0.4)
 
+    def test_apply_qwen3_env_clone_drops_instruct(self):
+        import os
+        from unittest.mock import patch
+        from core.sandbox_tab import apply_qwen3_env
+        with patch.dict(os.environ, {}):
+            apply_qwen3_env("clone", "serena", "Soft.", 0.6, 0.95, 0.4)
+            self.assertEqual(os.environ["MOODSCAPE_QWEN3_INSTRUCT"], "")
+
     def test_instruct_preset_per_mode_and_content_type(self):
         from core.qwen3_tts.presets import DESIGN_PRESETS, INSTRUCT_PRESETS
         from core.sandbox_tab import qwen3_instruct_preset

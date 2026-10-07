@@ -33,6 +33,12 @@ class TestCacheKey(unittest.TestCase):
         b = compute_cache_key(**base, extra={"mode": "custom", "temperature": 0.7})
         self.assertNotEqual(a, b)
 
+    def test_empty_extra_equals_no_extra(self):
+        base = dict(script="Rest.", tts_engine="qwen3", voice="Brittney", speed=0.8)
+        self.assertEqual(compute_cache_key(**base, extra=None),
+                         compute_cache_key(**base, extra={}))
+        self.assertEqual(compute_cache_key(**base, extra=None), compute_cache_key(**base))
+
 
 class TestPipelineRouting(unittest.TestCase):
     def test_pipeline_source_routes_qwen3(self):

@@ -223,11 +223,13 @@ class MeditationPipeline:
                     qwen3_extra = None
                     if base_engine == "qwen3":
                         from core.qwen3_tts import presets as _q3
+                        _q3_mode = _q3.mode_from_env()
+                        _q3_clone = _q3_mode == "clone"  # clone ignores instruct/speaker
                         qwen3_extra = {
-                            "mode": _q3.mode_from_env(),
+                            "mode": _q3_mode,
                             "temperature": _q3.temperature_from_env(),
-                            "instruct": os.environ.get("MOODSCAPE_QWEN3_INSTRUCT", ""),
-                            "speaker": _q3.speaker_from_env(),
+                            "instruct": "" if _q3_clone else os.environ.get("MOODSCAPE_QWEN3_INSTRUCT", ""),
+                            "speaker": "" if _q3_clone else _q3.speaker_from_env(),
                             "stretch": _q3.stretch_from_env(),
                             "chunk_chars": _q3.chunk_chars_from_env(),
                         }

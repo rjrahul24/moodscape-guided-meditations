@@ -277,7 +277,8 @@ def apply_qwen3_env(mode: str, speaker: str, instruct: str, temperature: float,
     """Pass sandbox Qwen3 controls to the engine via its MOODSCAPE_QWEN3_* env vars."""
     os.environ["MOODSCAPE_QWEN3_MODE"] = str(mode)
     os.environ["MOODSCAPE_QWEN3_SPEAKER"] = str(speaker)
-    os.environ["MOODSCAPE_QWEN3_INSTRUCT"] = str(instruct or "")
+    # Clone mode takes no instruct (Base checkpoint); carrying one only triggers a warning.
+    os.environ["MOODSCAPE_QWEN3_INSTRUCT"] = "" if mode == "clone" else str(instruct or "")
     os.environ["MOODSCAPE_QWEN3_TEMPERATURE"] = str(float(temperature))
     os.environ["MOODSCAPE_QWEN3_STRETCH"] = str(float(stretch))
     os.environ["MOODSCAPE_QWEN3_DF_WET"] = str(float(df_wet))

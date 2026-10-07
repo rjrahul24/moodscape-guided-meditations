@@ -83,6 +83,9 @@ Chosen by `content_type` (`presets.instruct_for`); anything other than `sleep_st
 - **Clone mode has no instruct.** The Base checkpoint takes only `ref_audio` + `ref_text`; an instruct set by env or the UI is dropped with a single warning rather than passed (which would raise).
 - **Custom-mode speakers are fixed upstream presets.** `serena` is listed upstream as a Chinese-native voice; the English-native presets (`ryan`, `aiden`) are male. See the findings note for what was measured.
 - **Loading prints two harmless upstream warnings** (`model of type qwen3_tts to instantiate a model of type ''` and a tokenizer "incorrect regex pattern" notice). Neither stopped any run.
+- **Script `[voice:...]`/phase markers are ignored.** Clone mode always uses the selected voice's "default" phase.
+- **The live test is a smoke test, not the spec excerpt.** `tests/integration/test_qwen3_live.py` runs the engine on a short 3-sentence script, not the spec's ~60 s sandbox-pipeline excerpt. The full pipeline path was exercised by the 8 renders in the findings note.
+- **Promoted model records are not handled yet.** A promoted model record with `base_engine: "qwen3"` is not handled by `get_engine()`.
 - **Sandbox-only until promoted.** `list_all_engines()` shows `qwen3` only with `include_experimental=True` (the Sandbox tab); Manual and Auto-Generate never list it.
 
 ## Memory

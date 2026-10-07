@@ -57,7 +57,7 @@ def stretch_from_env() -> float:
 
 
 def speaker_from_env() -> str:
-    return os.environ.get("MOODSCAPE_QWEN3_SPEAKER", DEFAULT_SPEAKER)
+    return (os.environ.get("MOODSCAPE_QWEN3_SPEAKER") or "").strip() or DEFAULT_SPEAKER
 
 
 def instruct_for(mode: str, content_type: str) -> str | None:

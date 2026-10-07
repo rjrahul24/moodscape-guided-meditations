@@ -42,6 +42,16 @@ class TestQwen3Presets(unittest.TestCase):
         self.assertEqual(presets.instruct_for("custom", "guided_meditation"),
                          presets.INSTRUCT_PRESETS["meditation"])
 
+    def test_speaker_from_env_defaults_when_unset_empty_or_blank(self):
+        for val in (None, "", "   "):
+            env = {} if val is None else {"MOODSCAPE_QWEN3_SPEAKER": val}
+            with patch.dict(os.environ, env):
+                if val is None:
+                    os.environ.pop("MOODSCAPE_QWEN3_SPEAKER", None)
+                self.assertEqual(presets.speaker_from_env(), presets.DEFAULT_SPEAKER)
+        with patch.dict(os.environ, {"MOODSCAPE_QWEN3_SPEAKER": " ryan "}):
+            self.assertEqual(presets.speaker_from_env(), "ryan")
+
 
 if __name__ == "__main__":
     unittest.main()
