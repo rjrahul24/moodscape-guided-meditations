@@ -22,6 +22,7 @@ from core.script_gen.engine import ScriptEngine, build_engine
 from core.script_gen.generator import draft
 from core.script_gen.judge import repair, review
 from core.script_gen.linter import (
+    STYLE_CODES,
     Violation,
     check,
     check_originality,
@@ -494,7 +495,7 @@ def generate_script(
                 judge_engine,
                 script,
                 fatal
-                + [v for v in violations if v.code in ("SLOP_DENSITY", "SLOP_HARD")],
+                + [v for v in violations if v.code in STYLE_CODES],
                 judge_system,
                 max_tokens=config.max_tokens,
                 sampling=stage_sampling["repair"],

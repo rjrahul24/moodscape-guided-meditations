@@ -121,6 +121,21 @@ class TestRepair(unittest.TestCase):
         self.assertIn("MARKER_MALFORMED", user)
         self.assertIn("bad tag", user)
 
+    def test_repair_prompt_allows_style_items(self):
+        engine = FakeScriptEngine(["<script>Fixed.</script>"])
+        repair(engine, "S", [Violation(code="X", severity=FATAL, message="m")], "SYS")
+        user = engine.calls[0]["user"]
+        self.assertIn("Fix every numbered problem", user)
+        self.assertIn("except that you may also improve the style items", user)
+        self.assertNotIn("Fix every one of them", user)
+
+    def test_style_codes_shared_with_formatter(self):
+        from core.script_gen.linter import STYLE_CODES, format_for_repair
+        self.assertEqual(STYLE_CODES, ("SLOP_DENSITY", "SLOP_HARD"))
+        out = format_for_repair([Violation("SLOP_HARD", "advisory", "s"), Violation("X", FATAL, "m")])
+        self.assertIn("1. [X/fatal]", out)
+        self.assertIn("- [SLOP_HARD] s", out)
+
     def test_current_script_appears_in_the_user_message(self):
         engine = FakeScriptEngine(["<script>Fixed.</script>"])
         violations = [Violation(code="X", severity=FATAL, message="m")]

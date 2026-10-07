@@ -99,8 +99,9 @@ def repair(
     """Fix specific, named violations. Returns (repaired_script, changelog)."""
     user = (
         "An automated checker found the following problems in this script. "
-        "Fix every one of them and return the corrected script. Change nothing "
-        "else.\n\n"
+        "Fix every numbered problem and return the corrected script. Change "
+        "nothing else, except that you may also improve the style items listed "
+        "after them.\n\n"
         "<problems>\n"
         f"{format_for_repair(violations)}\n"
         "</problems>\n\n"
