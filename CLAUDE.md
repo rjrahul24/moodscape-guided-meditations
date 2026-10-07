@@ -13,7 +13,7 @@ brew install espeak-ng                 # Kokoro G2P dependency
 python app.py                          # Gradio UI at http://localhost:7860
 ```
 
-**Model weights** live in the default user-level HF cache `~/.cache/huggingface/hub` (no `HF_HOME` override; there is no project-local `models/` or `checkpoints/` dir). Models actually used: `hexgrad/Kokoro-82M`, `SWivid/F5-TTS`, `charactr/vocos-mel-24khz`, `ResembleAI/chatterbox`, `mlx-community/DeepFilterNet-mlx`, `openai/whisper-large-v3-turbo` (F5 ref-transcription fallback), plus HTDemucs weights in `~/.cache/torch/hub/checkpoints`. Anything else in that cache is a leftover from a removed engine and safe to delete.
+**Model weights** live in the default user-level HF cache `~/.cache/huggingface/hub` (no `HF_HOME` override; there is no project-local `models/` or `checkpoints/` dir). Models actually used: `hexgrad/Kokoro-82M`, `SWivid/F5-TTS`, `charactr/vocos-mel-24khz`, `ResembleAI/chatterbox`, `mlx-community/DeepFilterNet-mlx`, `openai/whisper-large-v3-turbo` (F5 ref-transcription fallback), `mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16`, `mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16`, `mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16` (sandbox-only, experimental), plus HTDemucs weights in `~/.cache/torch/hub/checkpoints`. Anything else in that cache is a leftover from a removed engine and safe to delete.
 
 `.env` must define `HF_TOKEN` and `GOOGLE_API_KEY`. `app.py` sets `TOKENIZERS_PARALLELISM=false` and `PYTORCH_ENABLE_MPS_FALLBACK=1` at startup.
 
@@ -43,6 +43,7 @@ python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 │   ├── originality.py                # Corpus management, TF-IDF similarity scoring, avoid-lists
 │   ├── background_tags.py            # Lazy background music tagging (measured + declared)
 │   ├── kokoro_tts/  f5_tts/             # TTS engines (engine + preproc + postproc + voices)
+│   ├── qwen3_tts/                     # Qwen3-TTS on MLX (experimental, sandbox only)
 │   ├── lyria/                             # Lyria RealTime music generation (Google API)
 │   ├── upload_music/                      # Background instrumental (engine + arrange/length-fit)
 │   ├── script_gen/                    # prompt → validated script (planner + generator + judge + linter)
