@@ -12,6 +12,7 @@ from core.eval.speech_metrics import (
     normalize_text,
     rate_spread,
     speech_metrics,
+    speech_regions,
     wer,
 )
 
@@ -103,6 +104,41 @@ class TestRateSpread(unittest.TestCase):
         self.assertEqual(rate_spread([]), {"sec_per_char_p50": None, "sec_per_char_iqr": None})
 
 
+def _z(seconds: float) -> np.ndarray:
+    return np.zeros(int(SR * seconds), np.float32)
+
+
+class TestSpeechRegions(unittest.TestCase):
+    def _assert_regions(self, got, want):
+        self.assertEqual(len(got), len(want), got)
+        for (a, b), (c, d) in zip(got, want):
+            self.assertAlmostEqual(a, c, places=2)
+            self.assertAlmostEqual(b, d, places=2)
+
+    def test_long_silence_splits_with_padding(self):
+        audio = np.concatenate([_tone(1.0), _z(1.0), _tone(1.0)])
+        self._assert_regions(speech_regions(audio, SR), [(0.0, 1.15), (1.85, 3.0)])
+
+    def test_short_silence_does_not_split(self):
+        audio = np.concatenate([_tone(1.0), _z(0.5), _tone(1.0)])
+        self._assert_regions(speech_regions(audio, SR), [(0.0, 2.5)])
+
+    def test_padding_clamps_and_edge_silence_dropped(self):
+        audio = np.concatenate([_z(1.0), _tone(1.0), _z(1.0)])
+        self._assert_regions(speech_regions(audio, SR), [(0.85, 2.15)])
+
+    def test_all_silence_has_no_regions(self):
+        self.assertEqual(speech_regions(_z(2.0), SR), [])
+
+    def test_long_region_is_subdivided_at_quiet_frame(self):
+        audio = np.concatenate([_tone(20.0), _z(0.3), _tone(20.0)])
+        regions = speech_regions(audio, SR)
+        self.assertEqual(len(regions), 2)
+        self.assertTrue(all(b - a <= 28.0 for a, b in regions))
+        self.assertAlmostEqual(regions[0][1], regions[1][0], places=2)
+        self.assertTrue(20.0 <= regions[0][1] <= 20.35)
+
+
 class TestWhisperTranscriber(unittest.TestCase):
     def test_missing_end_falls_back_and_zero_is_kept(self):
         chunks = [
@@ -129,6 +165,32 @@ class TestWhisperTranscriber(unittest.TestCase):
         self.assertFalse(seen["during"])
         self.assertIs(asr.is_torchcodec_available, before)
         self.assertEqual(out.words[0].end, 1.0)
+
+
+class TestTranscribeRegions(unittest.TestCase):
+    def test_one_call_per_region_with_offsets_and_joined_text(self):
+        audio = np.concatenate([_tone(1.0), _z(1.5), _tone(1.0)])
+        calls = []
+        replies = [
+            {"text": " one", "chunks": [{"text": " one", "timestamp": (0.1, 0.5)}]},
+            {"text": " two", "chunks": [{"text": " two", "timestamp": (0.2, 0.6)}]},
+        ]
+
+        def fake_pipe(inputs, **kwargs):
+            calls.append((len(inputs["raw"]), kwargs))
+            return replies[len(calls) - 1]
+
+        t = WhisperTranscriber()
+        t._pipe = fake_pipe
+        out = t.transcribe(audio, SR)
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("chunk_length_s", calls[0][1])
+        self.assertEqual(calls[0][1]["generate_kwargs"]["condition_on_prev_tokens"], False)
+        self.assertEqual(out.text, "one two")
+        # region 2 starts at 2.5 - 0.15 s
+        self.assertAlmostEqual(out.words[0].start, 0.1, places=2)
+        self.assertAlmostEqual(out.words[1].start, 2.35 + 0.2, places=2)
+        self.assertAlmostEqual(out.words[1].end, 2.35 + 0.6, places=2)
 
 
 class TestSpeechMetrics(unittest.TestCase):

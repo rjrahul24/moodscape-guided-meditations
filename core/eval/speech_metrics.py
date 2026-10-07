@@ -68,6 +68,19 @@ def _words_from_chunks(chunks: list[dict], duration: float) -> list[Word]:
     return words
 
 
+# Whisper generate() kwargs. "language" skips language detection (which can
+# drift on near-silent input); "condition_on_prev_tokens" False stops each
+# window being conditioned on the previous text, the main driver of repetition
+# loops. no_repeat_ngram_size is deliberately not set: it would hide genuine
+# repeats from the synthesiser, which this metric exists to surface.
+_GENERATE_KWARGS = {"language": "english", "condition_on_prev_tokens": False}
+
+SPLIT_SILENCE_SEC = 0.8
+REGION_PAD_SEC = 0.15
+MAX_REGION_SEC = 28.0
+_FRAME_SEC = 0.01
+
+
 class WhisperTranscriber:
     """transformers ASR pipeline with word timestamps; loaded lazily."""
 
@@ -88,21 +101,36 @@ class WhisperTranscriber:
         )
 
     def transcribe(self, audio: np.ndarray, sr: int) -> Transcript:
+        """Transcribe speech regions separately, then stitch text and word times.
+
+        Feeding long audio with long silences to Whisper makes it hallucinate
+        ("Thank you", "Bye-bye" loops) and duplicate phrases at long-form chunk
+        overlaps, so each region is a short pass with no pipeline chunking.
+        """
         from scipy.signal import resample_poly
 
         if self._pipe is None:
             self._load()
         mono = audio.mean(axis=1) if audio.ndim == 2 else audio
-        audio16 = resample_poly(mono.astype(np.float64), 16000, sr).astype(np.float32)
-        with _torchcodec_disabled():
-            result = self._pipe(
-                {"raw": audio16, "sampling_rate": 16000},
-                return_timestamps="word",
-                chunk_length_s=30,
-                generate_kwargs={"language": "english"},
-            )
-        words = _words_from_chunks(result.get("chunks", []), len(mono) / float(sr))
-        return Transcript(result["text"].strip(), words)
+        texts: list[str] = []
+        words: list[Word] = []
+        for start, end in speech_regions(mono, sr):
+            piece = mono[int(start * sr) : int(end * sr)]
+            if len(piece) == 0:
+                continue
+            audio16 = resample_poly(piece.astype(np.float64), 16000, sr).astype(np.float32)
+            with _torchcodec_disabled():
+                result = self._pipe(
+                    {"raw": audio16, "sampling_rate": 16000},
+                    return_timestamps="word",
+                    generate_kwargs=_GENERATE_KWARGS,
+                )
+            text = result["text"].strip()
+            if text:
+                texts.append(text)
+            for w in _words_from_chunks(result.get("chunks", []), len(piece) / float(sr)):
+                words.append(Word(w.text, w.start + start, w.end + start))
+        return Transcript(" ".join(texts), words)
 
     def unload(self) -> None:
         import gc
@@ -149,13 +177,19 @@ def wer(reference: str, hypothesis: str) -> float:
     return Levenshtein.distance(ref, hyp) / len(ref)
 
 
-def _silent_frames(audio: np.ndarray, sr: int, frame_ms: float = 10.0) -> np.ndarray:
+def _frame_rms_db(audio: np.ndarray, sr: int, frame_ms: float = 10.0) -> np.ndarray:
     hop = max(1, int(sr * frame_ms / 1000.0))
     n = len(audio) // hop
     if n == 0:
-        return np.zeros(0, dtype=bool)
+        return np.zeros(0)
     frames = audio[: n * hop].reshape(n, hop)
-    rms_db = 20 * np.log10(np.sqrt(np.mean(frames.astype(np.float64) ** 2, axis=1)) + 1e-10)
+    return 20 * np.log10(np.sqrt(np.mean(frames.astype(np.float64) ** 2, axis=1)) + 1e-10)
+
+
+def _silent_frames(audio: np.ndarray, sr: int, frame_ms: float = 10.0) -> np.ndarray:
+    rms_db = _frame_rms_db(audio, sr, frame_ms)
+    if len(rms_db) == 0:
+        return np.zeros(0, dtype=bool)
     threshold = max(-50.0, float(np.max(rms_db)) - 40.0)
     return rms_db < threshold
 
@@ -173,6 +207,50 @@ def _silent_runs(mask: np.ndarray) -> list[tuple[int, int]]:
     if start is not None:
         runs.append((start, len(mask)))
     return runs
+
+
+def _split_long(rms_db: np.ndarray, a: int, b: int, max_frames: int) -> list[tuple[int, int]]:
+    """Recursively cut [a, b) at the quietest frame in its middle half."""
+    if b - a <= max_frames:
+        return [(a, b)]
+    lo, hi = a + (b - a) // 4, a + 3 * (b - a) // 4
+    mid = (a + b) / 2.0
+    cut = min(range(lo, hi), key=lambda i: (rms_db[i], abs(i - mid)))
+    return _split_long(rms_db, a, cut, max_frames) + _split_long(rms_db, cut, b, max_frames)
+
+
+def speech_regions(audio: np.ndarray, sr: int) -> list[tuple[float, float]]:
+    """(start_sec, end_sec) spans of speech, split at silences >= SPLIT_SILENCE_SEC.
+
+    Each span is padded by REGION_PAD_SEC (clamped to the audio) and spans
+    longer than MAX_REGION_SEC are cut at their quietest middle frame.
+    """
+    mono = audio.mean(axis=1) if audio.ndim == 2 else audio
+    rms_db = _frame_rms_db(mono, sr)
+    n = len(rms_db)
+    if n == 0:
+        return []
+    silent = _silent_frames(mono, sr)
+    split_frames = int(round(SPLIT_SILENCE_SEC / _FRAME_SEC))
+    pad = int(round(REGION_PAD_SEC / _FRAME_SEC))
+    total = len(mono) / float(sr)
+    spans: list[tuple[int, int]] = []
+    cursor = 0
+    for s0, e0 in _silent_runs(silent):
+        if e0 - s0 >= split_frames:
+            if s0 > cursor:
+                spans.append((cursor, s0))
+            cursor = e0
+    if cursor < n:
+        spans.append((cursor, n))
+    regions: list[tuple[float, float]] = []
+    for a, b in spans:
+        if not (~silent[a:b]).any():
+            continue
+        a, b = max(0, a - pad), min(n, b + pad)
+        for x, y in _split_long(rms_db, a, b, int(MAX_REGION_SEC / _FRAME_SEC)):
+            regions.append((x * _FRAME_SEC, min(y * _FRAME_SEC, total)))
+    return regions
 
 
 def internal_gaps(audio: np.ndarray, sr: int, words: list[Word], *, min_gap_ms: float = 250.0) -> int:
