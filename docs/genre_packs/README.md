@@ -16,7 +16,9 @@ Every pack must include these fields. Validation is strict; missing or malformed
 | `technique` | string | 1–3 sentences naming a real, named method (not a mood) | Passed to planner model; informs script coherence |
 | `arc` | [string, ...] | Ordered 4–6 short phrases describing the session's shape start to finish | Passed to planner; guides the meditation's narrative structure |
 | `safety` | string | 2–4 sentences specific to THIS genre, beyond generic safety rules | Passed to planner; critical for high-risk genres (grief, anger, forgiveness, etc.) |
-| `banned` | [string, ...] | *Optional.* 3–8 exact phrases a good writer in this genre would never use | Linter: matched as substrings, hard-fail if present |
+| `banned` | [string, ...] | *Optional.* 3–10 exact phrases a good writer in this genre would never use (limit enforced by the loader) | Linter: matched as substrings, hard-fail if present |
+| `max_breath_hold_sec` | int | *Optional.* 1–7, default 7: stricter breath-hold limit for this genre | Linter: `BREATH_HOLD` (FATAL) for holds longer than this |
+| `requires_disclaimer` | bool | *Optional.* Default false: requires an early breathwork contraindication line | Linter: `MISSING_DISCLAIMER` (FATAL) if absent from the opening |
 | `angles` | [table, ...] | Exactly 3 distinct angle tables (see **Angles** below) | Genre rotation: pick_angle() selects one per run to vary repeated sessions |
 
 ## Tag Vocabulary

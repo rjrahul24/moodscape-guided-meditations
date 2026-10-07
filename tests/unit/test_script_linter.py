@@ -568,3 +568,47 @@ class TestNewSafetyRulesFixRound1(unittest.TestCase):
                      "Take twenty gentle pumps at your own pace."):
             self.assertEqual([c for c in self.codes(text) if c in
                               ("RAPID_BREATHING", "PAIN_ELIMINATION", "ENERGY_HEALING_CLAIM")], [], text)
+
+
+class TestPackRules(unittest.TestCase):
+    def _pack(self, **kw):
+        from types import SimpleNamespace
+        base = dict(banned=(), max_breath_hold_sec=7, requires_disclaimer=False)
+        base.update(kw)
+        return SimpleNamespace(**base)
+
+    def test_stricter_hold_for_pack(self):
+        from core.script_gen.linter import check_pack_rules
+        text = "Hold your breath for five seconds."
+        self.assertIn("BREATH_HOLD", [v.code for v in check_pack_rules(text, self._pack(max_breath_hold_sec=4))])
+        self.assertEqual(check_pack_rules(text, self._pack()), [])
+
+    def test_no_duplicate_hold_over_global_limit(self):
+        from core.script_gen.linter import check, check_pack_rules
+        text = "Hold your breath for ten seconds."
+        pack = self._pack(max_breath_hold_sec=4)
+        self.assertEqual(check_pack_rules(text, pack), [])
+        global_holds = [v for v in check(text) if v.code == "BREATH_HOLD"]
+        self.assertEqual(len(global_holds), 1)
+
+    def test_missing_disclaimer(self):
+        from core.script_gen.linter import FATAL, check_pack_rules
+        body = "Breathe in slowly. " * 40
+        v = check_pack_rules(body, self._pack(requires_disclaimer=True))
+        self.assertEqual([(x.code, x.severity) for x in v], [("MISSING_DISCLAIMER", FATAL)])
+
+    def test_disclaimer_present_early(self):
+        from core.script_gen.linter import check_pack_rules
+        text = ("If you are pregnant or feel lightheaded at any point, return to natural breathing. "
+                + "Breathe in slowly. " * 40)
+        self.assertEqual(check_pack_rules(text, self._pack(requires_disclaimer=True)), [])
+
+    def test_disclaimer_too_late(self):
+        from core.script_gen.linter import check_pack_rules
+        text = ("Breathe in slowly. " * 40
+                + "If you feel lightheaded, return to natural breathing.")
+        self.assertIn("MISSING_DISCLAIMER", [v.code for v in check_pack_rules(text, self._pack(requires_disclaimer=True))])
+
+    def test_banned_still_checked(self):
+        from core.script_gen.linter import check_pack_rules
+        self.assertIn("BANNED_PHRASE", [v.code for v in check_pack_rules("You are safe here.", self._pack(banned=("you are safe",)))])

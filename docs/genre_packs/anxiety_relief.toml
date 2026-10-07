@@ -3,6 +3,7 @@ family       = "Stress & Anxiety"
 content_type = "meditation"
 music_tags   = ["warm", "sustained"]
 pause_ratio  = 0.34
+max_breath_hold_sec = 4
 
 technique = """
 Grounding through the senses (5-4-3-2-1): progressively focusing on what the
@@ -34,6 +35,7 @@ banned = [
     "this will pass",
     "you have nothing to worry about",
     "calm down",
+    "you are safe",
 ]
 
 [[angles]]

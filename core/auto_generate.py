@@ -24,8 +24,8 @@ from core.script_gen.judge import repair, review
 from core.script_gen.linter import (
     Violation,
     check,
-    check_banned_phrases,
     check_originality,
+    check_pack_rules,
     fatal_violations,
 )
 from core.script_gen.planner import plan
@@ -420,7 +420,7 @@ def generate_script(
                 target_max_sec=config.target_max_sec,
             )
             if pack is not None:
-                violations = violations + check_banned_phrases(script, pack.banned)
+                violations = violations + check_pack_rules(script, pack)
 
             report = None
             if config.originality:

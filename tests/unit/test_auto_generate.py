@@ -288,6 +288,41 @@ class EngineUnloadOnEveryExitPathTest(unittest.TestCase):
         self.assertEqual(judge.unload_calls, 1)
 
 
+class PackRulesWiringTest(unittest.TestCase):
+    def test_missing_disclaimer_triggers_a_repair(self):
+        from types import SimpleNamespace
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AutoConfig(
+                target_min_sec=1.0,
+                target_max_sec=100000.0,
+                failure_dir=Path(tmp) / "failures",
+                corpus_dir=Path(tmp) / "corpus",
+            )
+            pack = SimpleNamespace(
+                label="Box Breathing", banned=[], requires_disclaimer=True,
+                max_breath_hold_sec=7,
+            )
+            angle = SimpleNamespace(name="the square")
+            fixed = (
+                "If you feel lightheaded at any point, return to natural breathing.\n\n"
+                + CLEAN_SCRIPT * 3
+            )
+            judge = FakeScriptEngine([judged(CLEAN_SCRIPT), judged(fixed)])
+            with patch("core.auto_generate.plan", return_value="a brief"):
+                outcome = generate_script(
+                    "p",
+                    generator_engine=FakeScriptEngine([CLEAN_SCRIPT]),
+                    judge_engine=judge,
+                    pack=pack,
+                    angle=angle,
+                    config=config,
+                )
+        self.assertEqual(outcome.repairs_used, 1)
+        self.assertEqual(len(judge.calls), 2)
+        self.assertEqual(outcome.script, fixed)
+
+
 FAKE_SCAN = lambda: [("Healing Forest — 23:12", "/bg/forest.mp3")]
 
 

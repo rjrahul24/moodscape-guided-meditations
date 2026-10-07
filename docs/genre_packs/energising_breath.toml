@@ -3,6 +3,7 @@ family       = "Breathwork"
 content_type = "meditation"
 music_tags   = ["bright", "steady"]
 pause_ratio  = 0.38
+requires_disclaimer = true
 
 technique = """
 Kapalabhati-style breath: a burst of sharper exhalations that engage the core,

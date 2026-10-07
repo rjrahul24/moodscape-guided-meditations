@@ -255,6 +255,73 @@ class PackTypeValidationTest(unittest.TestCase):
         self.assertIn("string", exc_msg)
 
 
+class NewPackFieldsTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _load(self, body: str):
+        (self.dir / "p.toml").write_text(body, encoding="utf-8")
+        return load_pack("p", packs_dir=self.dir)
+
+    def test_defaults(self):
+        pack = load_pack("body_scan")
+        self.assertEqual(pack.max_breath_hold_sec, 7)
+        self.assertFalse(pack.requires_disclaimer)
+
+    def test_real_packs_have_new_values(self):
+        self.assertEqual(load_pack("panic_sos").max_breath_hold_sec, 4)
+        self.assertTrue(load_pack("energising_breath").requires_disclaimer)
+        self.assertEqual(load_pack("deep_sleep").pause_ratio, 0.20)
+        self.assertIn("you are safe", load_pack("grief_and_loss").banned)
+
+    def test_valid_values_load(self):
+        pack = self._load(VALID.replace(
+            "pause_ratio  = 0.34",
+            "pause_ratio  = 0.34\nmax_breath_hold_sec = 4\nrequires_disclaimer = true",
+        ))
+        self.assertEqual(pack.max_breath_hold_sec, 4)
+        self.assertTrue(pack.requires_disclaimer)
+
+    def test_hold_out_of_range_rejected(self):
+        for bad in ("9", "0", "true", '"4"'):
+            with self.subTest(bad=bad), self.assertRaises(GenrePackError) as ctx:
+                self._load(VALID.replace(
+                    "pause_ratio  = 0.34",
+                    f"pause_ratio  = 0.34\nmax_breath_hold_sec = {bad}",
+                ))
+            self.assertIn("max_breath_hold_sec", str(ctx.exception))
+
+    def test_disclaimer_must_be_bool(self):
+        with self.assertRaises(GenrePackError) as ctx:
+            self._load(VALID.replace(
+                "pause_ratio  = 0.34",
+                'pause_ratio  = 0.34\nrequires_disclaimer = "yes"',
+            ))
+        self.assertIn("requires_disclaimer", str(ctx.exception))
+
+    def test_banned_over_ten_rejected(self):
+        phrases = ", ".join(f'"phrase {i}"' for i in range(11))
+        with self.assertRaises(GenrePackError) as ctx:
+            self._load(VALID.replace(
+                'banned = ["time heals", "move on"]', f"banned = [{phrases}]"
+            ))
+        self.assertIn("10", str(ctx.exception))
+
+    def test_ten_banned_accepted(self):
+        phrases = ", ".join(f'"phrase {i}"' for i in range(10))
+        pack = self._load(VALID.replace(
+            'banned = ["time heals", "move on"]', f"banned = [{phrases}]"
+        ))
+        self.assertEqual(len(pack.banned), 10)
+
+    def test_every_shipped_pack_loads(self):
+        self.assertEqual(len(load_all_packs()), 46)
+
+
 class ShippedPacksTest(unittest.TestCase):
     """Every pack in the repository must load. A malformed pack cannot ship."""
 

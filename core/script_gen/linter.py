@@ -333,7 +333,21 @@ def _normalize_apostrophes(text: str) -> str:
     )
 
 
-def check_safety(script: str) -> list[Violation]:
+def _breath_hold_seconds(prose: str) -> list[int]:
+    """Seconds named by each 'hold your breath ... N seconds' instruction."""
+    found: list[int] = []
+    for match in _BREATH_HOLD.finditer(prose):
+        # Group 1 is digit number, Group 2 is word number
+        if match.group(1):
+            found.append(int(match.group(1)))
+        elif match.group(2):
+            seconds = _NUMBER_WORDS.get(match.group(2).lower())
+            if seconds is not None:
+                found.append(seconds)
+    return found
+
+
+def check_safety(script: str, *, max_hold_sec: int = MAX_BREATH_HOLD_SEC) -> list[Violation]:
     """Apply mental-health content hard-blocks. All findings are FATAL."""
     prose = _normalize_apostrophes(_strip_tags(script))
     violations: list[Violation] = []
@@ -351,26 +365,15 @@ def check_safety(script: str) -> list[Violation]:
                 )
             )
 
-    for match in _BREATH_HOLD.finditer(prose):
-        # Group 1 is digit number, Group 2 is word number
-        if match.group(1):
-            seconds = int(match.group(1))
-        elif match.group(2):
-            word_num = match.group(2).lower()
-            seconds = _NUMBER_WORDS.get(word_num)
-            if seconds is None:
-                continue
-        else:
-            continue
-
-        if seconds > MAX_BREATH_HOLD_SEC:
+    for seconds in _breath_hold_seconds(prose):
+        if seconds > max_hold_sec:
             violations.append(
                 Violation(
                     code="BREATH_HOLD",
                     severity=FATAL,
                     message=(
                         f"Instructs a {seconds}-second breath hold. Holds over "
-                        f"{MAX_BREATH_HOLD_SEC}s are a real risk for listeners "
+                        f"{max_hold_sec}s are a real risk for listeners "
                         "with panic disorder or asthma. Shorten it or remove it."
                     ),
                     # span=None: see Violation.span docstring.
@@ -575,6 +578,11 @@ def check_originality(
     return violations
 
 
+_DISCLAIMER_CONDITION = re.compile(r"\b(?:pregnan\w*|heart|respiratory|light-?headed|dizzy)\b", re.IGNORECASE)
+_DISCLAIMER_ACTION = re.compile(r"\b(?:natural\s+breath\w*|normal\s+breath\w*|breathe\s+normally)\b", re.IGNORECASE)
+DISCLAIMER_WINDOW = 0.25  # fraction of the script's words the disclaimer must appear within
+
+
 def check_banned_phrases(script: str, banned: Sequence[str]) -> list[Violation]:
     """Flag phrasings a genre pack forbids outright.
 
@@ -603,3 +611,39 @@ def check_banned_phrases(script: str, banned: Sequence[str]) -> list[Violation]:
         for phrase in banned
         if _normalize_apostrophes(phrase).lower() in prose
     ]
+
+
+def check_pack_rules(script: str, pack) -> list[Violation]:
+    """Genre-pack rules: banned phrases, a stricter hold limit, a required disclaimer."""
+    violations = check_banned_phrases(script, getattr(pack, "banned", ()))
+    limit = getattr(pack, "max_breath_hold_sec", MAX_BREATH_HOLD_SEC)
+    if limit < MAX_BREATH_HOLD_SEC:
+        # Holds over MAX_BREATH_HOLD_SEC are already reported by the global
+        # check(); add only those in (limit, MAX_BREATH_HOLD_SEC].
+        prose = _normalize_apostrophes(_strip_tags(script))
+        for seconds in _breath_hold_seconds(prose):
+            if limit < seconds <= MAX_BREATH_HOLD_SEC:
+                violations.append(
+                    Violation(
+                        code="BREATH_HOLD",
+                        severity=FATAL,
+                        message=(
+                            f"Instructs a {seconds}-second breath hold. For this genre, "
+                            f"holds over {limit}s are a real risk for anxious listeners. "
+                            "Shorten it or remove it."
+                        ),
+                        span=None,
+                    )
+                )
+    if getattr(pack, "requires_disclaimer", False):
+        prose = _normalize_apostrophes(_strip_tags(script))
+        words = prose.split()
+        opening = " ".join(words[: max(1, int(len(words) * DISCLAIMER_WINDOW))])
+        if not (_DISCLAIMER_CONDITION.search(opening) and _DISCLAIMER_ACTION.search(opening)):
+            violations.append(Violation(
+                code="MISSING_DISCLAIMER", severity=FATAL,
+                message=("Breathwork session without an early safety line. In the opening, say once: "
+                         "if you are pregnant, have a heart or respiratory condition, or feel "
+                         "lightheaded at any point, return to natural breathing."),
+            ))
+    return violations

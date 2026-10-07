@@ -3,6 +3,7 @@ family       = "Stress & Anxiety"
 content_type = "meditation"
 music_tags   = ["warm", "sparse"]
 pause_ratio  = 0.33
+max_breath_hold_sec = 4
 
 technique = """
 Breaking overwhelm into singular focus: the listener names one small task or
@@ -33,6 +34,7 @@ banned = [
     "manage your time better",
     "you just need to prioritize",
     "take a deep breath and push through",
+    "you are safe",
 ]
 
 [[angles]]

@@ -3,6 +3,7 @@ family       = "Stress & Anxiety"
 content_type = "meditation"
 music_tags   = ["steady", "tonal"]
 pause_ratio  = 0.22
+max_breath_hold_sec = 4
 
 technique = """
 Acute-distress body-anchoring: short, present-tense phrases rooting attention
@@ -37,6 +38,7 @@ banned = [
     "you're overreacting",
     "calm down",
     "try to sleep",
+    "you are safe",
 ]
 
 [[angles]]

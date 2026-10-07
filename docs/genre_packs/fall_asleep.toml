@@ -2,7 +2,7 @@ label        = "Fall Asleep"
 family       = "Sleep & Rest"
 content_type = "sleep_story"
 music_tags   = ["dark", "sustained"]
-pause_ratio  = 0.28
+pause_ratio  = 0.20
 
 technique = """
 Gentle, spacious narrative immersion: a tranquil story designed to occupy just enough

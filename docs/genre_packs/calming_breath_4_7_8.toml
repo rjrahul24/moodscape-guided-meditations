@@ -3,6 +3,7 @@ family       = "Breathwork"
 content_type = "meditation"
 music_tags   = ["warm", "steady"]
 pause_ratio  = 0.48
+requires_disclaimer = true
 
 technique = """
 The 4-7-8 breathing pattern: count as you inhale, hold, and exhale (four counts,

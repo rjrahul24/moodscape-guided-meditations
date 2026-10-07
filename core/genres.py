@@ -34,6 +34,7 @@ GENRE_PACKS_DIR = Path(
 )
 
 MAX_PAUSE_RATIO = 0.6
+MAX_BANNED = 10
 MIN_ANGLES = 2
 MIN_ARC_STEPS = 3
 MIN_ANGLE_IMAGERY = 1
@@ -73,6 +74,8 @@ class GenrePack:
     safety: str
     banned: tuple[str, ...]
     angles: tuple[Angle, ...]
+    max_breath_hold_sec: int = 7
+    requires_disclaimer: bool = False
 
 
 def _resolve(packs_dir: Path | None) -> Path:
@@ -187,6 +190,28 @@ def load_pack(slug: str, packs_dir: Path | None = None) -> GenrePack:
     banned = ()
     if "banned" in data:
         banned = _require_str_list(data, "banned", path)
+    if len(banned) > MAX_BANNED:
+        raise GenrePackError(
+            f"{path} has {len(banned)} banned phrases; at most {MAX_BANNED}."
+        )
+
+    max_breath_hold_sec = 7
+    if "max_breath_hold_sec" in data:
+        value = data["max_breath_hold_sec"]
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 7:
+            raise GenrePackError(
+                f"{path}: field 'max_breath_hold_sec' must be an integer 1-7, got {value!r}."
+            )
+        max_breath_hold_sec = value
+
+    requires_disclaimer = False
+    if "requires_disclaimer" in data:
+        value = data["requires_disclaimer"]
+        if not isinstance(value, bool):
+            raise GenrePackError(
+                f"{path}: field 'requires_disclaimer' must be a boolean, got {value!r}."
+            )
+        requires_disclaimer = value
 
     # Validate angles
     raw_angles = data.get("angles", [])
@@ -252,6 +277,8 @@ def load_pack(slug: str, packs_dir: Path | None = None) -> GenrePack:
         safety=safety.strip(),
         banned=banned,
         angles=angles,
+        max_breath_hold_sec=max_breath_hold_sec,
+        requires_disclaimer=requires_disclaimer,
     )
 
 
