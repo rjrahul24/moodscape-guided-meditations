@@ -12,6 +12,12 @@ from core.genres import Angle, GenrePack
 from core.script_gen.engine import ScriptEngine
 from core.script_gen.sampling import SamplingParams
 from core.script_gen.generator import strip_wrapper
+from core.script_gen.linter import MAX_BREATH_HOLD_SEC
+
+_DISCLAIMER_LINE = (
+    "If you are pregnant, have a heart or respiratory condition, or feel "
+    "lightheaded at any point, return to natural breathing."
+)
 
 
 def _bullet(items: Sequence[str]) -> str:
@@ -55,6 +61,18 @@ def plan(
         ),
         f"Genre safety notes:\n{pack.safety}",
     ])
+
+    hold_limit = getattr(pack, "max_breath_hold_sec", MAX_BREATH_HOLD_SEC)
+    if hold_limit < MAX_BREATH_HOLD_SEC:
+        sections.append(
+            f"Breath holds, if any, never longer than {hold_limit} seconds in this genre."
+        )
+
+    if getattr(pack, "requires_disclaimer", False):
+        sections.append(
+            "Place this line in the opening, quoted exactly:\n"
+            f'"{_DISCLAIMER_LINE}"'
+        )
 
     if pack.banned:
         sections.append(

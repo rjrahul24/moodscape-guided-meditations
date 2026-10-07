@@ -110,3 +110,43 @@ class PlanTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlannerPackRuleSectionsTest(unittest.TestCase):
+    HOLD = "Breath holds, if any, never longer than {n} seconds in this genre."
+    DISCLAIMER = (
+        "If you are pregnant, have a heart or respiratory condition, or feel "
+        "lightheaded at any point, return to natural breathing."
+    )
+
+    def _user(self, **overrides):
+        from dataclasses import replace
+        pack = replace(PACK, **overrides) if overrides else PACK
+        engine = FakeScriptEngine([BRIEF])
+        plan(engine, pack, pack.angles[0], system="S",
+             target_min_sec=360.0, target_max_sec=600.0)
+        return engine.calls[0]["user"]
+
+    def test_panic_sos_like_pack(self):
+        user = self._user(max_breath_hold_sec=4, requires_disclaimer=True)
+        self.assertIn(self.HOLD.format(n=4), user)
+        self.assertIn(self.DISCLAIMER, user)
+
+    def test_energising_like_pack(self):
+        user = self._user(max_breath_hold_sec=3, requires_disclaimer=True)
+        self.assertIn(self.HOLD.format(n=3), user)
+        self.assertIn(self.DISCLAIMER, user)
+
+    def test_default_pack_has_neither(self):
+        user = self._user()
+        self.assertNotIn("Breath holds, if any", user)
+        self.assertNotIn("pregnant", user)
+
+    def test_test_double_without_fields_still_works(self):
+        from types import SimpleNamespace
+        double = SimpleNamespace(**{k: getattr(PACK, k) for k in (
+            "label", "family", "technique", "arc", "pause_ratio", "safety", "banned")})
+        engine = FakeScriptEngine([BRIEF])
+        plan(engine, double, PACK.angles[0], system="S",
+             target_min_sec=360.0, target_max_sec=600.0)
+        self.assertNotIn("Breath holds", engine.calls[0]["user"])
