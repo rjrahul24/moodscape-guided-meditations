@@ -1,7 +1,8 @@
 """Evaluation harness: script, speech and mix metrics plus blind A/B tooling.
 
-Every module imports without torch or Gradio; heavy dependencies are imported
-inside the functions that need them.
+Heavy dependencies (Whisper, soundfile, pedalboard) are imported inside the
+functions that need them, but importing this package is not torch-free: the
+script metrics pull in the linter and originality chain, which imports torch.
 """
 
 from core.eval.ab import build_pairs, cut_excerpts, find_case_audio, level_match, score, sign_test_p
@@ -15,6 +16,7 @@ from core.eval.speech_metrics import (
     WhisperTranscriber,
     Word,
     cer,
+    gap_breakdown,
     internal_gaps,
     normalize_text,
     rate_spread,
@@ -30,6 +32,7 @@ __all__ = [
     "WhisperTranscriber",
     "Word",
     "cer",
+    "gap_breakdown",
     "internal_gaps",
     "normalize_text",
     "rate_spread",

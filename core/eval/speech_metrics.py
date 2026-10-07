@@ -78,6 +78,7 @@ _GENERATE_KWARGS = {"language": "english", "condition_on_prev_tokens": False}
 SPLIT_SILENCE_SEC = 0.8
 REGION_PAD_SEC = 0.15
 MAX_REGION_SEC = 28.0
+MIN_REGION_SEC = 0.3  # shorter spans are noise blips; Whisper hallucinates on them
 _FRAME_SEC = 0.01
 
 
@@ -245,7 +246,7 @@ def speech_regions(audio: np.ndarray, sr: int) -> list[tuple[float, float]]:
         spans.append((cursor, n))
     regions: list[tuple[float, float]] = []
     for a, b in spans:
-        if not (~silent[a:b]).any():
+        if not (~silent[a:b]).any() or (b - a) * _FRAME_SEC < MIN_REGION_SEC:
             continue
         a, b = max(0, a - pad), min(n, b + pad)
         for x, y in _split_long(rms_db, a, b, int(MAX_REGION_SEC / _FRAME_SEC)):
@@ -253,29 +254,40 @@ def speech_regions(audio: np.ndarray, sr: int) -> list[tuple[float, float]]:
     return regions
 
 
-def internal_gaps(audio: np.ndarray, sr: int, words: list[Word], *, min_gap_ms: float = 250.0) -> int:
-    """Silences >= min_gap_ms strictly inside a word span, or between words of one clause.
+def gap_breakdown(
+    audio: np.ndarray, sr: int, words: list[Word], *, min_gap_ms: float = 250.0
+) -> tuple[int, int]:
+    """(gaps inside a word span, gaps between words of one clause).
 
     Silence touching a word span's edge is ignored (Whisper spans are loose and
     absorb intended pauses); between words, the frames over the gap must
-    themselves be silent for min_gap_ms.
+    themselves be silent for min_gap_ms. Between-word pairs whose timestamp gap
+    is >= SPLIT_SILENCE_SEC straddle a transcription-region boundary and are
+    not counted; long stalls still show in CER and rate spread.
     """
     mono = audio.mean(axis=1) if audio.ndim == 2 else audio
     silent = _silent_frames(mono, sr)
     frames_needed = int(min_gap_ms / 10.0)
-    count = 0
+    in_word = between = 0
     for word in words:
         a, b = int(word.start * 100), int(word.end * 100)
         span = silent[a:b]
         if any(e - s >= frames_needed and s > 0 and e < len(span) for s, e in _silent_runs(span)):
-            count += 1
+            in_word += 1
     for prev, nxt in zip(words, words[1:]):
         if _CLAUSE_END.search(prev.text):
             continue
+        if nxt.start - prev.end >= SPLIT_SILENCE_SEC:
+            continue
         gap = silent[int(prev.end * 100) : int(nxt.start * 100)]
         if any(e - s >= frames_needed for s, e in _silent_runs(gap)):
-            count += 1
-    return count
+            between += 1
+    return in_word, between
+
+
+def internal_gaps(audio: np.ndarray, sr: int, words: list[Word], *, min_gap_ms: float = 250.0) -> int:
+    """Total of gap_breakdown(): silences inside a word or mid-clause between words."""
+    return sum(gap_breakdown(audio, sr, words, min_gap_ms=min_gap_ms))
 
 
 def rate_spread(words: list[Word]) -> dict:
@@ -297,10 +309,14 @@ def rate_spread(words: list[Word]) -> dict:
 
 def speech_metrics(audio: np.ndarray, sr: int, expected_text: str, *, transcriber: Transcriber) -> dict:
     transcript = transcriber.transcribe(audio, sr)
+    in_word, between = gap_breakdown(audio, sr, transcript.words)
     return {
         "cer": round(cer(expected_text, transcript.text), 4),
         "wer": round(wer(expected_text, transcript.text), 4),
-        "internal_gaps": internal_gaps(audio, sr, transcript.words),
+        "internal_gaps": in_word + between,
+        "gaps_in_word": in_word,
+        "gaps_between_words": between,
+        "words": [[w.text, round(w.start, 3), round(w.end, 3)] for w in transcript.words],
         **rate_spread(transcript.words),
         "transcript": transcript.text,
     }

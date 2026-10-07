@@ -3,11 +3,13 @@ import unittest
 import numpy as np
 
 from core.eval.speech_metrics import (
+    MIN_REGION_SEC,
     Transcript,
     Word,
     WhisperTranscriber,
     _words_from_chunks,
     cer,
+    gap_breakdown,
     internal_gaps,
     normalize_text,
     rate_spread,
@@ -89,6 +91,22 @@ class TestInternalGaps(unittest.TestCase):
         self.assertEqual(internal_gaps(_tone(3.4), SR, words), 0)
 
 
+class TestGapBreakdown(unittest.TestCase):
+    def test_breakdown_sums_to_internal_gaps(self):
+        audio = np.concatenate([_tone(0.5), np.zeros(int(SR * 0.4), np.float32), _tone(0.5)])
+        words = [Word("relax", 0.0, 1.4)]
+        self.assertEqual(gap_breakdown(audio, SR, words), (1, 0))
+        audio = np.concatenate([_tone(0.4), np.zeros(int(SR * 0.6), np.float32), _tone(0.4)])
+        words = [Word("rest", 0.0, 0.4), Word("here", 1.0, 1.4)]
+        self.assertEqual(gap_breakdown(audio, SR, words), (0, 1))
+        self.assertEqual(internal_gaps(audio, SR, words), 1)
+
+    def test_between_gap_at_split_silence_is_not_counted(self):
+        audio = np.concatenate([_tone(0.4), np.zeros(int(SR * 1.0), np.float32), _tone(0.4)])
+        words = [Word("rest", 0.0, 0.4), Word("here", 1.4, 1.8)]
+        self.assertEqual(gap_breakdown(audio, SR, words), (0, 0))
+
+
 class TestRateSpread(unittest.TestCase):
     def test_uniform_rate_has_zero_iqr(self):
         words = [Word("abc.", 0.0, 0.3), Word("abc.", 1.0, 1.3), Word("abc.", 2.0, 2.3)]
@@ -167,6 +185,13 @@ class TestWhisperTranscriber(unittest.TestCase):
         self.assertEqual(out.words[0].end, 1.0)
 
 
+class TestMinRegion(unittest.TestCase):
+    def test_short_blip_region_is_dropped(self):
+        audio = np.concatenate([_tone(1.0), _z(1.5), _tone(0.1)])
+        self.assertEqual(len(speech_regions(audio, SR)), 1)
+        self.assertGreaterEqual(MIN_REGION_SEC, 0.3)
+
+
 class TestTranscribeRegions(unittest.TestCase):
     def test_one_call_per_region_with_offsets_and_joined_text(self):
         audio = np.concatenate([_tone(1.0), _z(1.5), _tone(1.0)])
@@ -200,6 +225,10 @@ class TestSpeechMetrics(unittest.TestCase):
         self.assertEqual(m["cer"], 0.0)
         self.assertEqual(m["internal_gaps"], 0)
         self.assertEqual(m["transcript"], "Rest your hands.")
+        self.assertEqual(m["words"], [["Rest", 0.0, 0.3], ["your", 0.3, 0.6], ["hands.", 0.6, 1.0]])
+        self.assertEqual(m["gaps_in_word"], 0)
+        self.assertEqual(m["gaps_between_words"], 0)
+        self.assertEqual(m["internal_gaps"], m["gaps_in_word"] + m["gaps_between_words"])
 
 
 if __name__ == "__main__":
