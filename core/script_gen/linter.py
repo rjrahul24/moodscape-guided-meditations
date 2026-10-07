@@ -21,6 +21,7 @@ ADVISORY = "advisory"
 
 # Slop density above this (hits per 150 words) is reported as ADVISORY.
 SLOP_DENSITY_MAX = 2.0
+STYLE_CODES = ("SLOP_DENSITY", "SLOP_HARD")  # lower-priority style violations
 
 # Bounds for [pause:Xs]. Below 0.5s the marker is pointless; above 60s it is
 # almost certainly a model error rather than an intentional silence.
@@ -452,7 +453,7 @@ def format_for_repair(violations: list[Violation]) -> str:
     """
     if not violations:
         return ""
-    style_codes = ("SLOP_DENSITY", "SLOP_HARD")
+    style_codes = STYLE_CODES
     style = [v for v in violations if v.code in style_codes]
     main = [v for v in violations if v.code not in style_codes]
     lines = [
@@ -582,8 +583,18 @@ def check_originality(
     return violations
 
 
-_DISCLAIMER_CONDITION = re.compile(r"\b(?:pregnan\w*|heart|respiratory|light-?headed|dizzy)\b", re.IGNORECASE)
-_DISCLAIMER_ACTION = re.compile(r"\b(?:natural\s+breath\w*|normal\s+breath\w*|breathe\s+normally)\b", re.IGNORECASE)
+_DISCLAIMER_CONDITION = re.compile(
+    r"\b(?:pregnan\w*|heart|respiratory|light-?headed|dizzy|uncomfortable|unwell)\b", re.IGNORECASE
+)
+_DISCLAIMER_ACTION = re.compile(
+    r"\b(?:"
+    r"(?:natural|normal)\s+breath\w*"
+    r"|(?:ordinary|usual|regular|normal|natural|own)\s+(?:breath\w*|rhythm|pace)"
+    r"|breathe\s+(?:normally|naturally|as\s+you\s+usually\s+do)"
+    r"|(?:let\s+)?(?:your\s+)?breath\s+return\s+to\s+normal"
+    r")\b",
+    re.IGNORECASE,
+)
 DISCLAIMER_WINDOW = 0.25  # fraction of the script's words the disclaimer must appear within
 
 

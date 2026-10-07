@@ -603,6 +603,19 @@ class TestPackRules(unittest.TestCase):
                 + "Breathe in slowly. " * 40)
         self.assertEqual(check_pack_rules(text, self._pack(requires_disclaimer=True)), [])
 
+    def test_disclaimer_wording_variants(self):
+        from core.script_gen.linter import check_pack_rules
+        openings = [
+            "If you feel lightheaded at any point, return to ordinary breathing.",
+            "If you feel dizzy, let the counting go and breathe as you usually do.",
+            "If you feel unwell, stop and let your breath return to normal.",
+            "Stop if you feel lightheaded or unwell, and breathe naturally.",
+        ]
+        for opening in openings:
+            with self.subTest(opening=opening):
+                text = opening + " " + "Breathe in slowly. " * 40
+                self.assertEqual(check_pack_rules(text, self._pack(requires_disclaimer=True)), [])
+
     def test_disclaimer_too_late(self):
         from core.script_gen.linter import check_pack_rules
         text = ("Breathe in slowly. " * 40
