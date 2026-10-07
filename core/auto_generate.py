@@ -478,7 +478,8 @@ def generate_script(
             script, repair_log = repair(
                 judge_engine,
                 script,
-                fatal,
+                fatal
+                + [v for v in violations if v.code in ("SLOP_DENSITY", "SLOP_HARD")],
                 judge_system,
                 max_tokens=config.max_tokens,
                 sampling=stage_sampling["repair"],

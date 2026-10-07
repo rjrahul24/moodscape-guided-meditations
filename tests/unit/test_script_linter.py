@@ -452,3 +452,46 @@ class CheckBannedPhrasesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSlopChecks(unittest.TestCase):
+    def test_dense_slop_is_advisory(self):
+        from core.script_gen.linter import ADVISORY, check_slop
+        text = "Gently, softly, slowly let go and drift. " * 6
+        v = [x for x in check_slop(text) if x.code == "SLOP_DENSITY"]
+        self.assertEqual(len(v), 1)
+        self.assertEqual(v[0].severity, ADVISORY)
+
+    def test_hard_tier_phrase_reported_once_per_phrase(self):
+        from core.script_gen.linter import check_slop
+        text = "Let it wash over you. Again let it wash over you. A tapestry of light."
+        codes = [(x.code, x.message) for x in check_slop(text) if x.code == "SLOP_HARD"]
+        self.assertEqual(len(codes), 2)
+
+    def test_clean_script_has_no_slop(self):
+        from core.script_gen.linter import check_slop
+        self.assertEqual(check_slop("Notice the weight of your hands on your knees. " * 5), [])
+
+    def test_check_includes_slop(self):
+        from core.script_gen.linter import check
+        self.assertIn("SLOP_HARD", [v.code for v in check("A tapestry of calm.")])
+
+    def test_repair_text_orders_fatal_before_style(self):
+        from core.script_gen.linter import ADVISORY, FATAL, Violation, format_for_repair
+        text = format_for_repair([Violation("SLOP_HARD", ADVISORY, "style msg"),
+                                  Violation("BREATH_HOLD", FATAL, "fatal msg")])
+        self.assertLess(text.index("fatal msg"), text.index("Style (lower priority"))
+        self.assertLess(text.index("Style (lower priority"), text.index("style msg"))
+
+
+class TestSlopModuleLocation(unittest.TestCase):
+    def test_eval_reexports_script_gen_slop(self):
+        import core.eval.slop as e
+        import core.script_gen.slop as s
+        self.assertIs(e.slop_hits, s.slop_hits)
+
+    def test_guidance_lists_items(self):
+        from core.script_gen.slop import slop_guidance
+        g = slop_guidance(5)
+        self.assertIn("Avoid:", g)
+        self.assertEqual(len(g.split("Avoid:")[1].split(",")), 5)

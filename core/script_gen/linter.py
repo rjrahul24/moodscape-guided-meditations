@@ -19,6 +19,9 @@ from core.originality import SMALL_CORPUS_BELOW, OriginalityReport
 FATAL = "fatal"
 ADVISORY = "advisory"
 
+# Slop density above this (hits per 150 words) is reported as ADVISORY.
+SLOP_DENSITY_MAX = 2.0
+
 # Bounds for [pause:Xs]. Below 0.5s the marker is pointless; above 60s it is
 # almost certainly a model error rather than an intentional silence.
 MIN_PAUSE_SEC = 0.5
@@ -346,6 +349,28 @@ def check_safety(script: str) -> list[Violation]:
     return violations
 
 
+def check_slop(script: str) -> list[Violation]:
+    """Stock meditation phrasing. ADVISORY only: never triggers a repair."""
+    from core.script_gen.slop import slop_density, slop_hits
+
+    hits = slop_hits(script)
+    violations: list[Violation] = []
+    density = slop_density(script)
+    if density > SLOP_DENSITY_MAX:
+        top = sorted({h.term for h in hits}, key=lambda t: -sum(1 for h in hits if h.term == t))[:5]
+        violations.append(Violation(
+            code="SLOP_DENSITY", severity=ADVISORY,
+            message=(f"Stock phrasing density {density:.1f} per 150 words (limit "
+                     f"{SLOP_DENSITY_MAX}). Replace with concrete, specific language: {', '.join(top)}."),
+        ))
+    for term in sorted({h.term for h in hits if h.tier == "hard"}):
+        violations.append(Violation(
+            code="SLOP_HARD", severity=ADVISORY,
+            message=f"Cliche {term!r}. Say something specific instead.",
+        ))
+    return violations
+
+
 def check(
     script: str,
     *,
@@ -355,6 +380,7 @@ def check(
 ) -> list[Violation]:
     """Run every check family. Duration is skipped when no estimate is given."""
     violations = check_format(script) + check_safety(script)
+    violations += check_slop(script)
 
     if estimated_sec is not None and not (
         target_min_sec <= estimated_sec <= target_max_sec
@@ -387,11 +413,17 @@ def format_for_repair(violations: list[Violation]) -> str:
     """
     if not violations:
         return ""
+    style_codes = ("SLOP_DENSITY", "SLOP_HARD")
+    style = [v for v in violations if v.code in style_codes]
+    main = [v for v in violations if v.code not in style_codes]
     lines = [
         f"{i}. [{v.code}/{v.severity}] {v.message}"
-        for i, v in enumerate(violations, start=1)
+        for i, v in enumerate(main, start=1)
     ]
-    return "\n".join(lines)
+    if style:
+        lines.append("\nStyle (lower priority, fix only while making the changes above):")
+        lines.extend(f"- [{v.code}] {v.message}" for v in style)
+    return "\n".join(lines).lstrip("\n")
 
 
 # --- Originality --------------------------------------------------------

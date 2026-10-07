@@ -1071,3 +1071,42 @@ class GenrePathTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSlopInRepairs(unittest.TestCase):
+    SLOPPY = "Gently, softly, slowly let go and drift. " * 6
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.config = AutoConfig(
+            target_min_sec=1.0,
+            target_max_sec=100000.0,
+            failure_dir=Path(self._tmp.name) / "failures",
+        )
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_fatal_plus_slop_repair_prompt_has_style_section(self):
+        bad = "[bogus] " + self.SLOPPY
+        judge = FakeScriptEngine([judged(bad), judged(CLEAN_SCRIPT)])
+        outcome = generate_script(
+            "p",
+            generator_engine=FakeScriptEngine([bad]),
+            judge_engine=judge,
+            config=self.config,
+        )
+        self.assertEqual(outcome.repairs_used, 1)
+        self.assertIn("Style (lower priority", judge.calls[-1]["user"])
+
+    def test_slop_alone_triggers_no_repair(self):
+        judge = FakeScriptEngine([judged(self.SLOPPY)] * 3)
+        outcome = generate_script(
+            "p",
+            generator_engine=FakeScriptEngine([self.SLOPPY]),
+            judge_engine=judge,
+            config=self.config,
+        )
+        self.assertEqual(len(judge.calls), 1)
+        self.assertEqual(outcome.repairs_used, 0)
+        self.assertTrue(any(v.code == "SLOP_DENSITY" for v in outcome.violations))
