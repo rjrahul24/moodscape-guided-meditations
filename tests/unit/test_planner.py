@@ -113,7 +113,7 @@ if __name__ == "__main__":
 
 
 class PlannerPackRuleSectionsTest(unittest.TestCase):
-    HOLD = "Breath holds, if any, never longer than {n} seconds in this genre."
+    HOLD = "Do not add breath holds unless the technique calls for them; any hold stays at or under {n} seconds."
     DISCLAIMER = (
         "If you are pregnant, have a heart or respiratory condition, or feel "
         "lightheaded at any point, return to natural breathing."
@@ -139,7 +139,7 @@ class PlannerPackRuleSectionsTest(unittest.TestCase):
 
     def test_default_pack_has_neither(self):
         user = self._user()
-        self.assertNotIn("Breath holds, if any", user)
+        self.assertNotIn("Do not add breath holds", user)
         self.assertNotIn("pregnant", user)
 
     def test_test_double_without_fields_still_works(self):

@@ -65,7 +65,7 @@ def plan(
     hold_limit = getattr(pack, "max_breath_hold_sec", MAX_BREATH_HOLD_SEC)
     if hold_limit < MAX_BREATH_HOLD_SEC:
         sections.append(
-            f"Breath holds, if any, never longer than {hold_limit} seconds in this genre."
+            f"Do not add breath holds unless the technique calls for them; any hold stays at or under {hold_limit} seconds."
         )
 
     if getattr(pack, "requires_disclaimer", False):
