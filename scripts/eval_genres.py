@@ -127,6 +127,7 @@ def main() -> int:
                 row = {
                     "config": name, "genre": slug, "case": job_id, "band": band, "seed": seed,
                     "ok": True,
+                    "voice": result.voice,
                     "seconds": round(time.monotonic() - started, 1),
                     "angle": result.angle,
                     "estimated_sec": round(result.estimated_sec, 1),

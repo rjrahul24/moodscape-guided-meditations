@@ -6,6 +6,7 @@ installed Ollama Modelfiles already set them (qwen top_k 20, gemma top_k 64),
 and the OpenAI-compatible /v1 endpoint cannot override them anyway.
 """
 
+import math
 import os
 from dataclasses import asdict, dataclass
 
@@ -39,17 +40,22 @@ def _bare_model(engine_name: str) -> str:
     return model.rsplit("/", 1)[-1].lower()
 
 
-def _env_value(var: str, current):
+def _env_value(var: str, current, *, nullable: bool = True):
     raw = os.environ.get(var)
     if raw is None:
         return current
     text = raw.strip().lower()
     if text in ("", "none", "null"):
+        if not nullable:
+            raise ValueError(f"Environment variable {var}={raw!r}: temperature cannot be unset; give a number.")
         return None
     try:
-        return float(text)
+        value = float(text)
     except ValueError as exc:
         raise ValueError(f"Environment variable {var}={raw!r} is not a number (or 'none').") from exc
+    if not math.isfinite(value):
+        raise ValueError(f"Environment variable {var}={raw!r} must be a finite number.")
+    return value
 
 
 def sampling_for(stage: str, engine_name: str) -> SamplingParams:
@@ -64,7 +70,8 @@ def sampling_for(stage: str, engine_name: str) -> SamplingParams:
             break
     values = params.as_dict()
     for field in _FIELDS:
-        values[field] = _env_value(f"MOODSCAPE_SAMPLING_{stage.upper()}_{field.upper()}", values[field])
-    if values["temperature"] is None:
-        values["temperature"] = DEFAULT.temperature
+        values[field] = _env_value(
+            f"MOODSCAPE_SAMPLING_{stage.upper()}_{field.upper()}", values[field],
+            nullable=field != "temperature",
+        )
     return SamplingParams(**values)

@@ -162,7 +162,7 @@ configuration: `MOODSCAPE_E2E=1` enables the real-audio end-to-end test
 
 ## Sampling
 
-Each model call uses per-stage sampling from `script_gen/sampling.py :: sampling_for(stage, engine_name)`, recorded in `meta.json` under `"sampling"`. Stages: `planner`, `writer`, `judge`, `repair`. First matching row wins; unmatched models get temperature 1.0 only.
+Each model call uses per-stage sampling from `script_gen/sampling.py :: sampling_for(stage, engine_name)`, recorded in `meta.json` under `"sampling"`. Stages: `planner`, `writer`, `judge`, `repair`. First matching row wins; unmatched models get temperature 1.0 only. Env overrides: `MOODSCAPE_SAMPLING_<STAGE>_<FIELD>`; `none` unsets top_p or presence_penalty; temperature must be a number (non-finite values are rejected).
 
 | Model family | Stages | temperature | top_p | presence_penalty |
 |---|---|---|---|---|

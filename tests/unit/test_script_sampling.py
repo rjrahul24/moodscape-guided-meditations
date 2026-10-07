@@ -51,6 +51,21 @@ class TestSamplingFor(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "MOODSCAPE_SAMPLING_JUDGE_TEMPERATURE"):
                 sampling_for("judge", "ollama:gemma4:31b")
 
+    def test_temperature_none_is_rejected(self):
+        var = "MOODSCAPE_SAMPLING_JUDGE_TEMPERATURE"
+        for raw in ("none", "null", ""):
+            with _clear_env(), patch.dict(os.environ, {var: raw}):
+                with self.assertRaisesRegex(ValueError, var + ".*cannot be unset"):
+                    sampling_for("judge", "ollama:gemma4:31b")
+
+    def test_non_finite_values_rejected(self):
+        for field in ("TEMPERATURE", "TOP_P", "PRESENCE_PENALTY"):
+            for raw in ("nan", "inf", "-inf"):
+                var = f"MOODSCAPE_SAMPLING_WRITER_{field}"
+                with _clear_env(), patch.dict(os.environ, {var: raw}):
+                    with self.assertRaisesRegex(ValueError, var):
+                        sampling_for("writer", "ollama:gemma4:31b")
+
     def test_unknown_stage(self):
         with self.assertRaisesRegex(ValueError, "stage"):
             sampling_for("polish", "ollama:gemma4:31b")
