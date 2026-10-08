@@ -1,7 +1,8 @@
-# Copy to voice_map.toml to override the automatic per-family voice choice.
+# Copy to voice_map.toml to choose the narrator voice per genre family.
 # Keys are genre families (as in docs/genre_packs/*.toml); values are voice
 # slugs from assets/speakers/reference_audio/. Unlisted families keep the
-# measured choice (core/voice_selection.py).
+# default (Brittney), or the measured choice when MOODSCAPE_VOICE_BY_FAMILY=1
+# (core/voice_selection.py).
 [families]
 # "Sleep & Rest" = "Delilah"
 # "Morning & Energy" = "Eryn"

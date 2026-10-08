@@ -6,10 +6,15 @@ spectral brightness) and cached by (filename, size, mtime). Families map to a
 profile -- calm, energy, expressive, steady -- and the voice scoring highest on
 that profile (z-scored across the pool) narrates the family. An optional
 assets/speakers/voice_map.toml overrides any family.
+
+Per-family choice is OFF by default: it did not win the R1 blind A/B
+(2026-10-08), so every family narrates with DEFAULT_VOICE unless
+MOODSCAPE_VOICE_BY_FAMILY=1. voice_map.toml overrides apply either way.
 """
 
 import json
 import logging
+import os
 import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -21,6 +26,7 @@ logger = logging.getLogger(__name__)
 _ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CACHE = _ROOT / "var" / "voice_traits.json"
 DEFAULT_OVERRIDES = _ROOT / "assets" / "speakers" / "voice_map.toml"
+DEFAULT_VOICE = "Brittney"  # golden-path F5 voice
 
 FAMILY_PROFILE: dict[str, str] = {
     "Sleep & Rest": "calm",
@@ -130,12 +136,18 @@ def _overrides(path: Path) -> dict[str, str]:
     return dict(tomllib.loads(path.read_text(encoding="utf-8")).get("families", {}))
 
 
+def by_family_enabled() -> bool:
+    return os.environ.get("MOODSCAPE_VOICE_BY_FAMILY", "0").strip() == "1"
+
+
 def voice_for_family(family: str, *, traits: dict[str, VoiceTraits] | None = None,
                      overrides_path: Path | None = None) -> str:
+    override = _overrides(overrides_path or DEFAULT_OVERRIDES).get(family)
+    if override is None and not by_family_enabled():
+        return DEFAULT_VOICE
     traits = traits if traits is not None else voice_traits()
     if not traits:
         raise RuntimeError("No measurable reference voices found in assets/speakers.")
-    override = _overrides(overrides_path or DEFAULT_OVERRIDES).get(family)
     if override is not None:
         if override not in traits:
             raise ValueError(f"voice_map.toml maps {family!r} to unknown voice {override!r}; known: {sorted(traits)}")

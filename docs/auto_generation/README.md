@@ -176,7 +176,14 @@ Override any value with `MOODSCAPE_SAMPLING_<STAGE>_<FIELD>` (for example `MOODS
 
 ## Voices
 
-For engines that take a voice slug (f5, chatterbox, qwen3), `core/voice_selection.py` picks the narrator per genre family from measured reference-clip traits (speaking rate, median pitch, pitch range, brightness). Each family maps to a profile and the voice scoring highest on it (z-scored across the pool) narrates:
+For engines that take a voice slug (f5, chatterbox), every family narrates with **Brittney** (`DEFAULT_VOICE` in `core/voice_selection.py`) by default.
+
+Per-family choice is **off by default** because it did not win the R1 blind A/B on 2026-10-08:
+- Round 1 scored 5 R1 wins, 6 baseline wins and 10 ties.
+- The Eryn and Clara genres went 0–3.
+- Delilah doubled the mid-word gap count.
+
+Set `MOODSCAPE_VOICE_BY_FAMILY=1` to turn it back on. `core/voice_selection.py` then picks the narrator per genre family from measured reference-clip traits (speaking rate, median pitch, pitch range, brightness). Each family maps to a profile, and the voice scoring highest on it (z-scored across the pool) narrates:
 
 | Family | Profile | Current pick |
 |---|---|---|
@@ -185,7 +192,7 @@ For engines that take a voice slug (f5, chatterbox, qwen3), `core/voice_selectio
 | Emotional, Presence | expressive | Brittney |
 | Focus & Work, Breathwork | steady | Clara |
 
-Override per family in `assets/speakers/voice_map.toml` (copy `voice_map.example.toml`); an unknown slug raises an error. Measured traits are cached in `var/voice_traits.json`, keyed by filename, size and mtime. The chosen voice is recorded in `meta.json` under `"voice"`. Kokoro is unaffected. Tests stub selection through an autouse fixture in `tests/conftest.py`; mark a test `real_voice_selection` to opt out.
+Override per family in `assets/speakers/voice_map.toml` (copy `voice_map.example.toml`). Overrides apply whether or not the flag is on, and an unknown slug raises an error. With the flag off, no clip is measured. Measured traits are cached in `var/voice_traits.json`, keyed by filename, size and mtime. The chosen voice is recorded in `meta.json` under `"voice"`. Kokoro is unaffected. Tests stub selection through an autouse fixture in `tests/conftest.py`; mark a test `real_voice_selection` to opt out.
 
 ## Model spec format
 
