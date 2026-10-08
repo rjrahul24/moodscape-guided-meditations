@@ -518,6 +518,23 @@ def combine_script_with_reactive(g_script: np.ndarray, g_reactive: np.ndarray) -
     return np.where(gs > 0, gs, np.minimum(gs, gr)).astype(np.float32)
 
 
+def _slew_limit_rise(g_db: np.ndarray, sample_rate: int, db_per_sec: float, control_hz: float = 100.0) -> np.ndarray:
+    """Limit how fast the gain may RISE (falls pass through). Runs at a control rate, then interpolates."""
+    n = g_db.shape[0]
+    if n == 0 or db_per_sec <= 0:
+        return g_db
+    step = max(1, int(sample_rate / control_hz))
+    ctrl = g_db[::step].astype(np.float64)
+    max_up = db_per_sec / control_hz * (step * control_hz / sample_rate)
+    out = np.empty_like(ctrl)
+    out[0] = ctrl[0]
+    for i in range(1, ctrl.size):
+        prev = out[i - 1]
+        out[i] = ctrl[i] if ctrl[i] <= prev else min(ctrl[i], prev + max_up)
+    x_ctrl = np.arange(ctrl.size) * step
+    return np.interp(np.arange(n), x_ctrl, out).astype(np.float32)
+
+
 def compute_breathing_gain_db(
     voice_audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
@@ -539,12 +556,20 @@ def compute_breathing_gain_db(
     n = int(voice_audio.shape[-1])
     if phrases is None:
         phrases = detect_phrases(voice_audio, sample_rate, threshold_db=vad_threshold_db)
+    limit_rise = os.environ.get("MOODSCAPE_BED_RISE_LIMIT", "0") == "1"
     g_script = _script_gain_db(
         n, sample_rate, phrases,
         pre_descent_ms=pre_descent_ms, attack_ramp_ms=attack_ramp_ms,
         release_ms=release_ms, duck_db=duck_depth_db,
-        lift_db=lift_db, lift_pause_s=lift_pause_s, smooth_hz=smooth_hz,
+        lift_db=0.0 if limit_rise else lift_db,
+        lift_pause_s=lift_pause_s, smooth_hz=smooth_hz,
     )
+    if limit_rise:
+        rate = float(os.environ.get("MOODSCAPE_BED_RISE_DB_PER_SEC", "3.0"))
+        max_rise = float(os.environ.get("MOODSCAPE_BED_RISE_MAX_DB", "12.0"))
+        g_script = np.minimum(
+            _slew_limit_rise(g_script, sample_rate, rate), duck_depth_db + max_rise,
+        )
     g_react = _reactive_gain_db(voice_audio, sample_rate, range_db=duck_depth_db)
     return combine_script_with_reactive(g_script, g_react)
 

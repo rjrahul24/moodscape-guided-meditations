@@ -1,6 +1,10 @@
+import os
 import unittest
+from unittest.mock import patch
 import numpy as np
 from core.mixer import (
+    _slew_limit_rise,
+    compute_breathing_gain_db,
     adaptive_vad_threshold,
     calibrate_music_bed,
     detect_phrases,
@@ -349,6 +353,55 @@ class TestMixPhrasesPassthrough(unittest.TestCase):
         # The ducked beds should be near-identical (same phrase timeline).
         diff = np.max(np.abs(mixed_auto - mixed_pre))
         self.assertLess(diff, 0.02)
+
+
+class TestBedRiseLimit(unittest.TestCase):
+    sr = 16000
+
+    def _voice(self, spans, total):
+        v = np.zeros(int(total * self.sr), np.float32)
+        t = np.arange(v.size) / self.sr
+        for s, e in spans:
+            m = (t >= s) & (t < e)
+            v[m] = 0.3 * np.sin(2 * np.pi * 200 * t[m])
+        return v
+
+    def test_limiter_not_applied_when_flag_off(self):
+        v = self._voice([(1, 3), (20, 22)], 25)
+        ph = [(1, 3), (20, 22)]
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MOODSCAPE_BED_RISE_LIMIT", None)
+            off = compute_breathing_gain_db(v, self.sr, duck_depth_db=-16.0, phrases=ph)
+        with patch.dict(os.environ, {"MOODSCAPE_BED_RISE_LIMIT": "1"}):
+            on = compute_breathing_gain_db(v, self.sr, duck_depth_db=-16.0, phrases=ph)
+        sl = slice(int(10 * self.sr), int(18 * self.sr))
+        self.assertGreaterEqual(off[sl].max(), -1.0)
+        self.assertLessEqual(on[sl].max(), -4.0 + 0.05)
+
+    def test_short_pause_rises_at_most_rate_times_pause(self):
+        v = self._voice([(1, 3), (5, 7)], 10)
+        with patch.dict(os.environ, {"MOODSCAPE_BED_RISE_LIMIT": "1"}):
+            g = compute_breathing_gain_db(v, self.sr, duck_depth_db=-16.0, phrases=[(1, 3), (5, 7)])
+        peak_in_pause = g[int(3 * self.sr):int(5 * self.sr)].max()
+        self.assertLessEqual(peak_in_pause, -16.0 + 3.0 * 2.0 + 0.5)
+
+    def test_long_pause_capped_below_today(self):
+        v = self._voice([(1, 3), (20, 22)], 25)
+        with patch.dict(os.environ, {"MOODSCAPE_BED_RISE_LIMIT": "1"}):
+            g = compute_breathing_gain_db(v, self.sr, duck_depth_db=-16.0, phrases=[(1, 3), (20, 22)])
+        self.assertLessEqual(g[int(10 * self.sr):int(18 * self.sr)].max(), -16.0 + 12.0 + 0.05)
+
+    def test_falls_are_not_limited(self):
+        g = np.concatenate([np.zeros(800, np.float32), np.full(800, -16.0, np.float32)])
+        out = _slew_limit_rise(g, self.sr, 3.0)
+        self.assertLessEqual(out[900], -15.0)
+
+    def test_no_pause_equals_input_and_silence_has_no_nan(self):
+        g = np.full(16000, -16.0, np.float32)
+        np.testing.assert_allclose(_slew_limit_rise(g, self.sr, 3.0), g)
+        v = np.zeros(16000, np.float32)
+        with patch.dict(os.environ, {"MOODSCAPE_BED_RISE_LIMIT": "1"}):
+            self.assertFalse(np.isnan(compute_breathing_gain_db(v, self.sr, duck_depth_db=-16.0)).any())
 
 
 if __name__ == "__main__":
