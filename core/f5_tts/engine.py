@@ -27,12 +27,14 @@ import random
 import re
 import tempfile
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 from core.speech_engine import SAMPLE_RATE, SpeechEngine
 from core.f5_tts import voice_registry
+from core.f5_tts.chunking import BreathGroup, breath_groups, f5_char_budget
 from core.f5_tts.postprocessor import apply_microprosody
 
 logger = logging.getLogger(__name__)
@@ -202,6 +204,17 @@ def _condition_reference_audio(audio_path: str, sr: int) -> str:
 
 
 
+@dataclass
+class ChunkRecord:
+    """One rendered internal chunk (filled only when MOODSCAPE_F5_CHUNKING=1)."""
+
+    index: int          # position in the internal chunks list
+    text: str
+    seed: int
+    speed: float
+    audio: np.ndarray   # post-trim, pre-VAD
+
+
 class F5Engine(SpeechEngine):
     """Wraps F5TTS for zero-shot voice cloning meditation narration.
 
@@ -252,6 +265,7 @@ class F5Engine(SpeechEngine):
         self._phases = voice_registry.get_voice(resolved_slug)
         self._phase_assets: dict[str, dict] = {}  # loaded assets (path, text) per phase
         self._model = None
+        self.last_chunks: list[ChunkRecord] = []
 
         logger.info(
             "F5Engine initialised with voice '%s' (%d phases)",
@@ -337,6 +351,77 @@ class F5Engine(SpeechEngine):
 
     # ── Synthesis ─────────────────────────────────────────────────────────────
 
+    def _infer_chunk(
+        self,
+        gen_text: str,
+        assets: dict,
+        chunk_speed: float,
+        chunk_seed: int,
+        target_wpm: int | None,
+    ) -> np.ndarray:
+        """Infer one chunk: model call, tensor->numpy, trailing trim, microprosody."""
+        # Latent-parameter overrides (research Issue 3.2, B3). Default to
+        # the validated golden-path constants; MOODSCAPE_F5_CFG / _SWAY /
+        # _NFE let the user A/B more expressive settings without a code
+        # change (research starting points: 1.8 / -0.8 / 64).
+        cfg_strength = float(os.environ.get("MOODSCAPE_F5_CFG", _CFG_STRENGTH))
+        sway_coef = float(os.environ.get("MOODSCAPE_F5_SWAY", _SWAY_COEF))
+        nfe_step = int(os.environ.get("MOODSCAPE_F5_NFE", _NFE_STEPS))
+
+        # Calculate fix_duration for WPM-based pacing.
+        # fix_duration tells F5-TTS the TOTAL mel frame count (ref + gen).
+        # After generation, the reference portion is clipped off, leaving
+        # exactly target_speech_sec of generated audio.
+        infer_kwargs: dict = dict(
+            ref_file=assets["audio"],
+            ref_text=assets["text"],
+            gen_text=gen_text,
+            speed=chunk_speed,
+            nfe_step=nfe_step,
+            cfg_strength=cfg_strength,
+            sway_sampling_coef=sway_coef,
+            remove_silence=False,
+            seed=chunk_seed,
+        )
+        if target_wpm is not None and target_wpm > 0:
+            word_count = len(gen_text.split())
+            target_speech_sec = word_count / target_wpm * 60.0
+            ref_dur = assets.get("duration_sec", 10.0)
+            infer_kwargs["fix_duration"] = ref_dur + target_speech_sec
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="An output with one or more elements was resized",
+                category=UserWarning,
+            )
+            wav, _sr, _ = self._model.infer(**infer_kwargs)
+        # f5-tts ≥1.1 returns a numpy array; older builds return a tensor
+        if hasattr(wav, "cpu"):
+            arr = wav.cpu().squeeze().numpy().astype(np.float32)
+        else:
+            arr = np.asarray(wav, dtype=np.float32).squeeze()
+        arr = _trim_trailing_silence(arr, SAMPLE_RATE)
+        # Optional per-phrase microprosody (research Issue 3.3/3.4, B4):
+        # phrase-final pitch declination + breathiness via a WORLD pass.
+        # OFF by default — WORLD resynthesis can colour clean Vocos
+        # output; MOODSCAPE_F5_MICROPROSODY=1 opts in.
+        if os.environ.get("MOODSCAPE_F5_MICROPROSODY", "0") == "1":
+            decline = float(os.environ.get("MOODSCAPE_F5_DECLINE_CENTS", "120.0"))
+            tail_ms = float(os.environ.get("MOODSCAPE_F5_DECLINE_TAIL_MS", "600.0"))
+            ap_scale = float(os.environ.get("MOODSCAPE_F5_AP_SCALE", "1.05"))
+            pitch_scale = float(os.environ.get("MOODSCAPE_F5_PITCH_SCALE", "1.15"))
+            formant_shift = float(os.environ.get("MOODSCAPE_F5_FORMANT_SHIFT", "0.98"))
+            taper_ms = float(os.environ.get("MOODSCAPE_F5_TAPER_MS", "300.0"))
+            taper_floor = float(os.environ.get("MOODSCAPE_F5_TAPER_FLOOR", "0.6"))
+            arr = apply_microprosody(
+                arr, SAMPLE_RATE,
+                decline_cents=decline, tail_ms=tail_ms, ap_scale=ap_scale,
+                pitch_scale=pitch_scale, formant_shift=formant_shift,
+                taper_ms=taper_ms, taper_floor=taper_floor,
+            )
+        return arr
+
     def synthesize(
         self,
         segments: list[dict],
@@ -384,7 +469,9 @@ class F5Engine(SpeechEngine):
             seed = random.randint(0, 2**31 - 1)
         logger.info("F5Engine synthesize: base seed=%d, %d segments", seed, len(segments))
 
-        chunks: list[tuple[np.ndarray, np.ndarray, str, str | None]] = []
+        chunks: list[tuple[np.ndarray, np.ndarray, str, str | None, float | None]] = []
+        chunking = os.environ.get("MOODSCAPE_F5_CHUNKING", "0") == "1"
+        self.last_chunks = []
         total = len(segments)
         speech_idx = 0  # counter for speech chunks only (used for per-chunk seed)
 
@@ -413,106 +500,79 @@ class F5Engine(SpeechEngine):
 
                 assets = self._phase_assets[phase]
 
-                # Per-chunk seed: base_seed + speech_index gives each chunk
-                # distinct but reproducible diffusion noise.
-                chunk_seed = seed + speech_idx
-
-                # Short-phrase pacing (research Issue 3, A2). F5's duration
-                # heuristic mis-estimates very short text ("Breathe in…"),
-                # leaking reference audio; slowing those *fragments* gives the
-                # model more frames to land cleanly. The trigger is a non-space
-                # CHARACTER count (research: "<10 chars, excluding spaces") — a
-                # word count caught normal short sentences ("Notice the breathing
-                # in your body."), forcing them slow enough that F5 stretched and
-                # inserted mid-word gaps. Natural-rhythm mode only — in fixed-WPM
-                # mode fix_duration already governs length.
-                chunk_speed = speed
-                if (
-                    target_wpm is None
-                    and os.environ.get("MOODSCAPE_F5_SHORT_PHRASE_PACING", "1") == "1"
-                ):
-                    max_chars = int(os.environ.get("MOODSCAPE_F5_SHORT_PHRASE_MAX_CHARS", "12"))
-                    if len(gen_text.replace(" ", "")) <= max_chars:
-                        chunk_speed = float(os.environ.get("MOODSCAPE_F5_SHORT_PHRASE_SPEED", "0.5"))
-
-                # Latent-parameter overrides (research Issue 3.2, B3). Default to
-                # the validated golden-path constants; MOODSCAPE_F5_CFG / _SWAY /
-                # _NFE let the user A/B more expressive settings without a code
-                # change (research starting points: 1.8 / -0.8 / 64).
-                cfg_strength = float(os.environ.get("MOODSCAPE_F5_CFG", _CFG_STRENGTH))
-                sway_coef = float(os.environ.get("MOODSCAPE_F5_SWAY", _SWAY_COEF))
-                nfe_step = int(os.environ.get("MOODSCAPE_F5_NFE", _NFE_STEPS))
-
-                # Calculate fix_duration for WPM-based pacing.
-                # fix_duration tells F5-TTS the TOTAL mel frame count (ref + gen).
-                # After generation, the reference portion is clipped off, leaving
-                # exactly target_speech_sec of generated audio.
-                infer_kwargs: dict = dict(
-                    ref_file=assets["audio"],
-                    ref_text=assets["text"],
-                    gen_text=gen_text,
-                    speed=chunk_speed,
-                    nfe_step=nfe_step,
-                    cfg_strength=cfg_strength,
-                    sway_sampling_coef=sway_coef,
-                    remove_silence=False,
-                    seed=chunk_seed,
-                )
-                if target_wpm is not None and target_wpm > 0:
-                    word_count = len(gen_text.split())
-                    target_speech_sec = word_count / target_wpm * 60.0
-                    ref_dur = assets.get("duration_sec", 10.0)
-                    infer_kwargs["fix_duration"] = ref_dur + target_speech_sec
-
-                with warnings.catch_warnings():
-                    warnings.filterwarnings(
-                        "ignore",
-                        message="An output with one or more elements was resized",
-                        category=UserWarning,
+                # Flag off: one group per segment (today's behaviour). Flag on:
+                # split into breath groups sized to F5's own budget so upstream
+                # never re-splits, each rendered with its own seed.
+                if chunking and assets.get("duration_sec"):
+                    budget = f5_char_budget(
+                        assets["text"], assets["duration_sec"], speed
                     )
-                    wav, _sr, _ = self._model.infer(**infer_kwargs)
-                speech_idx += 1
-                # f5-tts ≥1.1 returns a numpy array; older builds return a tensor
-                if hasattr(wav, "cpu"):
-                    arr = wav.cpu().squeeze().numpy().astype(np.float32)
+                    groups = breath_groups(gen_text, budget)
                 else:
-                    arr = np.asarray(wav, dtype=np.float32).squeeze()
-                arr = _trim_trailing_silence(arr, SAMPLE_RATE)
-                # Optional per-phrase microprosody (research Issue 3.3/3.4, B4):
-                # phrase-final pitch declination + breathiness via a WORLD pass.
-                # OFF by default — WORLD resynthesis can colour clean Vocos
-                # output; MOODSCAPE_F5_MICROPROSODY=1 opts in.
-                if os.environ.get("MOODSCAPE_F5_MICROPROSODY", "0") == "1":
-                    decline = float(os.environ.get("MOODSCAPE_F5_DECLINE_CENTS", "120.0"))
-                    tail_ms = float(os.environ.get("MOODSCAPE_F5_DECLINE_TAIL_MS", "600.0"))
-                    ap_scale = float(os.environ.get("MOODSCAPE_F5_AP_SCALE", "1.05"))
-                    pitch_scale = float(os.environ.get("MOODSCAPE_F5_PITCH_SCALE", "1.15"))
-                    formant_shift = float(os.environ.get("MOODSCAPE_F5_FORMANT_SHIFT", "0.98"))
-                    taper_ms = float(os.environ.get("MOODSCAPE_F5_TAPER_MS", "300.0"))
-                    taper_floor = float(os.environ.get("MOODSCAPE_F5_TAPER_FLOOR", "0.6"))
-                    arr = apply_microprosody(
-                        arr, SAMPLE_RATE,
-                        decline_cents=decline, tail_ms=tail_ms, ap_scale=ap_scale,
-                        pitch_scale=pitch_scale, formant_shift=formant_shift,
-                        taper_ms=taper_ms, taper_floor=taper_floor,
-                    )
-                threshold = float(np.abs(arr).mean()) * 0.15
-                activity = np.abs(arr) > threshold
-                chunks.append((arr, activity, "speech", gen_text))
+                    groups = [BreathGroup(gen_text, None)]
+
+                for group in groups:
+                    group_text = group.text
+
+                    # Per-chunk seed: base_seed + speech_index gives each chunk
+                    # distinct but reproducible diffusion noise.
+                    chunk_seed = seed + speech_idx
+
+                    # Short-phrase pacing (research Issue 3, A2). F5's duration
+                    # heuristic mis-estimates very short text ("Breathe in…"),
+                    # leaking reference audio; slowing those *fragments* gives the
+                    # model more frames to land cleanly. The trigger is a non-space
+                    # CHARACTER count (research: "<10 chars, excluding spaces") — a
+                    # word count caught normal short sentences ("Notice the breathing
+                    # in your body."), forcing them slow enough that F5 stretched and
+                    # inserted mid-word gaps. Natural-rhythm mode only — in fixed-WPM
+                    # mode fix_duration already governs length.
+                    chunk_speed = speed
+                    if (
+                        target_wpm is None
+                        and os.environ.get("MOODSCAPE_F5_SHORT_PHRASE_PACING", "1") == "1"
+                    ):
+                        max_chars = int(os.environ.get("MOODSCAPE_F5_SHORT_PHRASE_MAX_CHARS", "12"))
+                        if len(group_text.replace(" ", "")) <= max_chars:
+                            chunk_speed = float(os.environ.get("MOODSCAPE_F5_SHORT_PHRASE_SPEED", "0.5"))
+
+                    arr = self._infer_chunk(group_text, assets, chunk_speed, chunk_seed, target_wpm)
+                    speech_idx += 1
+                    if chunking:
+                        # The MPS driver cache grows ~1.1 GB per chunk while live
+                        # tensors stay flat (r2 findings); release it per group.
+                        try:
+                            import torch
+                            if torch.backends.mps.is_available():
+                                torch.mps.empty_cache()
+                        except Exception:
+                            pass
+                        self.last_chunks.append(
+                            ChunkRecord(
+                                index=len(chunks),
+                                text=group_text,
+                                seed=chunk_seed,
+                                speed=chunk_speed,
+                                audio=arr,
+                            )
+                        )
+                    threshold = float(np.abs(arr).mean()) * 0.15
+                    activity = np.abs(arr) > threshold
+                    chunks.append((arr, activity, "speech", group_text, group.gap_after_sec))
 
             elif seg["type"] == "pause":
                 from core.kokoro_tts.postprocessor import generate_room_tone
                 n = int(seg["duration_sec"] * SAMPLE_RATE)
                 room_tone = generate_room_tone(seg["duration_sec"], sr=SAMPLE_RATE)
                 silence_act = np.zeros(len(room_tone), dtype=bool)
-                chunks.append((room_tone, silence_act, "pause", None))
+                chunks.append((room_tone, silence_act, "pause", None, None))
 
             elif seg["type"] == "breath":
                 from core.breath_sounds import load_breath
 
                 breath_audio = load_breath(seg["subtype"], target_sr=SAMPLE_RATE)
                 breath_act = np.zeros(len(breath_audio), dtype=bool)
-                chunks.append((breath_audio, breath_act, "breath", None))
+                chunks.append((breath_audio, breath_act, "breath", None, None))
 
             if progress_cb is not None:
                 progress_cb(idx + 1, total)
@@ -522,10 +582,10 @@ class F5Engine(SpeechEngine):
 
         # Apply Silero VAD to each speech chunk before assembly
         processed_chunks = []
-        for arr, act, ctype, text in chunks:
+        for arr, act, ctype, text, gap_after in chunks:
             if ctype == "speech":
                 arr = _apply_silero_vad(arr, SAMPLE_RATE)
-            processed_chunks.append((arr, act, ctype, text))
+            processed_chunks.append((arr, act, ctype, text, gap_after))
         chunks = processed_chunks
 
         # Assemble the final audio with type-aware boundary handling:
@@ -536,6 +596,7 @@ class F5Engine(SpeechEngine):
         # at the 400-char limit — they are sentences within ONE paragraph.
         # Explicit pause segments from the preprocessor handle paragraph breaks.
         FADE_N = int(0.300 * SAMPLE_RATE)  # 300 ms equal-power cosine crossfade between speech chunks
+        GROUP_FADE_N = int(0.030 * SAMPLE_RATE)  # 30 ms fade at breath-group joins
         GAP_N = int(0.4 * SAMPLE_RATE)     # 0.4s gap between consecutive speech chunks (same paragraph)
 
         result_audio = chunks[0][0].copy().astype(np.float32)
@@ -543,12 +604,20 @@ class F5Engine(SpeechEngine):
 
         for i in range(1, len(chunks)):
             prev_type = chunks[i - 1][2]
-            cur_audio, cur_act, cur_type, _ = chunks[i]
+            cur_audio, cur_act, cur_type, _, _ = chunks[i]
+            prev_gap = chunks[i - 1][4]
             cur_audio = cur_audio.astype(np.float32)
 
             if prev_type == "speech" and cur_type == "speech":
-                gap_tone = np.zeros(GAP_N, dtype=np.float32)
-                gap_act = np.zeros(GAP_N, dtype=bool)
+                if prev_gap is not None:
+                    # Breath-group join: punctuation-length silence + short fade.
+                    gap_n = int(prev_gap * SAMPLE_RATE)
+                    fade_n = GROUP_FADE_N
+                else:
+                    gap_n = GAP_N
+                    fade_n = FADE_N
+                gap_tone = np.zeros(gap_n, dtype=np.float32)
+                gap_act = np.zeros(gap_n, dtype=bool)
                 
                 result_audio = np.concatenate([result_audio, gap_tone])
                 result_act = np.concatenate([result_act, gap_act])
@@ -556,7 +625,7 @@ class F5Engine(SpeechEngine):
                 # Equal-power cosine crossfade to smooth the sentence boundary.
                 # cos/sin pair maintains cos²+sin²=1 at every point, eliminating
                 # the amplitude dip that linear crossfades produce at the midpoint.
-                fade = min(FADE_N, len(result_audio), len(cur_audio))
+                fade = min(fade_n, len(result_audio), len(cur_audio))
                 if fade > 0:
                     _t = np.linspace(0.0, np.pi / 2.0, fade, dtype=np.float32)
                     fade_out = np.cos(_t)   # 1.0 → 0.0
