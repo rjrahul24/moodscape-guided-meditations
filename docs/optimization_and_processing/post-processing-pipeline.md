@@ -185,7 +185,7 @@ Master Chain
   • No limiter in the chain — LUFS-normalize then mixer.true_peak_limit() at export
   Applied in export_audio(); audio streamed to file in 20s chunks
 
-Export: 44.1 kHz or 48 kHz / 24-bit WAV | Target: -16 LUFS | TP ceiling: -1.0 dBTP
+Export: 44.1 kHz or 48 kHz / 24-bit WAV | Target: playback -16 LUFS (sleep -18; mono 3 dB lower) | TP ceiling: -1.0 dBTP
 ```
 
 ---
@@ -299,7 +299,7 @@ After the master chain, `qa_monitor.run_qa_checks()` runs 11 automated checks:
 - [x]  seams: micro-crossfade (64-sample triangular at zero-crossing) after _stitch()
 - [x] Exponential fade curves (default) for natural meditation transitions
 - [x] Streaming export in 20s chunks — no full-array load at export time
-- [x] LUFS target: -16 LUFS integrated (per session)
+- [x] LUFS target: playback -16 LUFS integrated (sleep -18; mono files 3 dB lower)
 - [x] 11 QA checks including spectral smoothness, harmonic stability, onset density, and dynamic range
 - [x] A/B selection: best composite-scored candidate kept across retry attempts
 - [x] Convolution reverb IR selectable: warm_studio / wooden_hall / stone_chapel

@@ -132,7 +132,7 @@ Long audio arrays are exported chunk-by-chunk using Pedalboard's `AudioFile` pro
 4. True-peak safety clip at -1.0 dBFS (0.891 linear) before writing.
 
 LUFS targets by mode:
-- Full mix (voice + music): **-16 LUFS** (matches Apple Music natively; Spotify applies minimal +2 dB)
+- Full mix (voice + music): **playback -16 LUFS** (sleep -18; mono files 3.01 dB lower) (matches Apple Music natively; Spotify applies minimal +2 dB)
 - Mono: **-18 LUFS** (2 dB offset for mono-only playback)
 
 ## 8. Text Normalization (TTS Pre-Processing)
