@@ -10,6 +10,7 @@ import json
 import math
 import random
 import secrets
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +21,7 @@ POSITIONS = (("start", 0.10), ("middle", 0.50), ("end", 0.85))
 SHIP_RATE = 0.60
 SHIP_P = 0.05
 TIE_CHOICES = ("SAME", "TIE", "=")
+LEAN_CHOICES = ("LEANA", "LEANB")
 KEY_NAME = ".key.json"
 LEGACY_KEY_NAME = "key.json"
 PEAK_LIMIT = 0.98
@@ -88,9 +90,14 @@ def build_pairs(
     *,
     seed: int | None = None,
     excerpt_sec: float = 75.0,
+    positions: Sequence[str] | None = None,
 ) -> int:
     import soundfile as sf
 
+    if positions is not None:
+        unknown = sorted(set(positions) - {name for name, _ in POSITIONS})
+        if unknown:
+            raise ValueError(f"Unknown position(s): {', '.join(unknown)} (use {', '.join(n for n, _ in POSITIONS)})")
     base, chal = find_case_audio(baseline_dir), find_case_audio(challenger_dir)
     missing = sorted(set(base) ^ set(chal))
     if missing:
@@ -101,8 +108,7 @@ def build_pairs(
     rng = random.Random(seed)
     pairs_dir = Path(out_dir) / "pairs"
     pairs_dir.mkdir(parents=True, exist_ok=True)
-    key: dict[str, dict] = {}
-    index = 0
+    entries: list[tuple[str, str, np.ndarray, np.ndarray, int, bool]] = []
     for case in sorted(base):
         a_audio, sr_a = sf.read(base[case], dtype="float32")
         b_audio, sr_b = sf.read(chal[case], dtype="float32")
@@ -115,16 +121,24 @@ def build_pairs(
         if a_parts[0][2]:  # shorter than one excerpt: one whole-file pair, not three identical ones
             a_parts = [("whole", a_parts[0][1], True)]
             b_parts = [("whole", b_parts[0][1], True)]
+        elif positions is not None:
+            keep = set(positions)
+            a_parts = [p for p in a_parts if p[0] in keep]
+            b_parts = [p for p in b_parts if p[0] in keep]
         for (pos, a_ex, a_tr), (_pos, b_ex, b_tr) in zip(a_parts, b_parts):
-            arms = [("baseline", a_ex), ("challenger", b_ex)]
-            rng.shuffle(arms)
-            pair_id = f"{index:02d}"
-            scale = pair_gain_scale(arms[0][1], arms[1][1], sr_a)
-            for label, (_arm, excerpt) in zip(("A", "B"), arms):
-                sf.write(pairs_dir / f"{pair_id}_{label}.wav", level_match(excerpt, sr_a, gain_scale=scale), sr_a)
-            key[pair_id] = {"A": arms[0][0], "B": arms[1][0], "case": case, "position": pos,
-                            "truncated": bool(a_tr or b_tr)}
-            index += 1
+            entries.append((case, pos, a_ex, b_ex, sr_a, bool(a_tr or b_tr)))
+
+    rng.shuffle(entries)  # pair ids no longer group a case's excerpts back to back
+    key: dict[str, dict] = {}
+    for index, (case, pos, a_ex, b_ex, sr, truncated) in enumerate(entries):
+        arms = [("baseline", a_ex), ("challenger", b_ex)]
+        rng.shuffle(arms)
+        pair_id = f"{index:02d}"
+        scale = pair_gain_scale(arms[0][1], arms[1][1], sr)
+        for label, (_arm, excerpt) in zip(("A", "B"), arms):
+            sf.write(pairs_dir / f"{pair_id}_{label}.wav", level_match(excerpt, sr, gain_scale=scale), sr)
+        key[pair_id] = {"A": arms[0][0], "B": arms[1][0], "case": case, "position": pos,
+                        "truncated": truncated}
 
     (Path(out_dir) / KEY_NAME).write_text(json.dumps({"seed": seed, "pairs": key}, indent=2), encoding="utf-8")
     with open(Path(out_dir) / "sheet.csv", "w", newline="", encoding="utf-8") as fh:
@@ -132,7 +146,7 @@ def build_pairs(
         writer.writerow(["pair", "choice", "reason"])
         for pair_id in key:
             writer.writerow([pair_id, "", ""])
-    return index
+    return len(entries)
 
 
 def sign_test_p(wins: int, n: int) -> float:
@@ -151,6 +165,7 @@ def _load_key(ab_dir: Path) -> dict:
 def score(ab_dir: Path) -> dict:
     key = _load_key(ab_dir)
     challenger = baseline = ties = unanswered = 0
+    c_leans = b_leans = 0
     by_position: dict[str, dict[str, int]] = {}
     with open(Path(ab_dir) / "sheet.csv", newline="", encoding="utf-8") as fh:
         reader = csv.DictReader(fh)
@@ -164,11 +179,11 @@ def score(ab_dir: Path) -> dict:
         raise ValueError(f"Duplicate pair id(s) in sheet.csv: {', '.join(duplicates)}")
     unanswered += len(set(key) - seen)  # pairs absent from the sheet were never answered
     for row in rows:
-        choice = (row["choice"] or "").strip().upper()
+        choice = (row["choice"] or "").strip().upper().replace(" ", "")
         if row["pair"] not in key:
             raise ValueError(f"Pair {row['pair']!r} in sheet.csv is not in the answer key")
         entry = key[row["pair"]]
-        bucket = by_position.setdefault(entry["position"], {"challenger": 0, "baseline": 0, "ties": 0})
+        bucket = by_position.setdefault(entry["position"], {"challenger": 0, "baseline": 0, "ties": 0, "challenger_leans": 0, "baseline_leans": 0})
         if choice in ("A", "B"):
             winner = entry[choice]
             if winner == "challenger":
@@ -176,16 +191,28 @@ def score(ab_dir: Path) -> dict:
             else:
                 baseline += 1
             bucket[winner] += 1
+        elif choice in LEAN_CHOICES:
+            leaned = entry[choice[-1]]
+            ties += 1  # leans count as ties for the verdict
+            bucket["ties"] += 1
+            if leaned == "challenger":
+                c_leans += 1
+            else:
+                b_leans += 1
+            bucket[f"{leaned}_leans"] += 1
         elif choice in TIE_CHOICES:
             ties += 1
             bucket["ties"] += 1
         elif choice:
-            raise ValueError(f"Pair {row['pair']}: invalid choice {row['choice']!r} (use A, B or same)")
+            raise ValueError(f"Pair {row['pair']}: invalid choice {row['choice']!r} (use A, B, leanA, leanB or same)")
         else:
             unanswered += 1
     n = challenger + baseline
     rate = challenger / n if n else 0.0
     p = sign_test_p(challenger, n)
+    denom = challenger + baseline + 0.5 * (c_leans + b_leans)
+    weighted_rate = (challenger + 0.5 * c_leans) / denom if denom else 0.0
+    lean_p = sign_test_p(challenger + c_leans, challenger + baseline + c_leans + b_leans)
     if unanswered:
         verdict = "INCOMPLETE"
     elif n and rate >= SHIP_RATE and p < SHIP_P:
@@ -195,4 +222,6 @@ def score(ab_dir: Path) -> dict:
     else:
         verdict = "INCONCLUSIVE"
     return {"challenger_wins": challenger, "baseline_wins": baseline, "ties": ties, "unanswered": unanswered,
-            "rate": round(rate, 3), "p": round(p, 4), "verdict": verdict, "by_position": by_position}
+            "rate": round(rate, 3), "p": round(p, 4), "verdict": verdict, "by_position": by_position,
+            "challenger_leans": c_leans, "baseline_leans": b_leans,
+            "weighted_rate": round(weighted_rate, 3), "lean_inclusive_p": round(lean_p, 4)}

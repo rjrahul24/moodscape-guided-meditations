@@ -23,6 +23,8 @@ def main() -> int:
     print(json.dumps(result, indent=2))
     print(f"\nVerdict: {result['verdict']} (challenger {result['challenger_wins']}"
           f" / baseline {result['baseline_wins']} / ties {result['ties']} / unanswered {result['unanswered']}, p={result['p']})")
+    print(f"Leans: challenger {result['challenger_leans']} / baseline {result['baseline_leans']};"
+          f" weighted rate {result['weighted_rate']}; lean-inclusive p {result['lean_inclusive_p']} (reported only)")
     return 0
 
 

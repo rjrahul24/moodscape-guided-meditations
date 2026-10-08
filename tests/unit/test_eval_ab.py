@@ -207,5 +207,79 @@ class TestTruncatedPairs(unittest.TestCase):
             self.assertEqual(la, 50 * SR)
 
 
+class TestShuffleAndPositions(unittest.TestCase):
+    def _runs(self, tmp):
+        cases = {"c0": 0.1, "c1": 0.1, "c2": 0.1}
+        a = _make_run(Path(tmp) / "a", cases)
+        b = _make_run(Path(tmp) / "b", {k: 0.2 for k in cases})
+        return a, b, Path(tmp) / "ab"
+
+    def _key(self, out):
+        return json.loads((out / ".key.json").read_text())["pairs"]
+
+    def test_pair_order_is_shuffled_but_key_complete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base, chal, out = self._runs(tmp)
+            n = build_pairs(base, chal, out, seed=1, excerpt_sec=30)
+            key = self._key(out)
+            self.assertEqual(n, 9)
+            self.assertEqual(sorted({v["case"] for v in key.values()}), ["c0", "c1", "c2"])
+            self.assertEqual(sorted(key), [f"{i:02d}" for i in range(9)])
+            first_three = [key[f"{i:02d}"]["case"] for i in range(3)]
+            self.assertGreater(len(set(first_three)), 1)
+
+    def test_positions_filter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base, chal, out = self._runs(tmp)
+            n = build_pairs(base, chal, out, seed=1, excerpt_sec=30, positions=["start", "middle"])
+            self.assertEqual(n, 6)
+            self.assertEqual({v["position"] for v in self._key(out).values()}, {"start", "middle"})
+
+    def test_unknown_position_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base, chal, out = self._runs(tmp)
+            with self.assertRaises(ValueError):
+                build_pairs(base, chal, out, seed=1, positions=["nope"])
+
+    def test_positions_filter_keeps_whole_pair_for_short_case(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base, chal, out = self._runs(tmp)
+            n = build_pairs(base, chal, out, seed=1, excerpt_sec=400, positions=["start"])
+            self.assertEqual(n, 3)
+            self.assertEqual({v["position"] for v in self._key(out).values()}, {"whole"})
+
+
+class TestLeanScoring(unittest.TestCase):
+    def _ab(self, roles, choices):
+        tmp = Path(tempfile.mkdtemp())
+        pairs = {f"{i:02d}": {"A": r, "B": "baseline" if r == "challenger" else "challenger",
+                              "case": "c", "position": "start"} for i, r in enumerate(roles)}
+        (tmp / ".key.json").write_text(json.dumps({"pairs": pairs}))
+        with open(tmp / "sheet.csv", "w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["pair", "choice", "reason"])
+            for i, c in enumerate(choices):
+                w.writerow([f"{i:02d}", c, ""])
+        return tmp
+
+    def test_leans_are_ties_for_verdict_and_reported(self):
+        ab = self._ab(["challenger", "baseline", "challenger"], ["leanA", " lean B ", "A"])
+        r = score(ab)
+        self.assertEqual((r["challenger_wins"], r["baseline_wins"], r["ties"]), (1, 0, 2))
+        self.assertEqual((r["challenger_leans"], r["baseline_leans"]), (2, 0))
+        self.assertAlmostEqual(r["weighted_rate"], (1 + 1.0) / (1 + 0 + 1.0))
+        self.assertEqual(r["lean_inclusive_p"], round(sign_test_p(3, 3), 4))
+        self.assertEqual(r["by_position"]["start"]["challenger_leans"], 2)
+        self.assertEqual(r["by_position"]["start"]["baseline_leans"], 0)
+
+    def test_weighted_rate_zero_when_no_decisions(self):
+        r = score(self._ab(["challenger"], ["same"]))
+        self.assertEqual(r["weighted_rate"], 0.0)
+
+    def test_invalid_choice_message_lists_leans(self):
+        with self.assertRaisesRegex(ValueError, "leanA"):
+            score(self._ab(["challenger"], ["maybe"]))
+
+
 if __name__ == "__main__":
     unittest.main()
