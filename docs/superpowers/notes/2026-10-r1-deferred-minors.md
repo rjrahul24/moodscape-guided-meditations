@@ -23,3 +23,20 @@ Carried forward from the R1 subagent-driven ledger (2026-10-07).
 - Task 7: minor (deferred): real_voice_selection marker unused; cache-isolation test partly tautological
 - Task 8: minor (deferred): README "none unsets" not true for TEMPERATURE (falls back to 1.0); recording spec omits energy/steady derivation; pre-existing voices.toml comment says reference_transcript/ (real dir reference_text/)
 - Final: minor (deferred): disclaimer condition misses "heart issue(s)", "heart or lung condition", "heart ailment" (costs one repair; canonical line passes); a disclaimer split across two sentences fails by design
+
+## R1 evaluation and follow-up (2026-10-08)
+
+Listening results are in `var/eval/r1/RESULTS.md`. Round 1 was 5 R1 wins / 6 baseline wins / 10 ties (p 0.73). Round 2 was 6 / 4 / 2 (p 0.38). Qwen3 scored at most 3, against F5's 5.
+
+- Ruling: R1's script changes ship, but per-family voice choice becomes opt-in (`MOODSCAPE_VOICE_BY_FAMILY=1`, Brittney default). Golden-path audio changes need a blind win, and Round 1 had none. By ear, Eryn and Clara went 0–3, and Delilah's doubled gap count went unheard. — Cost if wrong: genres lose a better-matched voice until R2 re-tests voices; the flag restores the old behaviour.
+- Ruling: The R1 follow-up skipped the brainstorm/spec/plan cycle. It was four small, listening-driven fixes, done with TDD and the full suite, and the user asked to close the work cleanly. — Cost if wrong: less review depth on about 60 changed lines.
+- Ruling: The `qwen3-tts` branch was renamed to `dev-qwen-tts-temp`, not copied, so only one Qwen branch exists. Its worktree path `../moodscape-qwen3-tts` is unchanged. The Track Q spec and plan were removed from `dev`; identical copies live on the branch. — Cost if wrong: none (git history keeps both).
+- Ruling: Engine-agnostic Qwen hooks stay on `dev`:
+  - `"qwen3"` in `_VOICE_SLUG_ENGINES`;
+  - the `--engine` help text in `eval_genres.py`;
+  - the `script_metrics` comment and test.
+
+  Each does nothing without the engine, and keeping them lets the parked branch merge cleanly. The `qwen3` entries in `script_gen/sampling.py` refer to the Qwen *LLM* writer and are unrelated. — Cost if wrong: a few dead strings to remove if Qwen is dropped.
+- Ruling: Self-compassion bans the substrings `child` and `younger`, not four exact phrasings, because of the 10-phrase cap. `time heals` was dropped to make room; it is a grief platitude that "better place" and "everything happens for a reason" cover in spirit. — Cost if wrong: a common-humanity line mentioning children triggers a FATAL violation and costs one repair.
+- Ruling: The yoga_nidra length fix (short sessions visit major regions only) is unverified until the next eval run. Duration drift stays ADVISORY; R3 owns duration control. — Cost if wrong: short yoga_nidra keeps overshooting until R3.
+- Ruling: The program order after R1 is E → R5a → R2 → R3 → R4 → R5b, with the reasons recorded in the roadmap. — Cost if wrong: R2's voice fixes land one phase later.
