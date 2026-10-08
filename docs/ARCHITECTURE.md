@@ -117,6 +117,7 @@ class SpeechEngine(ABC):
 - 6 meditation presets: `balanced_calm`, `deep_rest`, `soft_whisper`, `golden_hour`, `earth_root`, `serene_sky`
 
 **F5Engine specifics:**
+- With `MOODSCAPE_F5_CHUNKING=1` (default off) `core/f5_tts/chunking.py` splits into breath groups sized to F5's own byte budget (upstream never re-splits), joins them with punctuation-length gaps (`MOODSCAPE_F5_GAP_SENTENCE/_CLAUSE/_COMMA` 0.45/0.35/0.20 s) and frees the MPS cache after each group. With `MOODSCAPE_F5_CHUNK_QA=1`, `core/speech_qa.py` checks each chunk (gaps, truncation, rate outliers, CER via Whisper on `MOODSCAPE_F5_QA_DEVICE`, default mps), re-renders failures best-of-3 and records `speech_qa` in `meta.json`; QA never fails a job.
 - Vocos vocoder + F5TTS_v1_Base diffusion model on MPS
 - Voice resolved at construction from `VoiceRegistry.scan()` — raises `FileNotFoundError` if missing
 - Reference audio RMS-normalized to −20 dBFS before conditioning
@@ -232,7 +233,7 @@ make_vocal_pocket_chain()    →  apply_audio_fx()   # carves 300Hz/1kHz/3kHz la
 
 `export_audio(audio, sample_rate, output_format, target_sample_rate)`:
 1. Apply master chain (EQ/glue, no limiter) to the whole array
-2. LUFS-normalize to target (−16.0 LUFS) **first**, then `true_peak_limit()` to −1 dBTP (order is critical — normalizing after limiting would re-exceed the ceiling)
+2. LUFS-normalize to the playback target (−16 LUFS meditation / −18 sleep; mono files 3.01 dB lower so dual-mono playback hits it; `MOODSCAPE_LOUDNESS_DUAL_MONO=0` = legacy −16) **first**, then `true_peak_limit()` to −1 dBTP (order is critical — normalizing after limiting would re-exceed the ceiling)
 3. Stream in 20s chunks: resample to `target_sample_rate` → final safety clip at ±0.891 (−1 dBTP) → write via Pedalboard `AudioFile`
 4. WAV (lossless) or MP3; `target_sample_rate` = `export_sr` from `pipeline.py`
 

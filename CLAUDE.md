@@ -40,12 +40,13 @@ python scripts/ab_export.py --a <base>/<config> --b <new>/<config> --out var/eva
 │   ├── mixer.py                      # ducking · overlay · loudness · export
 │   ├── qa_monitor.py                 # output validation
 │   ├── stem_separator.py             # Demucs source separation
+│   ├── speech_qa.py                  # engine-agnostic per-chunk speech QA (gaps, truncation, rate, CER)
 │   ├── text_utils.py · breath_sounds.py · stereo_upmix.py · deepfilter_enhancer.py
 │   ├── genres.py                     # Genre pack loader, angle rotation, GenrePack dataclass
 │   ├── originality.py                # Corpus management, TF-IDF similarity scoring, avoid-lists
-│   ├── eval/                         # eval harness: script/speech/mix metrics, test set, blind A/B
+│   ├── eval/                         # eval harness: script/speech/mix metrics, test set, blind A/B; render_only.py (same-script re-render), listen.py (listening page + answer import)
 │   ├── background_tags.py            # Lazy background music tagging (measured + declared)
-│   ├── kokoro_tts/  f5_tts/             # TTS engines (engine + preproc + postproc + voices)
+│   ├── kokoro_tts/  f5_tts/             # TTS engines (engine + preproc + postproc + voices; f5_tts/chunking.py = breath-group chunker)
 │   ├── lyria/                             # Lyria RealTime music generation (Google API)
 │   ├── upload_music/                      # Background instrumental (engine + arrange/length-fit)
 │   ├── script_gen/                    # prompt → validated script (planner + generator + judge + linter)
@@ -57,7 +58,7 @@ python scripts/ab_export.py --a <base>/<config> --b <new>/<config> --out var/eva
 │   ├── streaming_run.py               # threaded progress streaming for the UI
 │   └── auto_tab.py                    # Gradio "Auto-Generate" tab (peer of "Manual" under app.py's gr.Tabs())
 ├── eval/testset.toml               # fixed 24-job evaluation set
-├── scripts/                          # generate.py · separate_worker.py · generate_breath_samples.py · tag_backgrounds.py · eval_genres.py
+├── scripts/                          # generate.py · separate_worker.py · generate_breath_samples.py · tag_backgrounds.py · eval_genres.py · ab_export.py · ab_listen_page.py · ab_import_answers.py · ab_score.py
 ├── tests/unit/  tests/integration/
 │   └── conftest.py                   # pytest fixtures for genre tests
 ├── assets/                           # tracked in git
@@ -88,7 +89,7 @@ python scripts/ab_export.py --a <base>/<config> --b <new>/<config> --out var/eva
 9. **Mix** → `mixer.mix()` (breathing sidechain duck — deep gradual S-curve, rises in pauses; exponential fades). Bed + duck levels auto-calibrated per session from measured stem LUFS (`mixer.calibrate_music_bed`; disable with `MOODSCAPE_ADAPTIVE_BED=0`)
 10. **Master** → `make_master_chain()` (HPF → gentle bus comp → +1 dB air shelf; **no** limiter)
 11. **QA** → `qa_monitor.run_qa_checks()`
-12. **Export** → `mixer.export_audio()` (LUFS-normalize to −16 → `true_peak_limit()` to −1 dBTP → WAV/MP3)
+12. **Export** → `mixer.export_audio()` (LUFS-normalize to playback −16 (sleep −18); mono files sit 3 dB lower so dual-mono playback hits the target → `true_peak_limit()` to −1 dBTP → WAV/MP3)
 
 Full breakdown with parameters: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -158,7 +159,7 @@ Full detail: [docs/auto_generation/README.md](docs/auto_generation/README.md).
 
 ## Top Gotchas
 
-The nine that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
+The ten that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
 
 - **MPS bus error on exit** → `atexit.register(lambda: os._exit(0))` in `app.py` — do not remove.
 - **Kokoro forced to CPU** → MPS causes deallocation bus errors. British voices (`bf_*`, `bm_*`) need `KPipeline(lang_code="b")`.
@@ -166,6 +167,7 @@ The nine that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
 - **Breathing duck** → `mixer.mix()` uses `apply_breathing_duck` (deep gradual S-curve, rises in pauses). Bed/duck levels are auto-calibrated per session (`calibrate_music_bed`, targets: bed 14.5 LU under voice in pauses, 30.5 LU under during speech); `MOODSCAPE_ADAPTIVE_BED=0` restores the fixed −16/−16 constants. The old multiband/`hold_ms` reactive ducker has been removed.
 - **Intro fade-in** → default **1.5 s**, gentle exponential (rising steepness **2.0**, not 4.0). A 3 s steepness-4 fade read as "2–3 s of silence then music". `apply_fades` uses steepness 2.0 for the rising curve only (fade-out stays 4.0). Slider in `app.py`, default in `pipeline.generate`.
 - **Prompting guides are templates.** `{{NAME}}` placeholders in `docs/prompting_guides/vocal_*` are rendered from code constants by `script_gen/guide_context.py`. Never hard-code a chunk limit, speed, WPM or pause length in a guide. An unknown placeholder fails the run before any LLM call.
+- **TTS cache keys include every `MOODSCAPE_F5_*` / `MOODSCAPE_CHATTERBOX_*` env var** → a new TTS-affecting env var must use that prefix or the cache serves a stale voice.
 - **Fatal vs advisory violations** → `script_gen/linter.py` fails the job for
   safety hard-blocks and malformed markers, but renders anyway (with a warning)
   for duration drift and style issues. Treating every violation as fatal makes
@@ -200,6 +202,12 @@ From the 2026-06-13 research pass ([Research Execution Process Outline.md]). Two
 | `MOODSCAPE_F5_CFG`/`_SWAY`/`_NFE` (2.0/−1.0/32) | Override F5 latent params (research A/B: cfg ~1.2 warmer/less identical; sway/nfe best left alone). `cfg` also has the **"Voice Expressiveness" UI slider** (1.0–2.5). | `core/f5_tts/engine.py::synthesize` |
 | `MOODSCAPE_F5_MICROPROSODY` (**0**) | Per-phrase WORLD pass, peak-preserving: pitch declination (`_DECLINE_TAIL_MS` 600 / `_DECLINE_CENTS` 120) + pitch-range widening (`_PITCH_SCALE` 1.15) + formant warmth (`_FORMANT_SHIFT` 0.98) + aperiodicity (`_AP_SCALE` 1.05) + phrase-final taper (`_TAPER_MS` 300 / `_TAPER_FLOOR` 0.6). Risky on clean Vocos. | `core/f5_tts/postprocessor.py::apply_microprosody` |
 | `MOODSCAPE_F5_REF_PRESERVE_DYNAMICS` (**0**) | Skip the −20 dBFS RMS-normalisation of reference audio so its natural dynamics (expressive contour) survive. | `core/f5_tts/engine.py::_condition_reference_audio` |
+| `MOODSCAPE_LOUDNESS_DUAL_MONO` (**1**) | Export targets are *playback* loudness: −16 LUFS meditation / −18 sleep (profile `export_lufs`); mono files are normalised 3.01 dB lower so dual-mono playback hits the target. `0` = legacy −16 on the mono reading. | `mixer.export_loudness_targets`, `export_audio` |
+| `MOODSCAPE_BED_RISE_LIMIT` (**0**) | Caps bed rise in pauses/intro/outro at `_DB_PER_SEC` (3.0) dB/s and `_MAX_DB` (12.0) dB total. When on it forces `lift_db` to 0 for every content type (incl. sleep stories). | `mixer.mix` |
+| `MOODSCAPE_BED_SPEECH_OFFSET_LU` / `_PAUSE_OFFSET_LU` (unset) | Override the profile's `calibrate_music_bed` offsets (env wins). Setting either widens the duck clamp to (−20, −4) for all content types. Malformed value raises at the mix step. | `mixer.calibrate_music_bed`, `mix(bed_overrides=…)` |
+| `MOODSCAPE_F5_CHUNKING` (**0**) | Renders breath groups sized to F5's own budget (upstream never re-splits) with punctuation-length gaps: `_GAP_SENTENCE` 0.45 / `_GAP_CLAUSE` 0.35 / `_GAP_COMMA` 0.20 s. Frees MPS cache per group. | `core/f5_tts/chunking.py`, `engine.py` |
+| `MOODSCAPE_F5_CHUNK_QA` (**0**) | Needs `CHUNKING`. Per-chunk speech QA (gaps, truncation, rate outliers, CER); failing chunks re-rendered best-of-3; result in `meta.json` `"speech_qa"`. Never fails a job. `MOODSCAPE_F5_QA_DEVICE` (default `mps`; `cpu` = escape hatch) picks the Whisper device. | `core/speech_qa.py`, `engine.py` |
+| `MOODSCAPE_VOICE_BY_FAMILY` (**0**) | `1` picks the narrator per genre family from measured clip traits; `0` keeps Brittney. `voice_map.toml` overrides apply either way. | `core/voice_selection.py` |
 
 Rejected research items (don't revisit): true-peak-limiter removal (false premise — `true_peak_limit` is transparent below ceiling), SRC reorder (already correct — soxr_vhq before FX; the 48 kHz path has no extra audio resampling beyond the limiter's oversampling), full LR crossover for "harshness" (the 14 kHz LPF is already a gentle 2nd-order min-phase filter), look-ahead ducker (the 600 ms predictive pre-descent already beats it), colon→comma / ALL-CAPS text fixes (already in the preprocessor), dithering relocation (there is no dithering). Parked for a later "Issue-1 polish" round: upload LPF→high-shelf, `true_peak_limit` gain-envelope refactor, master bus saturation.
 

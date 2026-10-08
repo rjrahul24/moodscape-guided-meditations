@@ -469,6 +469,31 @@ with ears, so metrics reject bad output and ears choose between good outputs.
    The report includes an `unanswered` count; the verdict is `INCOMPLETE`
    while any pair is unanswered.
 
+### Same-script (render-only) comparison
+
+To judge a mix or TTS change without script variance, re-render the baseline's
+exact scripts instead of re-running the LLM stages:
+
+1. **Base run** as above (`--out var/eval/base`).
+2. **One arm per change**, with its env flags set for that run:
+   ```bash
+   MOODSCAPE_BED_RISE_LIMIT=1 .venv/bin/python scripts/eval_genres.py \
+       --scripts-from var/eval/base/baseline --name rise_limit --out var/eval/base --metrics --export-stems
+   ```
+   `--scripts-from` skips all LLM stages and the corpus snapshot. Mix-only
+   arms (`MOODSCAPE_BED_*`, `MOODSCAPE_LOUDNESS_*`) hit the TTS cache and skip
+   F5; `MOODSCAPE_F5_*` arms re-render speech (they are part of the cache key).
+3. **Export pairs:** `python scripts/ab_export.py --a var/eval/base/baseline --b var/eval/base/rise_limit --out var/eval/abA --positions start,middle`
+   (`--positions` takes any of `start,middle,end`; A/B order is shuffled per pair).
+4. **Listening page:** `python scripts/ab_listen_page.py --out page.html --title "R2 eval" "Round A|how text=var/eval/abA"`
+   (audio is referenced by relative path; keep the HTML where the paths resolve).
+   Download the answers JSON from the page.
+5. **Import:** `python scripts/ab_import_answers.py answers.json "Round A=var/eval/abA"` writes each round's `sheet.csv`.
+6. **Score:** `python scripts/ab_score.py --ab var/eval/abA`. Sheet choices may
+   be `A`, `B`, `leanA`, `leanB` or `same`. Leans count as ties for the
+   verdict; challenger/baseline lean counts, the weighted rate and a
+   lean-inclusive p are reported only and never change SHIP/NO-SHIP.
+
 F5 renders are nondeterministic even with fixed seeds (up to ~4 LU
 short-term drift), so always compare two runs made in the same session.
 Never compare against a stored historical number. Speech metrics run on the
@@ -487,6 +512,7 @@ broken `torchcodec` in this venv.
 | Planner: genre pack + angle → prose brief (pass 0) | `core/script_gen/planner.py` |
 | Provider registry + `ScriptEngine` ABC | `core/script_gen/engine.py` |
 | Prompt assembly from the on-disk guides | `core/script_gen/rules.py` |
+| Render-only eval, listening page, answer import | `core/eval/render_only.py`, `core/eval/listen.py`, `scripts/ab_listen_page.py`, `scripts/ab_import_answers.py` |
 | Draft generation (pass 1) | `core/script_gen/generator.py` |
 | Review and repair (pass 2) | `core/script_gen/judge.py` |
 | Format + safety + originality + banned-phrase linting | `core/script_gen/linter.py` |

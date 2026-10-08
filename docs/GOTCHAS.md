@@ -18,15 +18,19 @@ Hard-won lessons. The most load-bearing entries are repeated in `CLAUDE.md`; the
 - **Requires verbatim transcript**: Each reference audio in `assets/speakers/` needs a matching `.txt` of the same slug under `assets/speakers/transcripts/`.
 - **VAD on**: Silero VAD is loaded via `torch.hub.load('snakers4/silero-vad', 'silero_vad')` to trim silence at chunk boundaries.
 
+- **Cache fingerprint**: TTS cache keys include every `MOODSCAPE_F5_*` / `MOODSCAPE_CHATTERBOX_*` env var. A new TTS-affecting env var must use that prefix or the cache serves a stale voice. Mix-only flags (`MOODSCAPE_BED_*`, `MOODSCAPE_LOUDNESS_*`) are deliberately outside it, so mix-only eval arms reuse cached TTS.
+- **F5 chunking/QA are opt-in**: `MOODSCAPE_F5_CHUNKING=1` renders breath groups with punctuation-length gaps; `MOODSCAPE_F5_CHUNK_QA=1` (requires chunking) re-renders failing chunks best-of-3, records `speech_qa` in `meta.json` and never fails a job.
+
 ## Mixing & Mastering
 
 - **Active ducking function**: `mixer.mix()` calls `apply_breathing_duck()` — a deep, gradual, script/VAD-aware sidechain duck. Phrases are detected from the voice (`detect_phrases`), a predictive S-curve descends ~600 ms before each phrase, holds at `duck_amount_db` during speech, releases over ~1.5 s, and lifts slightly during pauses ≥1.5 s so the bed "breathes". Applied **fullband** so the whole bed drops.
 - **Adaptive bed calibration**: `pipeline` auto-derives `music_volume_db` / `duck_amount_db` from measured stem short-term LUFS (`mixer.calibrate_music_bed`, golden-path targets 14.5/30.5 LU under voice). `MOODSCAPE_ADAPTIVE_BED=0` forces the legacy fixed (−16, −16). A user-moved duck slider still overrides the calibrated duck.
 - **No pedalboard `Limiter` anywhere**: pedalboard 0.9.23's `Limiter` inflates sub-threshold signals by ~+4.75 dB and adds broadband distortion ("static"). It was removed from `make_{upload,lyria}_music_chain()` and `make_master_chain()`. Don't reintroduce it.
-- **Limiting is true-peak at export**: `export_audio()` does master EQ/glue → LUFS-normalize to −16 → `mixer.true_peak_limit()` to −1 dBTP (order matters: normalize first, then limit). `true_peak_limit` is a vectorized 4×-oversampled brickwall (no per-sample loop) and is transparent below threshold.
+- **Limiting is true-peak at export**: `export_audio()` does master EQ/glue → LUFS-normalize to playback −16 (sleep −18; mono files 3.01 dB lower, `MOODSCAPE_LOUDNESS_DUAL_MONO=0` restores plain −16) → `mixer.true_peak_limit()` to −1 dBTP (order matters: normalize first, then limit). `true_peak_limit` is a vectorized 4×-oversampled brickwall (no per-sample loop) and is transparent below threshold.
+- **Bed overrides**: `MOODSCAPE_BED_SPEECH_OFFSET_LU` / `_PAUSE_OFFSET_LU` override profile offsets (env wins) and widen the duck clamp to (−20, −4) for all content types; `MOODSCAPE_BED_RISE_LIMIT=1` forces `lift_db` to 0 for every content type (sleep stories too) and caps intro/outro bed rise.
 - **Default levels**: `duck_amount_db=-16` (`pipeline.py` / UI slider) = how low the bed sits under speech; `music_volume_db=-16` baseline in `mix()`. Lower (more negative) duck = quieter under speech.
 - **Mix sample rate**: All music-source paths use `mix_sr = 48000` (`pipeline.py`). The 44.1 kHz fallback applies only when no music source is active.
-- **Export target**: `−16 LUFS`, `−1 dBTP` ceiling. Matches Apple Music and avoids platform re-limiting.
+- **Export target**: playback `−16 LUFS` (meditation) / `−18` (sleep story), `−1 dBTP` ceiling; mono files are written 3.01 dB lower so dual-mono playback hits the target. Matches Apple Music and avoids platform re-limiting.
 
 ## Uploaded Instrumental (`music_model="upload"`)
 
