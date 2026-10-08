@@ -38,6 +38,7 @@ class MeditationPipeline:
     def __init__(self):
         self.tts = KokoroEngine()
         self.last_stems = None
+        self.last_speech_qa = None
 
     def generate(
         self,
@@ -129,6 +130,7 @@ class MeditationPipeline:
         Returns:
             Tuple of (path_to_output_file, status_message).
         """
+        self.last_speech_qa = None
         status_message = ""
 
         # Resolve the content profile (meditation vs sleep story). The profile

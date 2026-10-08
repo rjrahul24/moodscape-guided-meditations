@@ -536,6 +536,112 @@ def _measure_actual_duration_sec(audio_path: str) -> float | None:
         return None
 
 
+@dataclass
+class RenderResult:
+    """Paths and measurements from rendering a script to audio."""
+
+    audio_path: str
+    script_path: str
+    meta_path: str
+    actual_sec: float | None
+    voice: str  # slug or ""
+
+
+def render_script(
+    script: str,
+    *,
+    config: AutoConfig,
+    background_label: str,
+    background_path: str,
+    pipeline=None,
+    progress_cb=None,
+    meta: dict | None = None,
+    **pipeline_kwargs,
+) -> RenderResult:
+    """Render an already-written script with a fixed background.
+
+    No LLM stage runs, so a saved script can be re-rendered (same script,
+    same background, same seed) and compared on audio alone. ``meta`` is the
+    caller's metadata; this function merges in the keys it owns.
+    """
+    meta = dict(meta or {})
+    if pipeline is None:
+        from core.pipeline import MeditationPipeline
+        pipeline = MeditationPipeline()
+
+    from core.content_profiles import get_profile
+    profile = get_profile(config.content_type)
+    speed = config.speed if config.speed is not None else profile["speed"]
+
+    generate_kwargs = {
+        "speed": speed,
+        "duck_amount_db": profile["duck_amount_db"],
+        "reverb_amount": profile["reverb_amount"],
+        "fade_in_sec": profile["fade_in_sec"],
+        "fade_out_sec": profile["fade_out_sec"],
+    }
+    if config.voice is not None:
+        generate_kwargs["voice"] = config.voice
+    elif config.tts_engine == "kokoro":
+        generate_kwargs["voice"] = "balanced_calm"
+
+    voice_slug = config.voice_slug if config.tts_engine in _VOICE_SLUG_ENGINES else None
+    if voice_slug:
+        generate_kwargs["f5_voice_slug"] = voice_slug
+
+    generate_kwargs.update(pipeline_kwargs)
+
+    audio_path, _status = pipeline.generate(
+        script=script,
+        music_prompt="",
+        content_type=config.content_type,
+        tts_engine=config.tts_engine,
+        music_model="upload",
+        uploaded_music_path=background_path,
+        progress_cb=progress_cb,
+        **generate_kwargs,
+    )
+
+    actual_sec = _measure_actual_duration_sec(audio_path)
+    estimate_ratio = None
+    estimated_sec = meta.get("estimated_sec")
+    if actual_sec is not None:
+        if estimated_sec:
+            log_estimate_accuracy(estimated_sec, actual_sec, config.tts_engine)
+            estimate_ratio = actual_sec / estimated_sec
+
+    audio = Path(audio_path)
+    script_path = audio.with_suffix(".script.txt")
+    meta_path = audio.with_suffix(".meta.json")
+
+    meta.update(
+        {
+            "content_type": config.content_type,
+            "genre": config.genre,
+            "tts_engine": config.tts_engine,
+            "voice": voice_slug,
+            "background": background_label,
+            "background_path": background_path,
+            "actual_sec": actual_sec,
+            "estimate_ratio": estimate_ratio,
+        }
+    )
+    speech_qa = getattr(pipeline, "last_speech_qa", None)
+    if speech_qa:
+        meta["speech_qa"] = speech_qa
+
+    script_path.write_text(script, encoding="utf-8")
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    return RenderResult(
+        audio_path=str(audio),
+        script_path=str(script_path),
+        meta_path=str(meta_path),
+        actual_sec=actual_sec,
+        voice=voice_slug or "",
+    )
+
+
 def run(
     prompt: str = "",
     *,
@@ -647,41 +753,29 @@ def run(
         prefer_tags=config.music_tags,
     )
 
-    if pipeline is None:
-        from core.pipeline import MeditationPipeline
-        pipeline = MeditationPipeline()
-
-    from core.content_profiles import get_profile
-    profile = get_profile(config.content_type)
-    speed = config.speed if config.speed is not None else profile["speed"]
-
-    generate_kwargs = {
-        "speed": speed,
-        "duck_amount_db": profile["duck_amount_db"],
-        "reverb_amount": profile["reverb_amount"],
-        "fade_in_sec": profile["fade_in_sec"],
-        "fade_out_sec": profile["fade_out_sec"],
+    meta = {
+        "prompt": prompt,
+        "angle": config.angle,
+        "generator": generator_engine.name,
+        "judge": judge_engine.name,
+        "changelog": outcome.changelog,
+        "violations": _violation_dicts(outcome.violations),
+        "estimated_sec": outcome.estimated_sec,
+        "repairs_used": outcome.repairs_used,
+        "originality_cosine": outcome.originality_cosine,
+        "originality_shared_span": outcome.originality_shared_span,
+        "brief": outcome.brief,
+        "sampling": outcome.sampling,
     }
-    if config.voice is not None:
-        generate_kwargs["voice"] = config.voice
-    elif config.tts_engine == "kokoro":
-        generate_kwargs["voice"] = "balanced_calm"
-
-    voice_slug = config.voice_slug if config.tts_engine in _VOICE_SLUG_ENGINES else None
-    if voice_slug:
-        generate_kwargs["f5_voice_slug"] = voice_slug
-
-    generate_kwargs.update(pipeline_kwargs)
-
-    audio_path, _status = pipeline.generate(
-        script=outcome.script,
-        music_prompt="",
-        content_type=config.content_type,
-        tts_engine=config.tts_engine,
-        music_model="upload",
-        uploaded_music_path=background_path,
+    rendered = render_script(
+        outcome.script,
+        config=config,
+        background_label=background_label,
+        background_path=background_path,
+        pipeline=pipeline,
         progress_cb=progress_cb,
-        **generate_kwargs,
+        meta=meta,
+        **pipeline_kwargs,
     )
 
     if config.originality:
@@ -701,51 +795,10 @@ def run(
     config.recent_backgrounds.append(background_path)
     del config.recent_backgrounds[:-RECENT_BACKGROUNDS_LIMIT]
 
-    actual_sec = _measure_actual_duration_sec(audio_path)
-    estimate_ratio = None
-    if actual_sec is not None:
-        log_estimate_accuracy(outcome.estimated_sec, actual_sec, config.tts_engine)
-        if outcome.estimated_sec:
-            estimate_ratio = actual_sec / outcome.estimated_sec
-
-    audio = Path(audio_path)
-    script_path = audio.with_suffix(".script.txt")
-    meta_path = audio.with_suffix(".meta.json")
-
-    script_path.write_text(outcome.script, encoding="utf-8")
-    meta_path.write_text(
-        json.dumps(
-            {
-                "prompt": prompt,
-                "content_type": config.content_type,
-                "genre": config.genre,
-                "angle": config.angle,
-                "tts_engine": config.tts_engine,
-                "generator": generator_engine.name,
-                "judge": judge_engine.name,
-                "voice": voice_slug,
-                "background": background_label,
-                "background_path": background_path,
-                "changelog": outcome.changelog,
-                "violations": _violation_dicts(outcome.violations),
-                "estimated_sec": outcome.estimated_sec,
-                "actual_sec": actual_sec,
-                "estimate_ratio": estimate_ratio,
-                "repairs_used": outcome.repairs_used,
-                "originality_cosine": outcome.originality_cosine,
-                "originality_shared_span": outcome.originality_shared_span,
-                "brief": outcome.brief,
-                "sampling": outcome.sampling,
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-
     return AutoResult(
-        audio_path=str(audio),
-        script_path=str(script_path),
-        meta_path=str(meta_path),
+        audio_path=rendered.audio_path,
+        script_path=rendered.script_path,
+        meta_path=rendered.meta_path,
         script=outcome.script,
         changelog=outcome.changelog,
         background=background_label,
@@ -757,5 +810,5 @@ def run(
         genre=config.genre,
         angle=config.angle,
         draft_script=outcome.draft_script,
-        voice=voice_slug or "",
+        voice=rendered.voice,
     )

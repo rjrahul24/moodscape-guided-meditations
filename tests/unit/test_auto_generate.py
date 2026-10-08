@@ -16,6 +16,7 @@ from core.auto_generate import (
     ScriptGenerationError,
     _measure_actual_duration_sec,
     generate_script,
+    render_script,
     run,
 )
 from core.script_gen.duration import estimate_duration_sec
@@ -1229,3 +1230,56 @@ class TestSlopInRepairs(unittest.TestCase):
         self.assertEqual(len(judge.calls), 1)
         self.assertEqual(outcome.repairs_used, 0)
         self.assertTrue(any(v.code == "SLOP_DENSITY" for v in outcome.violations))
+
+
+class TestRenderScript(unittest.TestCase):
+    def _pipeline(self, tmp):
+        class P:
+            last_speech_qa = None
+
+            def generate(self, **kw):
+                self.kw = kw
+                path = Path(tmp) / "out.wav"
+                import numpy as np
+                import soundfile as sf
+
+                sf.write(path, np.zeros(48000, dtype="float32"), 48000)
+                return str(path), "ok"
+
+        return P()
+
+    def test_writes_script_and_meta_and_pins_background(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._pipeline(tmp)
+            cfg = AutoConfig.from_env(
+                tts_engine="f5", voice_slug="Brittney", genre="body_scan",
+                content_type="meditation",
+            )
+            r = render_script(
+                "Breathe in. [pause:3s]", config=cfg, background_label="Bed",
+                background_path="/x/bed.mp3", pipeline=p,
+                meta={"estimated_sec": 2.0}, seed=7,
+            )
+            self.assertEqual(p.kw["uploaded_music_path"], "/x/bed.mp3")
+            self.assertEqual(p.kw["f5_voice_slug"], "Brittney")
+            self.assertEqual(p.kw["seed"], 7)
+            meta = json.loads(Path(r.meta_path).read_text())
+            self.assertEqual(meta["background_path"], "/x/bed.mp3")
+            self.assertEqual(meta["voice"], "Brittney")
+            self.assertAlmostEqual(meta["actual_sec"], 1.0, places=2)
+            self.assertNotIn("speech_qa", meta)
+            self.assertEqual(Path(r.script_path).read_text(), "Breathe in. [pause:3s]")
+
+    def test_speech_qa_recorded_when_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._pipeline(tmp)
+            p.last_speech_qa = {"chunks": 3, "failed": 1}
+            cfg = AutoConfig.from_env(tts_engine="f5", voice_slug="Brittney")
+            r = render_script(
+                "Hi.", config=cfg, background_label="B",
+                background_path="/b.mp3", pipeline=p,
+            )
+            self.assertEqual(
+                json.loads(Path(r.meta_path).read_text())["speech_qa"],
+                {"chunks": 3, "failed": 1},
+            )
