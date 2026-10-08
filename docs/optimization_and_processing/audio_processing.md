@@ -133,7 +133,7 @@ Long audio arrays are exported chunk-by-chunk using Pedalboard's `AudioFile` pro
 
 LUFS targets by mode:
 - Full mix (voice + music): **playback -16 LUFS** (sleep -18; mono files 3.01 dB lower) (matches Apple Music natively; Spotify applies minimal +2 dB)
-- Mono: **-18 LUFS** (2 dB offset for mono-only playback)
+- Mono files: written 3.01 dB below the playback target (meditation -16 → -19.01; sleep -18 → -21.01) so dual-mono playback hits it
 
 ## 8. Text Normalization (TTS Pre-Processing)
 

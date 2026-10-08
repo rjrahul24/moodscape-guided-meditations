@@ -168,7 +168,7 @@ def make_master_chain() -> Pedalboard:
     ])
 ```
 
-Export target: **−16 LUFS** (Apple Music / Spotify standard). `export_audio()` LUFS-normalizes first, then applies `mixer.true_peak_limit()` to a −1.0 dBTP ceiling (oversampled brickwall, clamped release), then streams to file in 20 s chunks.
+Export target: playback **−16 LUFS** meditation / −18 sleep (mono files written 3.01 dB lower so dual-mono playback hits it). `export_audio()` LUFS-normalizes first, then applies `mixer.true_peak_limit()` to a −1.0 dBTP ceiling (oversampled brickwall, clamped release), then streams to file in 20 s chunks.
 
 ---
 
