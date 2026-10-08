@@ -6,6 +6,7 @@ from pathlib import Path
 
 from core.tts_cache import (
     compute_cache_key,
+    tts_env_fingerprint,
     has_cache,
     get_cached_tts,
     save_cached_tts,
@@ -132,3 +133,23 @@ class TestCacheStorage:
         clear_cache()
         assert not has_cache(key2)
         assert get_latest_tts() is None
+
+
+class TestEnvFingerprint:
+    def test_only_tts_prefixes_sorted(self):
+        env = {"MOODSCAPE_F5_NFE": "16", "MOODSCAPE_F5_CFG": "1.2", "MOODSCAPE_BED_RISE_LIMIT": "1",
+               "MOODSCAPE_CHATTERBOX_CFG": "0.5", "HOME": "/x"}
+        assert tts_env_fingerprint(env) == "MOODSCAPE_CHATTERBOX_CFG=0.5;MOODSCAPE_F5_CFG=1.2;MOODSCAPE_F5_NFE=16"
+
+    def test_empty(self):
+        assert tts_env_fingerprint({}) == ""
+
+    def test_fingerprint_changes_key(self):
+        a = compute_cache_key("x", tts_engine="f5", seed=1)
+        b = compute_cache_key("x", tts_engine="f5", seed=1, env_fingerprint="MOODSCAPE_F5_CHUNKING=1")
+        assert a != b
+
+    def test_empty_fingerprint_keeps_legacy_key(self):
+        # Existing caches stay valid when no TTS flag is set.
+        assert compute_cache_key("x", tts_engine="f5", seed=1) == \
+            compute_cache_key("x", tts_engine="f5", seed=1, env_fingerprint="")

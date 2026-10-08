@@ -15,6 +15,7 @@ import logging
 import os
 import shutil
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -25,12 +26,21 @@ logger = logging.getLogger("moodscape.tts_cache")
 # Default directory for persistent TTS cache (under project var/)
 DEFAULT_CACHE_DIR = Path(__file__).resolve().parent.parent / "var" / "tts_cache"
 
+_TTS_ENV_PREFIXES = ("MOODSCAPE_F5_", "MOODSCAPE_CHATTERBOX_")
+
 
 def get_cache_dir() -> Path:
     """Return the Path to the TTS cache directory, ensuring it exists."""
     cache_dir = Path(os.environ.get("MOODSCAPE_TTS_CACHE_DIR", DEFAULT_CACHE_DIR))
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
+
+
+def tts_env_fingerprint(environ: Mapping[str, str] | None = None) -> str:
+    """Stable string of every set TTS-affecting env var, so flag arms never share a cache entry."""
+    env = os.environ if environ is None else environ
+    items = sorted((k, v) for k, v in env.items() if k.startswith(_TTS_ENV_PREFIXES))
+    return ";".join(f"{k}={v}" for k, v in items)
 
 
 def compute_cache_key(
@@ -43,6 +53,7 @@ def compute_cache_key(
     f5_cfg_strength: float = 2.0,
     microprosody: bool = False,
     seed: int | None = None,
+    env_fingerprint: str = "",
 ) -> str:
     """Compute a deterministic SHA-256 hash key for TTS inputs.
 
@@ -61,6 +72,8 @@ def compute_cache_key(
         "microprosody": bool(microprosody),
         "seed": int(seed) if seed is not None else None,
     }
+    if env_fingerprint:
+        key_dict["env"] = env_fingerprint
     payload = json.dumps(key_dict, sort_keys=True).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 

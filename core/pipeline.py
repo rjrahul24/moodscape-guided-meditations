@@ -206,7 +206,7 @@ class MeditationPipeline:
                         _progress(progress_cb, 0.10, "Reusing latest synthesized voice from cache...")
                         logger.info("TTS cache hit: reusing latest voice narration")
                 elif use_tts_cache:
-                    from core.tts_cache import compute_cache_key, get_cached_tts
+                    from core.tts_cache import compute_cache_key, get_cached_tts, tts_env_fingerprint
                     if base_engine == "chatterbox":
                         cfg_val = float(os.environ.get("MOODSCAPE_CHATTERBOX_CFG", "0.50"))
                     else:
@@ -223,6 +223,7 @@ class MeditationPipeline:
                         f5_cfg_strength=cfg_val,
                         microprosody=microprosody,
                         seed=seed if seed_is_explicit else None,
+                        env_fingerprint=tts_env_fingerprint(),
                     )
                     cached_voice = get_cached_tts(cache_key)
                     if cached_voice is not None:
