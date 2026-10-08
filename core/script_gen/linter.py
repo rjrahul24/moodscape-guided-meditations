@@ -584,7 +584,7 @@ def check_originality(
 
 
 _DISCLAIMER_CONDITION = re.compile(
-    r"\b(?:pregnan\w*|heart\s+(?:condition|disease|problem)\w*|respiratory|light-?headed|dizzy|uncomfortable|unwell)\b", re.IGNORECASE
+    r"\b(?:pregnan\w*|(?:heart|lung)\s+(?:or\s+lung\s+)?(?:condition|disease|problem|issue|ailment)\w*|respiratory|light-?headed|dizzy|uncomfortable|unwell)\b", re.IGNORECASE
 )
 _DISCLAIMER_ACTION = re.compile(
     r"\b(?:"

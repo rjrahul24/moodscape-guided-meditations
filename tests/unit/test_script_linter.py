@@ -610,6 +610,10 @@ class TestPackRules(unittest.TestCase):
             "If you feel dizzy, let the counting go and breathe as you usually do.",
             "If you feel unwell, stop and let your breath return to normal.",
             "Stop if you feel lightheaded or unwell, and breathe naturally.",
+            "If you have a heart issue, keep to ordinary breathing.",
+            "With any heart or lung condition, breathe normally instead.",
+            "If you live with a heart ailment, breathe as you usually do.",
+            "If you have a lung condition, return to ordinary breathing.",
         ]
         for opening in openings:
             with self.subTest(opening=opening):
