@@ -335,6 +335,15 @@ class ShippedPacksTest(unittest.TestCase):
                 text = " ".join([angle.name, *angle.imagery])
                 self.assertIsNone(pattern.search(text), msg=f"{slug}: {text}")
 
+    def test_no_pack_instructs_a_sleep_equivalence_claim(self):
+        """'Yoga nidra equals hours of sleep' is a popular myth, not evidence."""
+        for slug, pack in load_all_packs().items():
+            self.assertNotIn("hours of sleep", (pack.technique + pack.safety).lower(), msg=slug)
+
+    def test_yoga_nidra_scales_rotation_to_session_length(self):
+        technique = load_all_packs()["yoga_nidra"].technique.lower()
+        self.assertIn("short session", technique)
+
     def test_self_compassion_bans_inner_child_phrasing(self):
         from core.script_gen.linter import check_banned_phrases
         banned = load_all_packs()["self_compassion"].banned

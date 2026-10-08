@@ -8,8 +8,11 @@ technique = """
 Rotation of consciousness through body parts (Nyasa): a systematic, very slow
 sweep from crown to feet, spending 3-5 seconds at each major point, stating the
 name ("forehead," "heart," "right knee") and inviting attention without tension.
-The listener remains awake but in profound rest — the difference between sleep
-and deep relaxation.
+Scale the number of points to the session length: a short session visits only
+the major regions (head, face, shoulders, arms, chest, belly, legs, feet); only
+a long session names individual fingers and toes. Fewer points, held longer,
+beats a hurried list. The listener remains awake but in profound rest — the
+difference between sleep and deep relaxation.
 """
 
 arc = [
@@ -23,7 +26,7 @@ arc = [
 safety = """
 Yoga Nidra is *not* sleep and should never become sleep during the body scan
 — emphasize eyes closed but awareness alert. Do not use it for insomnia. Make
-clear this is restorative wakefulness, equivalent to several hours of sleep.
+clear this is restorative wakefulness; do not claim it replaces or equals sleep.
 Never rush the rotation; silence between points is essential.
 """
 
