@@ -423,6 +423,35 @@ def calibrate_music_bed(
     return music_volume_db, duck_amount_db
 
 
+_BED_SPEECH_OFFSET_ENV = "MOODSCAPE_BED_SPEECH_OFFSET_LU"
+_BED_PAUSE_OFFSET_ENV = "MOODSCAPE_BED_PAUSE_OFFSET_LU"
+
+
+def bed_offset_overrides(environ=None) -> dict:
+    """calibrate_music_bed kwargs from MOODSCAPE_BED_SPEECH_OFFSET_LU / _PAUSE_OFFSET_LU.
+
+    Empty when neither is set. When either is set, also widens duck_clamp_db to
+    (-20.0, -4.0) so a shallower duck (e.g. 28/20 LU -> 8 dB) is not clipped.
+    Raises ValueError naming the variable if a value is not numeric.
+    """
+    env = os.environ if environ is None else environ
+    out: dict = {}
+    for env_name, key in (
+        (_BED_SPEECH_OFFSET_ENV, "speech_offset_lu"),
+        (_BED_PAUSE_OFFSET_ENV, "pause_offset_lu"),
+    ):
+        raw = env.get(env_name, "").strip()
+        if not raw:
+            continue
+        try:
+            out[key] = float(raw)
+        except ValueError:
+            raise ValueError(f"{env_name} must be a number, got {raw!r}") from None
+    if out:
+        out["duck_clamp_db"] = (-20.0, -4.0)
+    return out
+
+
 def _script_gain_db(
     n: int,
     sample_rate: int,

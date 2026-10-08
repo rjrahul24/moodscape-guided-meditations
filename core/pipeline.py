@@ -586,7 +586,7 @@ class MeditationPipeline:
             mix_phrases = None
             adaptive_bed = os.environ.get("MOODSCAPE_ADAPTIVE_BED", "1") == "1"
             if adaptive_bed and not is_instrumental and not is_vocals and music_audio.size:
-                from core.mixer import calibrate_music_bed, detect_phrases
+                from core.mixer import bed_offset_overrides, calibrate_music_bed, detect_phrases
                 _progress(progress_cb, 0.81, "Calibrating music bed level...")
                 mix_phrases = detect_phrases(voice_audio, mix_sr, threshold_db=None)
                 # Sleep stories narrow the speech/pause loudness gap so the bed
@@ -597,6 +597,8 @@ class MeditationPipeline:
                         "speech_offset_lu": bed_profile["speech_offset_lu"],
                         "pause_offset_lu": bed_profile["pause_offset_lu"],
                     }
+                # MOODSCAPE_BED_*_OFFSET_LU overrides win over profile/default offsets.
+                cal_offsets.update(bed_offset_overrides())
                 cal_volume_db, cal_duck_db = calibrate_music_bed(
                     voice_audio, music_audio, mix_sr, phrases=mix_phrases,
                     **cal_offsets,

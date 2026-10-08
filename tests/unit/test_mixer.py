@@ -6,6 +6,7 @@ from core.mixer import (
     _slew_limit_rise,
     compute_breathing_gain_db,
     adaptive_vad_threshold,
+    bed_offset_overrides,
     calibrate_music_bed,
     detect_phrases,
     export_audio,
@@ -402,6 +403,50 @@ class TestBedRiseLimit(unittest.TestCase):
         v = np.zeros(16000, np.float32)
         with patch.dict(os.environ, {"MOODSCAPE_BED_RISE_LIMIT": "1"}):
             self.assertFalse(np.isnan(compute_breathing_gain_db(v, self.sr, duck_depth_db=-16.0)).any())
+
+
+class TestBedOffsetOverrides(unittest.TestCase):
+    SR = 48000
+
+    def test_unset_returns_empty(self):
+        self.assertEqual(bed_offset_overrides(environ={}), {})
+
+    def test_both_set_widens_clamp(self):
+        out = bed_offset_overrides(environ={
+            "MOODSCAPE_BED_SPEECH_OFFSET_LU": "28",
+            "MOODSCAPE_BED_PAUSE_OFFSET_LU": "20",
+        })
+        self.assertEqual(out, {
+            "speech_offset_lu": 28.0,
+            "pause_offset_lu": 20.0,
+            "duck_clamp_db": (-20.0, -4.0),
+        })
+
+    def test_only_pause_set(self):
+        out = bed_offset_overrides(environ={"MOODSCAPE_BED_PAUSE_OFFSET_LU": "20"})
+        self.assertEqual(out, {"pause_offset_lu": 20.0, "duck_clamp_db": (-20.0, -4.0)})
+        self.assertNotIn("speech_offset_lu", out)
+
+    def test_non_numeric_names_variable(self):
+        with self.assertRaises(ValueError) as ctx:
+            bed_offset_overrides(environ={"MOODSCAPE_BED_PAUSE_OFFSET_LU": "abc"})
+        self.assertIn("MOODSCAPE_BED_PAUSE_OFFSET_LU", str(ctx.exception))
+
+    def test_defaults_to_os_environ(self):
+        with patch.dict(os.environ, {"MOODSCAPE_BED_SPEECH_OFFSET_LU": "28",
+                                     "MOODSCAPE_BED_PAUSE_OFFSET_LU": "20"}):
+            self.assertEqual(bed_offset_overrides()["speech_offset_lu"], 28.0)
+
+    def test_shallow_duck_behaviour(self):
+        """With 28/20 overrides the calibrated duck is 8 dB (clamped by -4)."""
+        voice = _gated_voice(self.SR, rms_db=-21.2)
+        music = _tone(997.0, len(voice) / self.SR, self.SR, rms_db=-19.7)
+        overrides = bed_offset_overrides(environ={
+            "MOODSCAPE_BED_SPEECH_OFFSET_LU": "28",
+            "MOODSCAPE_BED_PAUSE_OFFSET_LU": "20",
+        })
+        _, duck_db = calibrate_music_bed(voice, music, self.SR, **overrides)
+        self.assertAlmostEqual(duck_db, -8.0, delta=0.01)
 
 
 if __name__ == "__main__":
