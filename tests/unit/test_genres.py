@@ -325,6 +325,23 @@ class NewPackFieldsTest(unittest.TestCase):
 class ShippedPacksTest(unittest.TestCase):
     """Every pack in the repository must load. A malformed pack cannot ship."""
 
+    def test_no_pack_steers_toward_inner_child_imagery(self):
+        """Picturing a child / younger self felt wrong to the listener (R1 A/B,
+        2026-10-08) and can surface childhood trauma in unsupervised audio."""
+        import re
+        pattern = re.compile(r"\b(child|children|younger self|younger version|inner child)\b", re.I)
+        for slug, pack in load_all_packs().items():
+            for angle in pack.angles:
+                text = " ".join([angle.name, *angle.imagery])
+                self.assertIsNone(pattern.search(text), msg=f"{slug}: {text}")
+
+    def test_self_compassion_bans_inner_child_phrasing(self):
+        from core.script_gen.linter import check_banned_phrases
+        banned = load_all_packs()["self_compassion"].banned
+        for line in ("Greet your inner child.", "Picture your younger self.",
+                     "Imagine a younger version of yourself.", "See the small child you were."):
+            self.assertTrue(check_banned_phrases(line, banned), msg=line)
+
     def test_all_shipped_packs_load_and_validate(self):
         packs = load_all_packs()
         self.assertEqual(len(packs), 46)
