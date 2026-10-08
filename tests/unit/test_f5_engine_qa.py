@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from core.eval.speech_metrics import Transcript
+from core.eval.speech_metrics import Transcript, Word
 from core.f5_tts import engine as eng
 from core.speech_engine import SAMPLE_RATE
 
@@ -40,6 +40,13 @@ class SeedModel:
         return np.full(n, _amp(kw["seed"]), dtype=np.float32), SAMPLE_RATE, None
 
 
+def _even_words(text: str, dur: float) -> list[Word]:
+    """Contiguous word spans across the whole clip (no gaps)."""
+    toks = text.split()
+    step = dur / max(len(toks), 1)
+    return [Word(t, i * step, (i + 1) * step) for i, t in enumerate(toks)]
+
+
 class FakeTranscriber:
     """Returns the right text unless the seed is in `wrong` (seed -> transcript)."""
 
@@ -55,9 +62,8 @@ class FakeTranscriber:
             raise RuntimeError("whisper exploded")
         seed = _seed_of(audio)
         self.seen.append(seed)
-        if seed in self.wrong:
-            return Transcript(self.wrong[seed])
-        return Transcript(self.model.text_by_seed[seed])
+        text = self.wrong[seed] if seed in self.wrong else self.model.text_by_seed[seed]
+        return Transcript(text, _even_words(text, len(audio) / sr))
 
     def unload(self):
         self.unloaded = True
@@ -112,6 +118,10 @@ def test_fail_then_pass_keeps_second_attempt(engine, monkeypatch):
     assert devices == ["mps"]
     # Early stop: only the +10_000 candidate was rendered.
     assert [c["seed"] for c in engine._model.calls[n:]] == [BASE_SEED + 1 + 10_000]
+    # One Whisper pass per audio: each first-pass chunk once, plus the candidate.
+    expected = [BASE_SEED, BASE_SEED + 1, BASE_SEED + 1 + 10_000]
+    expected += [BASE_SEED + i for i in range(2, n)]
+    assert t.seen == expected
     rec = engine.last_chunks[1]
     assert rec.seed == BASE_SEED + 1 + 10_000
     assert _seed_of(rec.audio) == BASE_SEED + 1 + 10_000

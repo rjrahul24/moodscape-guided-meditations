@@ -483,11 +483,10 @@ class F5Engine(SpeechEngine):
                 )
                 if is_outlier:
                     codes.append(speech_qa.RATE_OUTLIER)
-                cer_code, cer_value = speech_qa.transcript_check(
+                t_codes, cer_value = speech_qa.transcript_checks(
                     audio, SAMPLE_RATE, rec.text, transcriber
                 )
-                if cer_code:
-                    codes.append(cer_code)
+                codes.extend(t_codes)
                 score = speech_qa.score_candidate(codes, cer_value, rate_dev(audio, rec.text))
                 return codes, score
 

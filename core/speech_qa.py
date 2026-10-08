@@ -7,13 +7,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from core.eval.speech_metrics import _silent_frames, _silent_runs, cer, normalize_text
+from core.eval.speech_metrics import cer, gap_breakdown, normalize_text
 
 INTERNAL_GAP, TRUNCATED, RATE_OUTLIER, HIGH_CER = "INTERNAL_GAP", "TRUNCATED", "RATE_OUTLIER", "HIGH_CER"
 MAX_CER = 0.20
 SHORT_CHARS = 12
-_GAP_SEC = 0.6
-_FRAME_MS = 10.0
 _TRUNC_FRACTION = 0.35
 _RATE_LO, _RATE_HI = 0.6, 1.7
 
@@ -29,21 +27,16 @@ def sec_per_char(audio: np.ndarray, sr: int, text: str) -> float:
     return (len(audio) / float(sr)) / chars
 
 
-def _has_internal_gap(audio: np.ndarray, sr: int) -> bool:
-    mask = _silent_frames(audio, sr, _FRAME_MS)
-    min_frames = int(round(_GAP_SEC * 1000.0 / _FRAME_MS))
-    for start, end in _silent_runs(mask):
-        if end - start >= min_frames and start > 0 and end < len(mask):
-            return True
-    return False
-
-
 def chunk_signal_checks(
     audio: np.ndarray, sr: int, text: str, *, median_sec_per_char: float | None
 ) -> list[str]:
+    """Signal-only checks (TRUNCATED). Gaps are judged by transcript_checks().
+
+    Raw silence is not a defect: F5's natural comma/sentence pauses run
+    0.6-1.7 s and every chunk opens with a quiet ref-pad lead-in, which a
+    silence rule misread as "speech, gap, speech" on ~65% of real chunks.
+    """
     codes: list[str] = []
-    if _has_internal_gap(audio, sr):
-        codes.append(INTERNAL_GAP)
     chars = _nonspace_chars(text)
     if (
         median_sec_per_char is not None
@@ -66,10 +59,20 @@ def rate_outliers(rates: list[tuple[float, int]]) -> set[int]:
     }
 
 
-def transcript_check(audio: np.ndarray, sr: int, text: str, transcriber) -> tuple[str | None, float]:
+def transcript_checks(audio: np.ndarray, sr: int, text: str, transcriber) -> tuple[list[str], float]:
+    """All transcript-based codes from ONE transcription: HIGH_CER and INTERNAL_GAP.
+
+    INTERNAL_GAP uses Whisper word timings: silence inside a word span, or
+    between two words of one clause (not after a comma/sentence end).
+    """
     transcript = transcriber.transcribe(audio, sr)
     value = cer(normalize_text(text), normalize_text(transcript.text))
-    return (HIGH_CER if value > MAX_CER else None), value
+    codes: list[str] = []
+    if value > MAX_CER:
+        codes.append(HIGH_CER)
+    if sum(gap_breakdown(audio, sr, transcript.words)) > 0:
+        codes.append(INTERNAL_GAP)
+    return codes, value
 
 
 def score_candidate(codes: list[str], cer_value: float, rate_dev: float) -> tuple[int, float, float]:
