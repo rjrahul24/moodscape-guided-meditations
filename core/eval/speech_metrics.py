@@ -85,15 +85,16 @@ _FRAME_SEC = 0.01
 class WhisperTranscriber:
     """transformers ASR pipeline with word timestamps; loaded lazily."""
 
-    def __init__(self, model_id: str = "openai/whisper-large-v3-turbo"):
+    def __init__(self, model_id: str = "openai/whisper-large-v3-turbo", device: str | None = None):
         self.model_id = model_id
+        self.device = device
         self._pipe = None
 
     def _load(self):
         import torch
         from transformers import pipeline
 
-        device = "mps" if torch.backends.mps.is_available() else "cpu"
+        device = self.device or ("mps" if torch.backends.mps.is_available() else "cpu")
         self._pipe = pipeline(
             "automatic-speech-recognition",
             model=self.model_id,
