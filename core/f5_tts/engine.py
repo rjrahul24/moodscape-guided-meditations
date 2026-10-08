@@ -213,6 +213,33 @@ class ChunkRecord:
     seed: int
     speed: float
     audio: np.ndarray   # post-trim, pre-VAD
+    phase: str = "default"  # key into F5Engine._phase_assets (for QA re-render)
+
+
+# Chunk QA (MOODSCAPE_F5_CHUNK_QA=1, needs MOODSCAPE_F5_CHUNKING=1).
+# Whisper defaults to MPS: the F5 stage peaks at 17.1 GB and Whisper turbo adds
+# ~1.6 GB live, well under 30 GB (docs/superpowers/notes/2026-10-r2-findings.md).
+# MOODSCAPE_F5_QA_DEVICE=cpu is the escape hatch.
+_QA_DEFAULT_DEVICE = "mps"
+_QA_SEED_STRIDE = 10_000
+_QA_EXTRA_ATTEMPTS = 2
+
+
+def _empty_mps_cache() -> None:
+    """Release the MPS driver cache (no-op off Apple Silicon or on any error)."""
+    try:
+        import torch
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+    except Exception:
+        pass
+
+
+def _make_qa_transcriber(device: str):
+    """Build the Whisper transcriber used by chunk QA (patched in tests)."""
+    from core.eval.speech_metrics import WhisperTranscriber
+
+    return WhisperTranscriber(device=device)
 
 
 class F5Engine(SpeechEngine):
@@ -266,6 +293,7 @@ class F5Engine(SpeechEngine):
         self._phase_assets: dict[str, dict] = {}  # loaded assets (path, text) per phase
         self._model = None
         self.last_chunks: list[ChunkRecord] = []
+        self.last_qa: dict | None = None
 
         logger.info(
             "F5Engine initialised with voice '%s' (%d phases)",
@@ -422,6 +450,116 @@ class F5Engine(SpeechEngine):
             )
         return arr
 
+    def _run_chunk_qa(self, chunks: list, target_wpm: int | None) -> dict:
+        """Check every speech chunk; re-render failures (up to 2 new seeds), keep the best.
+
+        Mutates `chunks` (audio + activity) and `self.last_chunks` only once QA
+        finishes; any exception leaves first-pass audio and returns {"error": ...}.
+        QA never fails the render.
+        """
+        from core import speech_qa
+
+        device = os.environ.get("MOODSCAPE_F5_QA_DEVICE") or _QA_DEFAULT_DEVICE
+        records = self.last_chunks
+        transcriber = None
+        try:
+            rates = [
+                (speech_qa.sec_per_char(r.audio, SAMPLE_RATE, r.text),
+                 len("".join(r.text.split())))
+                for r in records
+            ]
+            eligible = [rate for rate, chars in rates if chars > speech_qa.SHORT_CHARS]
+            median = float(np.median(eligible)) if eligible else None
+            outliers = speech_qa.rate_outliers(rates)
+
+            def rate_dev(audio: np.ndarray, text: str) -> float:
+                if not median:
+                    return 0.0
+                return abs(speech_qa.sec_per_char(audio, SAMPLE_RATE, text) - median) / median
+
+            def evaluate(audio: np.ndarray, rec: ChunkRecord, is_outlier: bool):
+                codes = speech_qa.chunk_signal_checks(
+                    audio, SAMPLE_RATE, rec.text, median_sec_per_char=median
+                )
+                if is_outlier:
+                    codes.append(speech_qa.RATE_OUTLIER)
+                cer_code, cer_value = speech_qa.transcript_check(
+                    audio, SAMPLE_RATE, rec.text, transcriber
+                )
+                if cer_code:
+                    codes.append(cer_code)
+                score = speech_qa.score_candidate(codes, cer_value, rate_dev(audio, rec.text))
+                return codes, score
+
+            def candidate_is_outlier(audio: np.ndarray, rec: ChunkRecord) -> bool:
+                # Judged against the first-pass median (never recomputed).
+                chars = len("".join(rec.text.split()))
+                if not median or chars <= speech_qa.SHORT_CHARS:
+                    return False
+                if len(eligible) < 3:
+                    return False
+                r = speech_qa.sec_per_char(audio, SAMPLE_RATE, rec.text)
+                return r < speech_qa._RATE_LO * median or r > speech_qa._RATE_HI * median
+
+            _empty_mps_cache()
+            transcriber = _make_qa_transcriber(device)
+
+            code_counts: dict[str, int] = {}
+            failed = rerendered = still_failing = 0
+            replacements: dict[int, tuple[np.ndarray, int]] = {}
+            for i, rec in enumerate(records):
+                codes, score = evaluate(rec.audio, rec, i in outliers)
+                if not codes:
+                    continue
+                failed += 1
+                for code in codes:
+                    code_counts[code] = code_counts.get(code, 0) + 1
+                best_audio, best_seed, best_codes, best_score = rec.audio, rec.seed, codes, score
+                assets = self._phase_assets[rec.phase]
+                for k in range(1, _QA_EXTRA_ATTEMPTS + 1):
+                    seed_k = rec.seed + _QA_SEED_STRIDE * k
+                    cand = self._infer_chunk(rec.text, assets, rec.speed, seed_k, target_wpm)
+                    _empty_mps_cache()
+                    c_codes, c_score = evaluate(cand, rec, candidate_is_outlier(cand, rec))
+                    if c_score < best_score:
+                        best_audio, best_seed, best_codes, best_score = cand, seed_k, c_codes, c_score
+                    if not c_codes:
+                        break
+                if best_seed != rec.seed:
+                    rerendered += 1
+                    replacements[i] = (best_audio, best_seed)
+                if best_codes:
+                    still_failing += 1
+                logger.info(
+                    "F5 chunk QA: chunk %d %s -> kept seed %d %s",
+                    rec.index, codes, best_seed, best_codes or "clean",
+                )
+
+            for i, (audio, seed_k) in replacements.items():
+                rec = records[i]
+                rec.audio, rec.seed = audio, seed_k
+                _, _, ctype, text, gap_after = chunks[rec.index]
+                activity = np.abs(audio) > float(np.abs(audio).mean()) * 0.15
+                chunks[rec.index] = (audio, activity, ctype, text, gap_after)
+
+            return {
+                "chunks": len(records),
+                "failed_first_pass": failed,
+                "rerendered": rerendered,
+                "still_failing": still_failing,
+                "codes": code_counts,
+                "device": device,
+            }
+        except Exception as exc:
+            logger.warning("F5 chunk QA failed; keeping first-pass audio: %s", exc)
+            return {"error": f"{type(exc).__name__}: {exc}"}
+        finally:
+            if transcriber is not None:
+                try:
+                    transcriber.unload()
+                except Exception as exc:
+                    logger.warning("F5 chunk QA: transcriber unload failed: %s", exc)
+
     def synthesize(
         self,
         segments: list[dict],
@@ -472,6 +610,7 @@ class F5Engine(SpeechEngine):
         chunks: list[tuple[np.ndarray, np.ndarray, str, str | None, float | None]] = []
         chunking = os.environ.get("MOODSCAPE_F5_CHUNKING", "0") == "1"
         self.last_chunks = []
+        self.last_qa = None
         total = len(segments)
         speech_idx = 0  # counter for speech chunks only (used for per-chunk seed)
 
@@ -541,12 +680,7 @@ class F5Engine(SpeechEngine):
                     if chunking:
                         # The MPS driver cache grows ~1.1 GB per chunk while live
                         # tensors stay flat (r2 findings); release it per group.
-                        try:
-                            import torch
-                            if torch.backends.mps.is_available():
-                                torch.mps.empty_cache()
-                        except Exception:
-                            pass
+                        _empty_mps_cache()
                         self.last_chunks.append(
                             ChunkRecord(
                                 index=len(chunks),
@@ -554,6 +688,7 @@ class F5Engine(SpeechEngine):
                                 seed=chunk_seed,
                                 speed=chunk_speed,
                                 audio=arr,
+                                phase=phase,
                             )
                         )
                     threshold = float(np.abs(arr).mean()) * 0.15
@@ -579,6 +714,14 @@ class F5Engine(SpeechEngine):
 
         if not chunks:
             return np.zeros(0, dtype=np.float32), np.zeros(0, dtype=bool)
+
+        # Best-of-3 chunk QA: after every group is rendered, before VAD/assembly.
+        if (
+            chunking
+            and os.environ.get("MOODSCAPE_F5_CHUNK_QA", "0") == "1"
+            and self.last_chunks
+        ):
+            self.last_qa = self._run_chunk_qa(chunks, target_wpm)
 
         # Apply Silero VAD to each speech chunk before assembly
         processed_chunks = []

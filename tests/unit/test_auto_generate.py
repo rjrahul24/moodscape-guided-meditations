@@ -1283,3 +1283,16 @@ class TestRenderScript(unittest.TestCase):
                 json.loads(Path(r.meta_path).read_text())["speech_qa"],
                 {"chunks": 3, "failed": 1},
             )
+
+    def test_speech_qa_non_dict_is_ignored(self):
+        from unittest.mock import MagicMock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._pipeline(tmp)
+            p.last_speech_qa = MagicMock()
+            cfg = AutoConfig.from_env(tts_engine="f5", voice_slug="Brittney")
+            r = render_script(
+                "Hi.", config=cfg, background_label="B",
+                background_path="/b.mp3", pipeline=p,
+            )
+            self.assertNotIn("speech_qa", json.loads(Path(r.meta_path).read_text()))

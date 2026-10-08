@@ -627,7 +627,7 @@ def render_script(
         }
     )
     speech_qa = getattr(pipeline, "last_speech_qa", None)
-    if speech_qa:
+    if isinstance(speech_qa, dict) and speech_qa:
         meta["speech_qa"] = speech_qa
 
     script_path.write_text(script, encoding="utf-8")

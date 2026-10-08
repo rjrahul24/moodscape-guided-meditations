@@ -236,6 +236,8 @@ class MeditationPipeline:
                 if cached_voice is not None:
                     voice_audio = cached_voice["voice_audio"]
                     voice_activity = cached_voice["voice_activity"]
+                    cached_qa = (cached_voice.get("metadata") or {}).get("speech_qa")
+                    self.last_speech_qa = cached_qa if isinstance(cached_qa, dict) else None
                     status_message += "Voice: Reused cached TTS. "
                     _progress(progress_cb, 0.35, "Loaded voice narration from cache.")
                 else:
@@ -280,6 +282,8 @@ class MeditationPipeline:
                         )
 
                     logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
+                    tts_qa = getattr(tts, "last_qa", None)
+                    self.last_speech_qa = tts_qa if isinstance(tts_qa, dict) else None
 
                     # Save to cache if enabled
                     if use_tts_cache and cache_key:
@@ -292,6 +296,8 @@ class MeditationPipeline:
                             "f5_target_wpm": f5_target_wpm,
                             "script_preview": script[:120].replace("\n", " "),
                         }
+                        if self.last_speech_qa:
+                            meta["speech_qa"] = self.last_speech_qa
                         try:
                             save_cached_tts(
                                 cache_key, voice_audio, voice_activity,

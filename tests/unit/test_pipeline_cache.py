@@ -148,3 +148,42 @@ def test_pipeline_music_volume_affects_mix(temp_tts_cache, monkeypatch):
     # The output files should be generated and have valid audio
     assert len(data1) > 0
     assert len(data2) > 0
+
+
+def test_pipeline_speech_qa_recorded_and_restored_from_cache(temp_tts_cache, monkeypatch):
+    """last_speech_qa comes from tts.last_qa, is cached, and is restored on a hit."""
+    monkeypatch.setattr("core.upload_music.UploadMusicEngine", MockMusicEngine)
+    qa = {"chunks": 2, "failed_first_pass": 1, "rerendered": 1, "still_failing": 0,
+          "codes": {"HIGH_CER": 1}, "device": "mps"}
+
+    class QATTS(MockTTS):
+        last_qa = qa
+
+    pipeline = MeditationPipeline()
+    tts = QATTS()
+    kw = dict(
+        script="Close your eyes and breathe gently. [pause:2s]",
+        music_prompt="ambient", tts_engine="mock", custom_tts_engine=tts,
+        music_model="upload", uploaded_music_path="dummy.wav", use_tts_cache=True,
+    )
+    pipeline.generate(**kw)
+    assert pipeline.last_speech_qa == qa
+
+    pipeline2 = MeditationPipeline()
+    _, status = pipeline2.generate(**kw)
+    assert "Reused cached TTS" in status
+    assert tts.synth_count == 1
+    assert pipeline2.last_speech_qa == qa
+
+
+def test_pipeline_speech_qa_ignores_non_dict(temp_tts_cache, monkeypatch):
+    monkeypatch.setattr("core.upload_music.UploadMusicEngine", MockMusicEngine)
+    tts = MockTTS()
+    tts.last_qa = MagicMock()
+    pipeline = MeditationPipeline()
+    pipeline.generate(
+        script="Breathe gently. [pause:2s]", music_prompt="ambient", tts_engine="mock",
+        custom_tts_engine=tts, music_model="upload", uploaded_music_path="dummy.wav",
+        use_tts_cache=False,
+    )
+    assert pipeline.last_speech_qa is None
