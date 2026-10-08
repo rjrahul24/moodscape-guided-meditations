@@ -96,5 +96,39 @@ class TestScriptRenderOnly(unittest.TestCase):
             self.assertFalse((out / "corpus_snapshot").exists())
 
 
+class TestScriptNormalPath(unittest.TestCase):
+    def test_normal_row_fields_unchanged(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            gen = tmp / "gen"
+            gen.mkdir()
+            audio, script, meta = gen / "a.wav", gen / "a.script.txt", gen / "a.meta.json"
+            for f in (audio, script, meta):
+                f.write_text("x")
+            fake = SimpleNamespace(audio_path=str(audio), script_path=str(script), meta_path=str(meta),
+                                   voice="v", angle="ang", estimated_sec=12.34, originality=0.5,
+                                   violations=[], script="s", draft_script="")
+            corpus = tmp / "live"
+            corpus.mkdir()
+            out = tmp / "out"
+            mod = _load_script()
+            argv = ["eval_genres.py", "--genres", "body_scan", "--band", "short",
+                    "--configs", "c=w|j", "--out", str(out)]
+            with mock.patch.object(sys, "argv", argv), \
+                    mock.patch.object(mod, "CORPUS_DIR", corpus), \
+                    mock.patch.object(mod, "run", return_value=fake), \
+                    mock.patch("core.pipeline.MeditationPipeline", _FakePipeline):
+                mod.main()
+            row = json.loads((out / "results.json").read_text())[0]
+            for key in ("config", "genre", "case", "band", "seed", "ok", "voice", "seconds",
+                        "angle", "estimated_sec", "originality", "advisories", "audio"):
+                self.assertIn(key, row)
+            self.assertTrue(row["ok"])
+            self.assertEqual(row["estimated_sec"], 12.3)
+            self.assertTrue((out / "c" / "body_scan-0" / "a.wav").is_file())
+            self.assertFalse((out / "c" / "body_scan-0" / ".corpus").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
