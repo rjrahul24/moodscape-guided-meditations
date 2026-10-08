@@ -35,6 +35,7 @@ CONTENT_PROFILES: dict[str, dict] = {
         "reverb_amount": 0.15,
         "fade_in_sec": 1.5,
         "fade_out_sec": 6.0,
+        "export_lufs": -16.0,  # playback loudness target (dual-mono equivalent)
         "kokoro_paragraph_pause_sec": 6.5,
         "f5_paragraph_pause_sec": 3.0,
         # None => mixer uses its existing meditation-tuned ducking/calibration.
@@ -51,6 +52,7 @@ CONTENT_PROFILES: dict[str, dict] = {
         "reverb_amount": 0.18,
         "fade_in_sec": 2.5,
         "fade_out_sec": 10.0,
+        "export_lufs": -18.0,  # quieter bedtime target
         "kokoro_paragraph_pause_sec": 4.0,
         "f5_paragraph_pause_sec": 2.0,
         # Gentler breathing-duck + narrower calibration so the bed stays soft and

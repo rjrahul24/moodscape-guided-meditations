@@ -4,6 +4,8 @@ from core.mixer import (
     adaptive_vad_threshold,
     calibrate_music_bed,
     detect_phrases,
+    export_audio,
+    export_lufs_target,
     mix,
     overlay_tracks,
     apply_fades,
@@ -351,3 +353,40 @@ class TestMixPhrasesPassthrough(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestExportLoudness(unittest.TestCase):
+    def _tone(self, sr=48000, sec=5.0):
+        t = np.arange(int(sr * sec)) / sr
+        return (0.1 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+
+    def _measure(self, path):
+        import soundfile as sf
+        import pyloudnorm as pyln
+        y, sr = sf.read(path, dtype="float32")
+        if y.ndim == 1:
+            y = np.stack([y, y], axis=1)  # dual-mono playback
+        return pyln.Meter(sr).integrated_loudness(y)
+
+    def test_mono_meditation_plays_at_minus_16(self):
+        target, off = export_lufs_target("meditation", environ={})
+        path = export_audio(self._tone(), 48000, target_sample_rate=48000,
+                            target_lufs=target, mono_playback_offset_db=off)
+        self.assertAlmostEqual(self._measure(path), -16.0, delta=0.5)
+
+    def test_mono_sleep_plays_at_minus_18(self):
+        target, off = export_lufs_target("sleep_story", environ={})
+        path = export_audio(self._tone(), 48000, target_sample_rate=48000,
+                            target_lufs=target, mono_playback_offset_db=off)
+        self.assertAlmostEqual(self._measure(path), -18.0, delta=0.5)
+
+    def test_kill_switch_restores_legacy(self):
+        self.assertEqual(
+            export_lufs_target("sleep_story", environ={"MOODSCAPE_LOUDNESS_DUAL_MONO": "0"}),
+            (-16.0, 0.0))
+
+    def test_stereo_ignores_offset(self):
+        st = np.stack([self._tone(), self._tone()])
+        path = export_audio(st, 48000, target_sample_rate=48000,
+                            target_lufs=-16.0, mono_playback_offset_db=3.01)
+        self.assertAlmostEqual(self._measure(path), -16.0, delta=0.5)

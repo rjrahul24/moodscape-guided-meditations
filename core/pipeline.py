@@ -14,7 +14,7 @@ except ImportError:
     mx = None
 
 from core.audio_processor import make_master_chain
-from core.mixer import export_audio, export_stems, mix, normalize_loudness
+from core.mixer import export_audio, export_lufs_target, export_stems, mix, normalize_loudness
 from core.qa_monitor import run_qa_checks
 from core.kokoro_tts.engine import KokoroEngine
 
@@ -152,7 +152,8 @@ class MeditationPipeline:
         # -16 LUFS matches Apple Music natively; Spotify applies minimal +2 dB
         # boost.  The previous -19 LUFS caused platforms to boost and apply their
         # own limiter, degrading quality.
-        target_lufs = -16.0
+        # Per content type; mono exports are offset so dual-mono playback hits it.
+        target_lufs, mono_offset = export_lufs_target(content_type)
 
         is_instrumental = generation_mode == "Instrumental Only"
         is_vocals = generation_mode == "Vocals Only"
@@ -671,6 +672,7 @@ class MeditationPipeline:
                 target_sample_rate=export_sr,
                 master_chain=master_chain,
                 target_lufs=target_lufs,
+                mono_playback_offset_db=mono_offset,
             )
 
         finally:

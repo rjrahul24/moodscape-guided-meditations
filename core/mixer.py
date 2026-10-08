@@ -950,6 +950,23 @@ def export_stems(
 # Export
 # ---------------------------------------------------------------------------
 
+def export_lufs_target(content_type: str, environ=None) -> tuple[float, float]:
+    """Return ``(target_lufs, mono_offset_db)`` for the final export.
+
+    Targets are the *playback* loudness; a mono file played on two channels
+    (dual-mono) measures 3.01 dB hotter than the single-channel reading, so mono
+    exports subtract that offset. ``MOODSCAPE_LOUDNESS_DUAL_MONO=0`` restores the
+    legacy ``(-16.0, 0.0)``.
+    """
+    import os
+    from core.content_profiles import get_profile
+
+    env = os.environ if environ is None else environ
+    if env.get("MOODSCAPE_LOUDNESS_DUAL_MONO", "1") == "0":
+        return -16.0, 0.0
+    return float(get_profile(content_type)["export_lufs"]), 3.01
+
+
 def export_audio(
     audio: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
@@ -957,6 +974,7 @@ def export_audio(
     target_sample_rate: int = 44100,
     master_chain: Pedalboard | None = None,
     target_lufs: float = -19.0,
+    mono_playback_offset_db: float = 0.0,
 ) -> str:
     """Stream audio out to temp file with Pedalboard plugins and normalization.
     
@@ -965,7 +983,9 @@ def export_audio(
     streams directly to a file to prevent immense memory spikes.
 
     Args:
-        target_lufs: Loudness target in LUFS (-18 for meditation).
+        target_lufs: Loudness target in LUFS (playback loudness).
+        mono_playback_offset_db: subtracted from the target for mono audio
+            (dual-mono playback reads this much hotter). Ignored for stereo.
     """
     from pedalboard.io import AudioFile
     
@@ -988,7 +1008,9 @@ def export_audio(
     #    first then normalizing would re-exceed the ceiling). The true-peak
     #    limiter replaces pedalboard's Limiter, which inflated level (~+4.75 dB)
     #    and added broadband "static" distortion.
-    mix_lufs_gain = calculate_loudness_gain(mastered_audio, sample_rate, target_lufs)
+    is_mono = mastered_audio.ndim == 1 or mastered_audio.shape[0] == 1
+    effective_target = target_lufs - mono_playback_offset_db if (is_mono and mono_playback_offset_db > 0) else target_lufs
+    mix_lufs_gain = calculate_loudness_gain(mastered_audio, sample_rate, effective_target)
     mastered_audio = (mastered_audio * mix_lufs_gain).astype(np.float32)
     mastered_audio = true_peak_limit(mastered_audio, sample_rate, threshold_db=-1.0)
 
