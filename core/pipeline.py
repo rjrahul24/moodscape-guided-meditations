@@ -39,6 +39,7 @@ class MeditationPipeline:
         self.tts = KokoroEngine()
         self.last_stems = None
         self.last_speech_qa = None
+        self.last_tts_cache_hit = None
 
     def generate(
         self,
@@ -131,6 +132,7 @@ class MeditationPipeline:
             Tuple of (path_to_output_file, status_message).
         """
         self.last_speech_qa = None
+        self.last_tts_cache_hit = None
         status_message = ""
 
         # Resolve the content profile (meditation vs sleep story). The profile
@@ -234,6 +236,7 @@ class MeditationPipeline:
                         logger.info("TTS cache hit for key %s", cache_key[:12])
 
                 if cached_voice is not None:
+                    self.last_tts_cache_hit = True
                     voice_audio = cached_voice["voice_audio"]
                     voice_activity = cached_voice["voice_activity"]
                     cached_qa = (cached_voice.get("metadata") or {}).get("speech_qa")
@@ -281,6 +284,7 @@ class MeditationPipeline:
                             progress_cb=tts_progress, seed=seed,
                         )
 
+                    self.last_tts_cache_hit = False
                     logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
                     tts_qa = getattr(tts, "last_qa", None)
                     self.last_speech_qa = tts_qa if isinstance(tts_qa, dict) else None

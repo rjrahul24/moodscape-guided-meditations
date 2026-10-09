@@ -1284,6 +1284,25 @@ class TestRenderScript(unittest.TestCase):
                 {"chunks": 3, "failed": 1},
             )
 
+    def test_tts_cache_hit_recorded_when_bool(self):
+        for flag in (True, False):
+            with tempfile.TemporaryDirectory() as tmp:
+                p = self._pipeline(tmp)
+                p.last_tts_cache_hit = flag
+                cfg = AutoConfig.from_env(tts_engine="f5", voice_slug="Brittney")
+                r = render_script("Hi.", config=cfg, background_label="B",
+                                  background_path="/b.mp3", pipeline=p)
+                self.assertIs(json.loads(Path(r.meta_path).read_text())["tts_cache_hit"], flag)
+
+    def test_tts_cache_hit_absent_when_unknown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._pipeline(tmp)
+            p.last_tts_cache_hit = None
+            cfg = AutoConfig.from_env(tts_engine="f5", voice_slug="Brittney")
+            r = render_script("Hi.", config=cfg, background_label="B",
+                              background_path="/b.mp3", pipeline=p)
+            self.assertNotIn("tts_cache_hit", json.loads(Path(r.meta_path).read_text()))
+
     def test_speech_qa_non_dict_is_ignored(self):
         from unittest.mock import MagicMock
 

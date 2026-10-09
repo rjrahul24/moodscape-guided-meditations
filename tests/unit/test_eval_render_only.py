@@ -54,6 +54,7 @@ class TestLoadSourceCases(unittest.TestCase):
 class _FakePipeline:
     last_stems = None
     last_speech_qa = None
+    last_tts_cache_hit = True
 
     def generate(self, **kw):
         import soundfile as sf
@@ -93,6 +94,7 @@ class TestScriptRenderOnly(unittest.TestCase):
             self.assertEqual(len(metas), 1)
             self.assertIn("rendered_from", json.loads(metas[0].read_text()))
             self.assertIn("rendered_from", rows["good-short"])
+            self.assertIs(rows["good-short"]["tts_cache_hit"], True)
             self.assertFalse((out / "corpus_snapshot").exists())
 
 
@@ -104,8 +106,9 @@ class TestScriptNormalPath(unittest.TestCase):
             gen = tmp / "gen"
             gen.mkdir()
             audio, script, meta = gen / "a.wav", gen / "a.script.txt", gen / "a.meta.json"
-            for f in (audio, script, meta):
+            for f in (audio, script):
                 f.write_text("x")
+            meta.write_text(json.dumps({"tts_cache_hit": False}))
             fake = SimpleNamespace(audio_path=str(audio), script_path=str(script), meta_path=str(meta),
                                    voice="v", angle="ang", estimated_sec=12.34, originality=0.5,
                                    violations=[], script="s", draft_script="")
@@ -125,6 +128,7 @@ class TestScriptNormalPath(unittest.TestCase):
                         "angle", "estimated_sec", "originality", "advisories", "audio"):
                 self.assertIn(key, row)
             self.assertTrue(row["ok"])
+            self.assertIs(row["tts_cache_hit"], False)
             self.assertEqual(row["estimated_sec"], 12.3)
             self.assertTrue((out / "c" / "body_scan-0" / "a.wav").is_file())
             self.assertFalse((out / "c" / "body_scan-0" / ".corpus").exists())

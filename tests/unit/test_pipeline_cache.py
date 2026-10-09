@@ -187,3 +187,23 @@ def test_pipeline_speech_qa_ignores_non_dict(temp_tts_cache, monkeypatch):
         use_tts_cache=False,
     )
     assert pipeline.last_speech_qa is None
+
+
+def test_pipeline_records_tts_cache_hit_flag(temp_tts_cache, monkeypatch):
+    monkeypatch.setattr("core.upload_music.UploadMusicEngine", MockMusicEngine)
+    kw = dict(
+        script="Close your eyes and breathe gently. [pause:2s]",
+        music_prompt="ambient", tts_engine="mock", custom_tts_engine=MockTTS(),
+        music_model="upload", uploaded_music_path="dummy.wav", use_tts_cache=True,
+    )
+    pipeline = MeditationPipeline()
+    assert pipeline.last_tts_cache_hit is None
+    pipeline.generate(**kw)
+    assert pipeline.last_tts_cache_hit is False
+
+    pipeline2 = MeditationPipeline()
+    pipeline2.generate(**kw)
+    assert pipeline2.last_tts_cache_hit is True
+    # reset at the start of the next generate on the same instance
+    pipeline2.generate(**{**kw, "script": "A different script entirely. [pause:2s]"})
+    assert pipeline2.last_tts_cache_hit is False

@@ -629,6 +629,9 @@ def render_script(
     speech_qa = getattr(pipeline, "last_speech_qa", None)
     if isinstance(speech_qa, dict) and speech_qa:
         meta["speech_qa"] = speech_qa
+    tts_cache_hit = getattr(pipeline, "last_tts_cache_hit", None)
+    if isinstance(tts_cache_hit, bool):
+        meta["tts_cache_hit"] = tts_cache_hit
 
     script_path.write_text(script, encoding="utf-8")
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")

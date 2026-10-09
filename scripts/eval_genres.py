@@ -55,6 +55,12 @@ def _finish_job(result, *, out_dir, base_row, started):
     row = dict(base_row)
     row.update({"ok": True, "voice": result.voice,
                 "seconds": round(time.monotonic() - started, 1)})
+    try:
+        hit = json.loads((out_dir / Path(result.meta_path).name).read_text(encoding="utf-8")).get("tts_cache_hit")
+        if isinstance(hit, bool):
+            row["tts_cache_hit"] = hit
+    except (OSError, ValueError):
+        pass  # bookkeeping only; never fail a finished job
     return row, audio_out
 
 
