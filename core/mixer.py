@@ -1009,7 +1009,9 @@ def export_lufs_target(content_type: str, environ=None) -> tuple[float, float]:
 
     Targets are the *playback* loudness; a mono file played on two channels
     (dual-mono) measures 3.01 dB hotter than the single-channel reading, so mono
-    exports subtract that offset. ``MOODSCAPE_LOUDNESS_DUAL_MONO=0`` restores the
+    exports subtract that offset. The profile target applies regardless of channel
+    count (stereo sleep stories export at -18 LUFS; only mono gets the offset) --
+    this is intended. ``MOODSCAPE_LOUDNESS_DUAL_MONO=0`` restores the
     legacy ``(-16.0, 0.0)``.
     """
     import os
