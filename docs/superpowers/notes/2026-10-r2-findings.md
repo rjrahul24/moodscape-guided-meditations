@@ -49,3 +49,44 @@
   paragraph. Each batch was joined with a fixed 0.15 s crossfade, under one
   seed, outside our QA. This is the behaviour `MOODSCAPE_F5_CHUNKING`
   replaces.
+
+## Smoke renders (2026-10-08/09)
+
+**Setup:** box_breathing, short band, seed 1700. The writer produced a
+long script (707 s), so this is a stress case.
+
+| Arm | Wall (s) | Peak footprint | LUFS (dual-mono) | Whisper gaps | speech_qa |
+|---|---|---|---|---|---|
+| base (LLM + F5, flags off) | 1654 | n/a | −16.0 | 5 | — |
+| rise (render-only, `BED_RISE_LIMIT=1`) | 68 | n/a | −16.0 | 5 | — (TTS cache hit, no F5) |
+| flags-off render-only re-render | 1037 | **43.2 GB** | −16.0 | 10 | — |
+| rise_r2, first QA design | 1871 | 42.8 GB | −16.0 | 7 | 29/72 failed, 20 re-rendered, 14 still failing |
+| rise_r2, word-gap QA (final) | 1407 | 42.8 GB | −16.0 | 5 | **13/72 failed, 11 re-rendered, 4 still failing** |
+
+- **The loudness fix works.** Every arm measures −16.0 dual-mono, where R1
+  measured −13.
+- **Chunk ownership works.** Every F5 call in the R2 arms was "1 batch", so
+  upstream never re-split.
+- **The first QA design misfired.** The signal-only gap rule flagged F5's
+  natural comma and sentence pauses (0.6–1.7 s at speed 0.8) and the
+  −46…−57 dB ref-pad lead-in. On 20 instrumented chunks it flagged 13; the
+  Whisper word-gap rule (`gap_breakdown`) flagged 1, a real 0.61 s stall.
+  QA now uses the word-gap rule (commit 2dc20ac).
+- **R2 adds no peak memory.** The whole pipeline peaks at about 43 GB with
+  or without R2. The F5 stage alone peaks at 17 GB, so the overshoot past
+  32 GB comes from the stages after TTS. That pre-existing overshoot is the
+  most likely cause of R1's MPS OOM, and it's the top reliability item for a
+  later round.
+- **R2's cost** is about +40% TTS time on this script (1295 s against 925 s
+  for the same script with flags off).
+- **F5 is nondeterministic on identical inputs** (5 vs 10 Whisper gaps).
+  Single-render gap counts are noise; the A/B decides.
+
+## Found in passing (for R3)
+
+Every F5 chunk begins with about **1.5–2.2 s of near-silence**. It is the
+ref-pad leak: `MOODSCAPE_F5_REF_PAD` ships ON, and it happens on the golden
+path too. That is dead air before each sentence, on top of the script's own
+pauses. It probably contributes to the runtime overshoot and to the pacing
+listeners hear. Trimming leading near-silence per chunk (or modelling it in
+the timing engine) belongs to R3 and needs its own A/B.
