@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -83,7 +84,8 @@ class TestScriptRenderOnly(unittest.TestCase):
             out = tmp / "new"
             mod = _load_script()
             argv = ["eval_genres.py", "--scripts-from", str(src), "--out", str(out), "--name", "arm"]
-            with mock.patch.object(sys, "argv", argv), \
+            with mock.patch.dict(os.environ, {}, clear=False), \
+                    mock.patch.object(sys, "argv", argv), \
                     mock.patch("core.pipeline.MeditationPipeline", _FakePipeline):
                 mod.main()
             rows = {r["case"]: r for r in json.loads((out / "results.json").read_text())}
@@ -118,7 +120,8 @@ class TestScriptNormalPath(unittest.TestCase):
             mod = _load_script()
             argv = ["eval_genres.py", "--genres", "body_scan", "--band", "short",
                     "--configs", "c=w|j", "--out", str(out)]
-            with mock.patch.object(sys, "argv", argv), \
+            with mock.patch.dict(os.environ, {}, clear=False), \
+                    mock.patch.object(sys, "argv", argv), \
                     mock.patch.object(mod, "CORPUS_DIR", corpus), \
                     mock.patch.object(mod, "run", return_value=fake), \
                     mock.patch("core.pipeline.MeditationPipeline", _FakePipeline):
