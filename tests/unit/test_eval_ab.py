@@ -57,6 +57,31 @@ class TestPairs(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "y-short"):
                 build_pairs(a, b, Path(tmp) / "ab")
 
+    def test_allow_missing_pairs_intersection_and_records_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a = _make_run(Path(tmp) / "a", {"x-short": 0.1, "y-short": 0.1})
+            b = _make_run(Path(tmp) / "b", {"x-short": 0.1, "z-short": 0.1})
+            n = build_pairs(a, b, Path(tmp) / "ab", seed=3, excerpt_sec=30, allow_missing=True)
+            self.assertEqual(n, 3)
+            doc = json.loads((Path(tmp) / "ab" / ".key.json").read_text())
+            self.assertEqual(doc["skipped_cases"], ["y-short", "z-short"])
+            self.assertEqual({p["case"] for p in doc["pairs"].values()}, {"x-short"})
+            self.assertTrue((Path(tmp) / "ab" / "sheet.csv").is_file())
+
+    def test_allow_missing_no_skipped_key_when_complete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a = _make_run(Path(tmp) / "a", {"x-short": 0.1})
+            b = _make_run(Path(tmp) / "b", {"x-short": 0.1})
+            build_pairs(a, b, Path(tmp) / "ab", seed=3, excerpt_sec=30, allow_missing=True)
+            self.assertNotIn("skipped_cases", json.loads((Path(tmp) / "ab" / ".key.json").read_text()))
+
+    def test_allow_missing_empty_intersection_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a = _make_run(Path(tmp) / "a", {"x-short": 0.1})
+            b = _make_run(Path(tmp) / "b", {"y-short": 0.1})
+            with self.assertRaisesRegex(ValueError, "No cases in common"):
+                build_pairs(a, b, Path(tmp) / "ab", allow_missing=True)
+
     def test_build_pairs_is_blind_and_deterministic(self):
         with tempfile.TemporaryDirectory() as tmp:
             a = _make_run(Path(tmp) / "a", {"x-short": 0.1, "y-short": 0.2})

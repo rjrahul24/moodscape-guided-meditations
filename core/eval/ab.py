@@ -91,6 +91,7 @@ def build_pairs(
     seed: int | None = None,
     excerpt_sec: float = 75.0,
     positions: Sequence[str] | None = None,
+    allow_missing: bool = False,
 ) -> int:
     import soundfile as sf
 
@@ -100,8 +101,17 @@ def build_pairs(
             raise ValueError(f"Unknown position(s): {', '.join(unknown)} (use {', '.join(n for n, _ in POSITIONS)})")
     base, chal = find_case_audio(baseline_dir), find_case_audio(challenger_dir)
     missing = sorted(set(base) ^ set(chal))
+    skipped_cases: list[str] = []
     if missing:
-        raise ValueError(f"Cases present in only one run: {', '.join(missing)}")
+        if not allow_missing:
+            raise ValueError(f"Cases present in only one run: {', '.join(missing)}")
+        skipped_cases = missing
+        common_cases = set(base) & set(chal)
+        if not common_cases:
+            raise ValueError(f"No cases in common between the two runs (skipped: {', '.join(missing)})")
+        print(f"warning: skipping cases present in only one run: {', '.join(missing)}")
+        base = {c: v for c, v in base.items() if c in common_cases}
+        chal = {c: v for c, v in chal.items() if c in common_cases}
 
     if seed is None:
         seed = secrets.randbits(32)
@@ -140,7 +150,10 @@ def build_pairs(
         key[pair_id] = {"A": arms[0][0], "B": arms[1][0], "case": case, "position": pos,
                         "truncated": truncated}
 
-    (Path(out_dir) / KEY_NAME).write_text(json.dumps({"seed": seed, "pairs": key}, indent=2), encoding="utf-8")
+    key_doc: dict = {"seed": seed, "pairs": key}
+    if skipped_cases:
+        key_doc["skipped_cases"] = skipped_cases
+    (Path(out_dir) / KEY_NAME).write_text(json.dumps(key_doc, indent=2), encoding="utf-8")
     with open(Path(out_dir) / "sheet.csv", "w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
         writer.writerow(["pair", "choice", "reason"])

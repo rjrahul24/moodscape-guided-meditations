@@ -25,13 +25,15 @@ def main() -> int:
     parser.add_argument("--positions", default=None,
                         help="comma-separated excerpt positions to cut (start,middle,end); default all")
     parser.add_argument("--seed", type=int, default=None, help="shuffle seed (default: random, recorded in .key.json)")
+    parser.add_argument("--allow-missing", action="store_true",
+                        help="pair only cases present in both runs (warn and record the skipped ones)")
     args = parser.parse_args()
     seed = args.seed if args.seed is not None else secrets.randbits(32)
     print(f"A/B shuffle seed: {seed}")
     positions = [p.strip() for p in args.positions.split(",") if p.strip()] if args.positions else None
     try:
         n = build_pairs(Path(args.a), Path(args.b), Path(args.out), seed=seed, excerpt_sec=args.excerpt_sec,
-                        positions=positions)
+                        positions=positions, allow_missing=args.allow_missing)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
