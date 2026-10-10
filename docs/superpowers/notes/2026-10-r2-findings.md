@@ -90,3 +90,29 @@ path too. That is dead air before each sentence, on top of the script's own
 pauses. It probably contributes to the runtime overshoot and to the pacing
 listeners hear. Trimming leading near-silence per chunk (or modelling it in
 the timing engine) belongs to R3 and needs its own A/B.
+
+## M1 per-stage memory (2026-10-10)
+
+**Setup:** flags off; render-only of the box_breathing smoke script (707 s);
+real F5. Peak phys_footprint between pipeline milestones, from
+`proc_pid_rusage`.
+
+| Stage | Peak (GB) | After (GB) |
+|---|---|---|
+| F5 load | 4.6 | 4.6 |
+| F5 synthesis (707 s of audio) | 18.7 | 18.6 |
+| Upsample 24 → 48 kHz | 18.8 | 18.8 |
+| **DeepFilterNet denoise** | **42.8** | 38.3 |
+| Music switch (F5 unloaded here) | 38.8 | 14.2 |
+| Voice FX, music FX, calibration, mix | ≤ 16.8 | 16.8 |
+| Master + export | 21.4 | 21.4 |
+| Eval Whisper metrics | 27.3 | 20.6 |
+
+There are two contributors:
+1. **F5 stays resident.** About 14 GB of model plus MPS cache is held through
+   upsampling, denoising and mastering, because `tts.unload_model()` runs
+   only at the music switch.
+2. **DeepFilterNet MLX `enhance_array` adds about 23 GB.** It builds one
+   whole-file graph over a 12-minute 48 kHz voice. mlx-audio ships
+   `enhance_array_streaming` (stateful chunks, intended to match libDF
+   streaming analysis).
