@@ -225,7 +225,24 @@ _NUMBER_WORDS = {
     "sixty": 60,
 }
 
+_SENSITIVE_TOPIC = re.compile(
+    r"\b(?:"
+    r"pregnan\w*|miscarriag\w*"
+    r"|(?:heart|lung|respiratory|medical|health|chronic)\s+(?:condition|disease|problem|issue)s?"
+    r"|illness(?:es)?|diseases?|cancer|diagnos\w*|medications?|surger(?:y|ies)"
+    r"|child|children|kids?|bab(?:y|ies)|toddlers?"
+    r"|inner\s+child|younger\s+(?:self|you)|younger\s+version\s+of\s+(?:yourself|you)"
+    r")\b",
+    re.IGNORECASE,
+)
+
 _SAFETY_RULES: list[tuple[str, re.Pattern, str]] = [
+    (
+        "SENSITIVE_TOPIC",
+        _SENSITIVE_TOPIC,
+        "Sensitive topic: scripts never mention illness, medical conditions, pregnancy or "
+        "treatment, and never picture children or a younger self. Rewrite the sentence without it.",
+    ),
     (
         "CLINICAL_CLAIM",
         re.compile(

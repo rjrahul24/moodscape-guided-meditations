@@ -450,6 +450,34 @@ class CheckBannedPhrasesTest(unittest.TestCase):
         self.assertEqual(check_banned_phrases("Rest here.", ["move on"]), [])
 
 
+class SensitiveTopicTest(unittest.TestCase):
+    def test_matches(self):
+        from core.script_gen.linter import _SENSITIVE_TOPIC
+        for t in ["If you are pregnant", "a heart condition", "your inner child", "Children laughing",
+                  "a baby sleeping", "picture your younger self", "after an illness",
+                  "your diagnosis", "Kids run past"]:
+            with self.subTest(t=t):
+                self.assertTrue(_SENSITIVE_TOPIC.search(t))
+
+    def test_no_false_positives(self):
+        from core.script_gen.linter import _SENSITIVE_TOPIC
+        for t in ["since childhood", "hand on your heart", "your heart rate slows", "no medical claims",
+                  "kidney", "babysitter", "kindness", "breathe in"]:
+            with self.subTest(t=t):
+                self.assertIsNone(_SENSITIVE_TOPIC.search(t))
+
+    def test_old_disclaimer_is_fatal(self):
+        from core.script_gen.linter import FATAL, check
+        v = check("If you are pregnant, have a heart or respiratory condition, or feel lightheaded "
+                  "at any point, return to natural breathing.")
+        self.assertIn(("SENSITIVE_TOPIC", FATAL), [(x.code, x.severity) for x in v])
+
+    def test_across_tags(self):
+        from core.script_gen.linter import check_safety
+        v = check_safety("Notice your [pause:2s] inner child.")
+        self.assertIn("SENSITIVE_TOPIC", [x.code for x in v])
+
+
 if __name__ == "__main__":
     unittest.main()
 
