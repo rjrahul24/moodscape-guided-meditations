@@ -148,17 +148,21 @@ def enhance_voice_deepfilter(
     )
 
     try:
-        # enhance_array() builds a whole-file MLX graph (+23 GB on a 12-min
-        # voice); the streaming variant bounds it to 4 s chunks.
+        # Offline enhance_array() is the default: measured numerically
+        # equivalent to streaming and ~21x faster. Streaming (4 s chunks) is
+        # opt-in via MOODSCAPE_DF_STREAMING=1 to bound the MLX graph size.
         audio32 = audio.astype(np.float32)
-        if os.environ.get("MOODSCAPE_DF_STREAMING", "1") != "0":
+        use_streaming = (
+            os.environ.get("MOODSCAPE_DF_STREAMING", "0") == "1"
+            and hasattr(model, "enhance_array_streaming")
+        )
+        if use_streaming:
             enhanced_audio = model.enhance_array_streaming(
                 audio32, chunk_samples=int(4.0 * sr)
             )
         else:
             enhanced_audio = model.enhance_array(audio32)
         enhanced_audio = np.asarray(enhanced_audio, dtype=np.float32)
-        _clear_mlx_cache()
 
         if enhanced_audio.ndim > 1:
             enhanced_audio = enhanced_audio.squeeze()
@@ -176,6 +180,8 @@ def enhance_voice_deepfilter(
     except Exception as e:
         logger.warning("[DeepFilterNet] Enhancement failed (%s). Falling back to spectral gating.", e)
         return _fallback_spectral_denoise(audio, sr, wet=wet)
+    finally:
+        _clear_mlx_cache()
 
 
 def _fallback_spectral_denoise(audio: np.ndarray, sr: int, wet: float = 1.0) -> np.ndarray:
