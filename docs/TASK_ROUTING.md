@@ -27,6 +27,10 @@ When you need to change something, start here. Locate the row that matches your 
 | Breath sound loading | `core/breath_sounds.py` | `scripts/generate_breath_samples.py` |
 | Change how scripts are written | `docs/prompting_guides/` | `core/script_gen/rules.py` |
 | Add a safety rule | `docs/prompting_guides/content_safety_rules.md` | `core/script_gen/linter.py` **and** a case in `tests/unit/test_script_linter.py` |
+| Change sensitive-wording rules / content check | `core/script_gen/content_check.py` | `core/script_gen/linter.py` (`SENSITIVE_TOPIC`), `docs/prompting_guides/content_safety_rules.md` |
+| Script length / duration control | `core/auto_generate.py :: generate_script()` | `core/script_gen/duration.py` (`scale_pauses`) |
+| F5 chunk lead-in trimming | `core/f5_tts/engine.py` (`MOODSCAPE_F5_TRIM_LEADIN`) | — |
+| Generate an eval chain / review from a TOML spec | `core/eval/chain.py`, `scripts/ab_chain.py` | `core/eval/review.py`, `scripts/ab_review.py` |
 | Add a model provider | `core/script_gen/engine.py` (provider registry) | An adapter under `core/script_gen/adapters/` |
 | Tune duration accuracy | `core/script_gen/duration.py :: DEFAULT_WPM` | `core/auto_generate.py :: run()` (auto-logs `actual_sec`/`estimate_ratio` into `meta.json` via `log_estimate_accuracy()`) |
 | Tune script-gen retry behaviour | `core/script_gen/adapters/openai_compat.py` (hand-rolled backoff loop) | `core/script_gen/adapters/anthropic_api.py` (SDK `max_retries`, no second loop) — both read `MOODSCAPE_SCRIPT_MAX_RETRIES` |

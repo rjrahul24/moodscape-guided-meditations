@@ -107,6 +107,44 @@ The subsystem is built as five layers, each catching a different class of proble
 
 **Why the split exists.** Format and safety rules living only in the prompt would cost a token (and a chance of being ignored) on every generation, and a model that ignores them has no backstop. Putting the same rules in `content_safety_rules.md` *and* in `linter.py` means the prompt does the persuading — cheaply, since it's plain text with no extra inference — and the linter does the enforcing, for free, without spending a single token. That deterministic backstop is what makes a weaker or cheaper model usable at all: a small local model that gets the format wrong occasionally is fine, because the linter catches it and the judge repairs it, instead of a bad script silently reaching the TTS engine. Genre packs add a fourth layer before any inference: if the pack is malformed, the job fails before the LLM budget is spent.
 
+## Content safety
+
+Three layers keep sensitive wording out of scripts:
+
+- **Prose rules** (`content_safety_rules.md`). Rule 14: breathwork sessions say
+  once in the opening, gently, that if anything feels uncomfortable the listener
+  should simply breathe naturally (never naming medical conditions). Rule 15:
+  never mention illness, disease, medical or physical conditions, pregnancy,
+  diagnoses, medication or surgery, and never ask the listener to picture a
+  child, baby or younger self.
+- **`SENSITIVE_TOPIC` (linter, FATAL, global).** Applies to every genre and
+  content type: medical conditions, pregnancy, illness/treatment, hospitals,
+  and children/babies/younger self. "Child's pose" is allowed. It goes through
+  the normal repair loop and fails the job if it survives the budget.
+- **LLM content check** (`script_gen/content_check.py`, kill-switch
+  `MOODSCAPE_CONTENT_CHECK=0`). Catches what regexes cannot: the judge flags
+  verified quotes in a closed list of classes (named illness or medical
+  condition, pregnancy, medication or surgery, medical settings, children or
+  younger self, death outside grief/loss packs, self-harm, weight). The pack
+  label and technique are passed in, so the session's own subject (for example
+  pain as a sensation in a body scan, or loss in a grief pack) is allowed.
+  Findings get one `SENSITIVE_CONTENT` repair inside the shared repair budget,
+  then are returned as ADVISORY; malformed JSON twice skips the check. Result
+  in meta `content_check`.
+
+A rule must never *require* sensitive wording: the old disclaimer did, which is
+why `MISSING_DISCLAIMER` now only checks for the gentle line.
+
+## Duration control
+
+`MOODSCAPE_DURATION_CONTROL` (default `1`; `0` disables). After the content
+check, when the runtime estimate is more than 15% outside the duration band,
+the judge gets one targeted length repair (sharing `MOODSCAPE_SCRIPT_MAX_REPAIRS`).
+If the estimate is still outside the window, pause lengths are scaled by a
+bounded factor (x0.85 to x1.15) toward it. If a step leaves a fatal violation,
+the last fatal-free script is used. Drift stays ADVISORY and never fails a job.
+The outcome is recorded in meta `duration_control`.
+
 ## Configuration
 
 All of these are read from the environment. `AutoConfig.from_env()` (`core/auto_generate.py`) reads the numeric ones; `run()` reads the model specs directly.
@@ -471,6 +509,27 @@ with ears, so metrics reject bad output and ears choose between good outputs.
    The report includes an `unanswered` count; the verdict is `INCOMPLETE`
    while any pair is unanswered.
 
+### Eval specs
+
+A TOML spec describes a whole multi-arm eval so the zsh chain and review notes
+are generated rather than hand-written. Fields: `title`, `testset`, `out`,
+`configs` (`name=provider:model|...`), optional `positions` (`start,middle,end`);
+`[[arms]]` with `name`, `desc`, `env` (table of env vars), `cached` (expects TTS
+cache hits) and `from` (take scripts from an earlier arm; default the first arm,
+which is the only full LLM run); `[[rounds]]` with `id`, `name`, `a`, `b`
+(arm names), `how`, `listen_for`.
+
+```bash
+python scripts/ab_chain.py var/eval/r3/spec.toml            # print the chain
+python scripts/ab_chain.py var/eval/r3/spec.toml --write    # <out>/chain.sh, chmod +x (never run for you)
+python scripts/ab_review.py var/eval/r3/spec.toml           # REVIEW.md + measurement card in listen.html
+```
+
+The chain takes the heavy-model lock, runs the base arm, re-renders the other
+arms from its scripts, checks `cached` arms really hit the TTS cache, exports
+blind pairs per round and builds the listening page. `ab_review.py` is
+read-only apart from `<out>/REVIEW.md` and `<out>/listen.html`.
+
 ### Same-script (render-only) comparison
 
 To judge a mix or TTS change without script variance, re-render the baseline's
@@ -514,6 +573,8 @@ broken `torchcodec` in this venv.
 | Planner: genre pack + angle → prose brief (pass 0) | `core/script_gen/planner.py` |
 | Provider registry + `ScriptEngine` ABC | `core/script_gen/engine.py` |
 | Prompt assembly from the on-disk guides | `core/script_gen/rules.py` |
+| Content check (sensitive wording) | `core/script_gen/content_check.py` |
+| Eval spec → chain / REVIEW.md | `core/eval/chain.py`, `core/eval/review.py`, `scripts/ab_chain.py`, `scripts/ab_review.py` |
 | Render-only eval, listening page, answer import | `core/eval/render_only.py`, `core/eval/listen.py`, `scripts/ab_listen_page.py`, `scripts/ab_import_answers.py` |
 | Draft generation (pass 1) | `core/script_gen/generator.py` |
 | Review and repair (pass 2) | `core/script_gen/judge.py` |

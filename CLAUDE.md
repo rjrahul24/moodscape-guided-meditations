@@ -25,6 +25,7 @@ python app.py                          # Gradio UI at http://localhost:7860
 .venv/bin/python -m pytest tests/integration/ -v                             # full pipeline (slow)
 python scripts/generate.py <script_file> --voice <voice_name> --output <out.wav>
 .venv/bin/python scripts/eval_genres.py --testset eval/testset.toml --metrics --export-stems --configs "baseline=ollama:qwen3.8:27b|ollama:gemma4:31b" --out var/eval/base
+python scripts/ab_chain.py <spec.toml> --write && python scripts/ab_review.py <spec.toml>   # eval chain + REVIEW.md from a TOML spec (never runs the chain)
 python scripts/ab_export.py --a <base>/<config> --b <new>/<config> --out var/eval/ab-001 && python scripts/ab_score.py --ab var/eval/ab-001
 ```
 
@@ -44,21 +45,21 @@ python scripts/ab_export.py --a <base>/<config> --b <new>/<config> --out var/eva
 │   ├── text_utils.py · breath_sounds.py · stereo_upmix.py · deepfilter_enhancer.py
 │   ├── genres.py                     # Genre pack loader, angle rotation, GenrePack dataclass
 │   ├── originality.py                # Corpus management, TF-IDF similarity scoring, avoid-lists
-│   ├── eval/                         # eval harness: script/speech/mix metrics, test set, blind A/B; render_only.py (same-script re-render), listen.py (listening page + answer import)
+│   ├── eval/                         # eval harness: script/speech/mix metrics, test set, blind A/B; render_only.py (same-script re-render), listen.py (listening page + answer import), chain.py (TOML eval spec → zsh chain), review.py (REVIEW.md + measurement card)
 │   ├── background_tags.py            # Lazy background music tagging (measured + declared)
 │   ├── kokoro_tts/  f5_tts/             # TTS engines (engine + preproc + postproc + voices; f5_tts/chunking.py = breath-group chunker)
 │   ├── lyria/                             # Lyria RealTime music generation (Google API)
 │   ├── upload_music/                      # Background instrumental (engine + arrange/length-fit)
 │   ├── script_gen/                    # prompt → validated script (planner + generator + judge + linter)
 │   │   └── planner.py                 # Pass 0: genre pack + angle → prose creative brief
-│   │   # also: sampling.py (per-stage sampling) · slop.py (slop lexicon) · guide_context.py (guide placeholders)
+│   │   # also: sampling.py (per-stage sampling) · slop.py (slop lexicon) · guide_context.py (guide placeholders) · content_check.py (LLM sensitive-wording check)
 │   ├── auto_generate.py               # orchestrator: genre → planner → script → music → pipeline
 │   ├── voice_selection.py             # per-genre-family narrator voice from measured clip traits
 │   ├── background_picker.py           # tag-filtered pick from assets/backgrounds/
 │   ├── streaming_run.py               # threaded progress streaming for the UI
 │   └── auto_tab.py                    # Gradio "Auto-Generate" tab (peer of "Manual" under app.py's gr.Tabs())
 ├── eval/testset.toml               # fixed 24-job evaluation set
-├── scripts/                          # generate.py · separate_worker.py · generate_breath_samples.py · tag_backgrounds.py · eval_genres.py · ab_export.py · ab_listen_page.py · ab_import_answers.py · ab_score.py
+├── scripts/                          # generate.py · separate_worker.py · generate_breath_samples.py · tag_backgrounds.py · eval_genres.py · ab_export.py · ab_listen_page.py · ab_import_answers.py · ab_score.py · ab_chain.py (spec → chain.sh) · ab_review.py (spec → REVIEW.md)
 ├── tests/unit/  tests/integration/
 │   └── conftest.py                   # pytest fixtures for genre tests
 ├── assets/                           # tracked in git
@@ -117,11 +118,15 @@ Genre and duration band in, finished meditation out, with no human step.
    (`script_gen/judge.py :: review()`) returns a revised script plus a
    changelog — it revises, it does not score
 5. **Validate** → `script_gen/linter.py :: check()` (format + mental-health
-   safety + originality + banned phrases) and `script_gen/duration.py`
-   (runtime estimate, no rendering)
+   safety incl. global `SENSITIVE_TOPIC` + originality + banned phrases) and
+   `script_gen/duration.py` (runtime estimate, no rendering)
 6. **Repair loop** → fatal violations go back to the judge as targeted
    instructions, bounded by `MOODSCAPE_SCRIPT_MAX_REPAIRS` (default 2); advisory
-   violations render anyway and seed the next run's avoid-list
+   violations render anyway and seed the next run's avoid-list. Then, sharing
+   that budget: **content check** (`content_check.py`, judge flags sensitive
+   wording → one `SENSITIVE_CONTENT` repair, ADVISORY after) and **duration
+   control** (one length repair when >15% outside the window, then pause
+   scaling ×0.85–1.15; drift never fails a job)
 7. **Pick music** → `background_picker.pick_background(prefer_tags=pack.music_tags)`
    filters by the pack's two music tags, excluding recently used tracks
 8. **Render** → `MeditationPipeline.generate()`, unchanged, on the golden path
@@ -159,7 +164,7 @@ Full detail: [docs/auto_generation/README.md](docs/auto_generation/README.md).
 
 ## Top Gotchas
 
-The ten that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
+The ones that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
 
 - **MPS bus error on exit** → `atexit.register(lambda: os._exit(0))` in `app.py` — do not remove.
 - **Kokoro forced to CPU** → MPS causes deallocation bus errors. British voices (`bf_*`, `bm_*`) need `KPipeline(lang_code="b")`.
@@ -173,6 +178,7 @@ The ten that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
   for duration drift and style issues. Treating every violation as fatal makes
   a weaker local model unusable; treating none as fatal lets a safety failure
   reach audio. Do not flatten this distinction.
+- **Content rules must never REQUIRE sensitive wording.** The old R1 disclaimer forced scripts to name medical conditions/pregnancy, which a user rule forbids. Now breathwork gets only a gentle "breathe naturally" line, and `SENSITIVE_TOPIC` (FATAL) is **global**: no medical conditions, pregnancy, illness/treatment, hospitals, or children/babies/younger self ("child's pose" is fine). Any new rule that mandates wording must be checked against it.
 - **Ollama ignores `keep_alive` on `/v1`** → The `/v1/chat/completions` endpoint
   silently disregards the `keep_alive` parameter; it is honoured only on
   `/api/*` endpoints. `ScriptEngine.unload()` exists specifically to call the
@@ -207,6 +213,9 @@ From the 2026-06-13 research pass ([Research Execution Process Outline.md]). Bug
 | `MOODSCAPE_BED_SPEECH_OFFSET_LU` / `_PAUSE_OFFSET_LU` (unset) | Override the profile's `calibrate_music_bed` offsets (env wins). Setting either widens the duck clamp to (−20, −4) for all content types. Malformed value raises at the mix step. | `mixer.bed_offset_overrides()`, merged into the `calibrate_music_bed` kwargs in `core/pipeline.py`; applies only when `MOODSCAPE_ADAPTIVE_BED` is on (ignored with `=0`) |
 | `MOODSCAPE_F5_CHUNKING` (**0**) | Renders breath groups sized to F5's own budget (upstream never re-splits) with punctuation-length gaps: `_GAP_SENTENCE` 0.45 / `_GAP_CLAUSE` 0.35 / `_GAP_COMMA` 0.20 s. Frees MPS cache per group. | `core/f5_tts/chunking.py`, `engine.py` |
 | `MOODSCAPE_F5_CHUNK_QA` (**0**) | Needs `CHUNKING`. Per-chunk speech QA (gaps, truncation, rate outliers, CER); failing chunks re-rendered best-of-3; result in `meta.json` `"speech_qa"`. Never fails a job. `MOODSCAPE_F5_QA_DEVICE` (default `mps`; `cpu` = escape hatch) picks the Whisper device. | `core/speech_qa.py`, `engine.py` |
+| `MOODSCAPE_F5_TRIM_LEADIN` (**0**) | Trims the ~1.5–2 s ref-pad lead-in at the start of each F5 chunk (onset = first frame above `_DB` −35 dBFS, keeps `_LEAD_MS` 60 ms). Env-only; TTS-affecting so it is in the cache key. | `core/f5_tts/engine.py::synthesize` |
+| `MOODSCAPE_DURATION_CONTROL` (**1**) | Script-stage length control: one judge length repair when the estimate is >15% outside the window (shared repair budget), then pause scaling ×0.85–1.15; falls back to the last fatal-free script; never fails a job. Result in meta `duration_control`. `0` = off. | `core/auto_generate.py::generate_script` |
+| `MOODSCAPE_CONTENT_CHECK` (**1**) | Judge-model check for sensitive wording (illness/medical, pregnancy, medication/surgery, medical settings, children/younger self, non-grief death, self-harm, weight); the pack's own subject is allowed; one `SENSITIVE_CONTENT` repair, ADVISORY after; result in meta `content_check`. `0` = off. | `core/script_gen/content_check.py`, `core/auto_generate.py` |
 | `MOODSCAPE_VOICE_BY_FAMILY` (**0**) | `1` picks the narrator per genre family from measured clip traits; `0` keeps Brittney. `voice_map.toml` overrides apply either way. | `core/voice_selection.py` |
 
 Rejected research items (don't revisit): true-peak-limiter removal (false premise — `true_peak_limit` is transparent below ceiling), SRC reorder (already correct — soxr_vhq before FX; the 48 kHz path has no extra audio resampling beyond the limiter's oversampling), full LR crossover for "harshness" (the 14 kHz LPF is already a gentle 2nd-order min-phase filter), look-ahead ducker (the 600 ms predictive pre-descent already beats it), colon→comma / ALL-CAPS text fixes (already in the preprocessor), dithering relocation (there is no dithering). Parked for a later "Issue-1 polish" round: upload LPF→high-shelf, `true_peak_limit` gain-envelope refactor, master bus saturation.
