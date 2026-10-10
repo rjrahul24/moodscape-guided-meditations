@@ -67,6 +67,40 @@ def _trim_trailing_silence(audio: np.ndarray, sr: int) -> np.ndarray:
     return audio[:cut]
 
 
+def _trim_leading_silence(
+    audio: np.ndarray, sr: int, *, lead_ms: float = 60.0, floor_db: float = -35.0
+) -> np.ndarray:
+    """Remove the near-silent lead-in (reference-pad residue) from a chunk.
+
+    10 ms frame RMS in dB; the onset is the first frame at or above
+    ``peak + floor_db``. ``lead_ms`` of audio is kept before it, with a 10 ms
+    linear fade-in at the new start. Returns the input unchanged when no
+    frame qualifies, the onset is within ``lead_ms``, or the array is shorter
+    than two frames.
+    """
+    frame = int(0.010 * sr)
+    n = len(audio) // frame
+    if frame < 1 or n < 2:
+        return audio
+    frames = audio[: n * frame].astype(np.float64).reshape(n, frame)
+    rms = np.sqrt(np.mean(frames ** 2, axis=1))
+    with np.errstate(divide="ignore"):
+        db = 20.0 * np.log10(rms)
+    peak = db.max()
+    if not np.isfinite(peak):
+        return audio
+    idx = np.where(db >= peak + floor_db)[0]
+    if len(idx) == 0:
+        return audio
+    start = int(idx[0]) * frame - int(lead_ms / 1000.0 * sr)
+    if start <= 0:
+        return audio
+    out = audio[start:].copy()
+    fade = min(frame, len(out))
+    out[:fade] *= np.linspace(0.0, 1.0, fade, endpoint=False, dtype=out.dtype)
+    return out
+
+
 _VAD_GAIN_FLOOR = 0.15  # non-speech segments attenuated to 15% (preserves natural ambience)
 _VAD_CROP_TAIL_MS = 100.0  # safety tail after last detected speech before cropping
 
@@ -430,6 +464,14 @@ class F5Engine(SpeechEngine):
         else:
             arr = np.asarray(wav, dtype=np.float32).squeeze()
         arr = _trim_trailing_silence(arr, SAMPLE_RATE)
+        # Optional lead-in trim: F5 emits ~1.5-2.2 s of ref-pad near-silence
+        # before speech in every chunk. OFF by default.
+        if os.environ.get("MOODSCAPE_F5_TRIM_LEADIN", "0") == "1":
+            arr = _trim_leading_silence(
+                arr, SAMPLE_RATE,
+                lead_ms=float(os.environ.get("MOODSCAPE_F5_TRIM_LEADIN_LEAD_MS", "60")),
+                floor_db=float(os.environ.get("MOODSCAPE_F5_TRIM_LEADIN_DB", "-35")),
+            )
         # Optional per-phrase microprosody (research Issue 3.3/3.4, B4):
         # phrase-final pitch declination + breathiness via a WORLD pass.
         # OFF by default — WORLD resynthesis can colour clean Vocos
