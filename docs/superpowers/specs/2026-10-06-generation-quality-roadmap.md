@@ -139,6 +139,18 @@ The rest of R5:
 The commercial-engine question (F5 is CC-BY-NC). It needs its own research
 spike once the user has finished retrying Qwen.
 
+## Phase 3 (2026-10-10, after the R2 eval)
+
+See `docs/superpowers/specs/2026-10-10-phase3-design.md`. Results that drove it are in
+`var/eval/r2/RESULTS.md`. The phase covers:
+- content sensitivity (our R1 disclaimer rule produced the medical wording the listener rejected);
+- the F5 lead-in trim and duration control (R3a);
+- the LLM content check (R4a);
+- the memory peak;
+- the R3 eval (spectral duck, R2 on fresh scripts, lead-in trim, candidate stack).
+
+R3b, R4b and R5b follow, in an order set by that eval.
+
 ## Parked
 
 - **Multi-phase reference set:** needs recordings (spec written in R1).
