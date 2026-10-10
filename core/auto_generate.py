@@ -717,11 +717,13 @@ def generate_script(
                         k: v.as_dict() for k, v in stage_sampling.items() if v is not None
                     },
                     duration_control={
+                        "enabled": duration_control,
                         "length_repair": length_repair,
                         "length_repair_reverted": length_repair_reverted,
                         "pause_scale": pause_scale,
                     },
                     content_check={
+                        "enabled": content_check,
                         "ran": content_ran,
                         "findings_first": content_first or 0,
                         "findings_final": len(content_advisories),

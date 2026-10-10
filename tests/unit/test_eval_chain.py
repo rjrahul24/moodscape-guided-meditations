@@ -205,6 +205,15 @@ class TestReview:
         assert "WARNING: spectral c2 re-rendered" in text and "export abB exit=1" in text
         assert "base exit=0" not in text.split("## Warnings")[1]
 
+    def test_script_controls_show_off_when_kill_switched(self, evaldir):
+        spec, out = evaldir
+        _write(out / "base" / "eval" / "c2" / "c2.meta.json",
+               {"duration_control": {"enabled": False, "length_repair": False, "pause_scale": 1.0},
+                "content_check": {"enabled": False, "ran": False, "findings_first": 0, "findings_final": 0}})
+        (out / "base" / "eval" / "c1" / "c1.meta.json").unlink()
+        text = "\n".join(build_review_lines(spec, out))
+        assert "| `base` | off | off | - | off | off | off |" in text
+
     def test_no_script_controls_section_without_meta(self, tmp_path):
         spec = _spec(tmp_path)
         Path(spec.out).mkdir()

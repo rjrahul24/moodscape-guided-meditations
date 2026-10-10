@@ -72,6 +72,8 @@ def script_controls(out: Path, arm: str) -> dict | None:
         return None
     scales = [d.get("pause_scale") for d in dc if isinstance(d.get("pause_scale"), (int, float))]
     return {
+        "dc_off": sum(1 for d in dc if d.get("enabled") is False),
+        "cc_off": sum(1 for c in cc if c.get("enabled") is False),
         "dc_files": len(dc),
         "length_repairs": sum(1 for d in dc if d.get("length_repair")),
         "pause_scaled": sum(1 for s in scales if abs(s - 1.0) > 1e-9),
@@ -154,8 +156,15 @@ def build_review_lines(spec: EvalSpec, out: Path) -> list[str]:
                   "|---|---|---|---|---|---|---|"]
         for n, c in ctl:
             rng = f"{c['pause_range'][0]:.2f}-{c['pause_range'][1]:.2f}" if c["pause_range"] else "-"
-            lines.append(f"| `{n}` | {c['length_repairs']}/{c['dc_files']} | {c['pause_scaled']}/{c['dc_files']} | {rng} | "
-                         f"{c['cc_ran']}/{c['cc_files']} | {c['findings_first']} | {c['findings_final']} |")
+            if c["dc_files"] and c["dc_off"] == c["dc_files"]:
+                dc_cells = ["off", "off", "-"]
+            else:
+                dc_cells = [f"{c['length_repairs']}/{c['dc_files']}", f"{c['pause_scaled']}/{c['dc_files']}", rng]
+            if c["cc_files"] and c["cc_off"] == c["cc_files"]:
+                cc_cells = ["off", "off", "off"]
+            else:
+                cc_cells = [f"{c['cc_ran']}/{c['cc_files']}", str(c["findings_first"]), str(c["findings_final"])]
+            lines.append(f"| `{n}` | " + " | ".join(dc_cells + cc_cells) + " |")
 
     lines += ["", "## Per case (length in minutes / mid-word gaps)", ""]
     cases = sorted({r.get("case") for a in arms for r in _rows(out, a.name) if r.get("case")})

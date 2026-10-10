@@ -486,10 +486,10 @@ class TestRun(unittest.TestCase):
         self.assertEqual(meta["background_path"], "/bg/forest.mp3")
         self.assertEqual(
             meta["duration_control"],
-            {"length_repair": False, "length_repair_reverted": False, "pause_scale": 1.0},
+            {"enabled": True, "length_repair": False, "length_repair_reverted": False, "pause_scale": 1.0},
         )
         self.assertEqual(
-            set(meta["content_check"]), {"ran", "findings_first", "findings_final"}
+            set(meta["content_check"]), {"enabled", "ran", "findings_first", "findings_final"}
         )
 
     def test_pipeline_receives_the_script_and_background(self):
@@ -1280,7 +1280,7 @@ class DurationControlTest(unittest.TestCase):
         self.assertEqual(outcome.repairs_used, 1)
         self.assertEqual(
             outcome.duration_control,
-            {"length_repair": True, "length_repair_reverted": False, "pause_scale": 1.0},
+            {"enabled": True, "length_repair": True, "length_repair_reverted": False, "pause_scale": 1.0},
         )
 
     def test_length_repair_is_not_retried_when_still_long(self):
@@ -1355,7 +1355,7 @@ class DurationControlTest(unittest.TestCase):
         self.assertEqual(outcome.script, LONG_SCRIPT)
         self.assertEqual(
             outcome.duration_control,
-            {"length_repair": False, "length_repair_reverted": False, "pause_scale": 1.0},
+            {"enabled": False, "length_repair": False, "length_repair_reverted": False, "pause_scale": 1.0},
         )
 
     def test_zero_repair_budget_means_no_length_repair(self):
@@ -1447,7 +1447,7 @@ class ContentCheckIntegrationTest(unittest.TestCase):
         self.assertIn("genre: body_scan", judge.calls[1]["user"])
         self.assertEqual(outcome.repairs_used, 0)
         self.assertEqual(
-            outcome.content_check, {"ran": True, "findings_first": 0, "findings_final": 0}
+            outcome.content_check, {"enabled": True, "ran": True, "findings_first": 0, "findings_final": 0}
         )
 
     def test_check_uses_judge_stage_sampling(self):
@@ -1468,7 +1468,7 @@ class ContentCheckIntegrationTest(unittest.TestCase):
         self.assertEqual(outcome.repairs_used, 1)
         self.assertFalse(any(v.code == "SENSITIVE_CONTENT" for v in outcome.violations))
         self.assertEqual(
-            outcome.content_check, {"ran": True, "findings_first": 1, "findings_final": 0}
+            outcome.content_check, {"enabled": True, "ran": True, "findings_first": 1, "findings_final": 0}
         )
 
     def test_finding_after_the_repair_is_advisory(self):
@@ -1485,7 +1485,7 @@ class ContentCheckIntegrationTest(unittest.TestCase):
         self.assertEqual(len(content), 1)
         self.assertEqual(content[0].severity, "advisory")
         self.assertEqual(
-            outcome.content_check, {"ran": True, "findings_first": 1, "findings_final": 1}
+            outcome.content_check, {"enabled": True, "ran": True, "findings_first": 1, "findings_final": 1}
         )
 
     def test_absent_quote_is_dropped(self):
@@ -1503,7 +1503,7 @@ class ContentCheckIntegrationTest(unittest.TestCase):
         self.assertEqual(outcome.script, FLAGGED_SCRIPT)
         self.assertEqual(outcome.repairs_used, 0)
         self.assertEqual(
-            outcome.content_check, {"ran": False, "findings_first": 0, "findings_final": 0}
+            outcome.content_check, {"enabled": True, "ran": False, "findings_first": 0, "findings_final": 0}
         )
 
     def test_budget_exhausted_returns_advisory_without_raising(self):
@@ -1522,7 +1522,7 @@ class ContentCheckIntegrationTest(unittest.TestCase):
         self.assertEqual(len(judge.calls), 1)
         self.assertEqual(self._check_calls(judge), [])
         self.assertEqual(
-            outcome.content_check, {"ran": False, "findings_first": 0, "findings_final": 0}
+            outcome.content_check, {"enabled": False, "ran": False, "findings_first": 0, "findings_final": 0}
         )
 
     def test_judge_is_not_unloaded_before_the_check(self):
@@ -1569,7 +1569,7 @@ class ContentCheckIntegrationTest(unittest.TestCase):
         self.assertNotIn("cure", outcome.script)
         self.assertTrue(outcome.duration_control["length_repair_reverted"])
         self.assertEqual(
-            outcome.content_check, {"ran": True, "findings_first": 1, "findings_final": 0}
+            outcome.content_check, {"enabled": True, "ran": True, "findings_first": 1, "findings_final": 0}
         )
 
     def test_call_cap_carries_present_findings_forward_as_advisory(self):
@@ -1631,7 +1631,7 @@ class ContentCheckIntegrationTest(unittest.TestCase):
         )
         meta = json.loads(Path(result.meta_path).read_text())
         self.assertEqual(
-            meta["content_check"], {"ran": True, "findings_first": 0, "findings_final": 0}
+            meta["content_check"], {"enabled": True, "ran": True, "findings_first": 0, "findings_final": 0}
         )
 
 
