@@ -17,11 +17,18 @@ from pathlib import Path
 from core.background_picker import pick_background
 from core.genres import load_pack, pick_angle
 from core.originality import add_to_corpus, assess, avoid_terms, load_corpus, recent_angles
-from core.script_gen.duration import estimate_duration_sec, log_estimate_accuracy
+from core.script_gen.duration import (
+    PAUSE_SCALE_BOUNDS,
+    estimate_duration_sec,
+    log_estimate_accuracy,
+    scale_pauses,
+    total_pause_sec,
+)
 from core.script_gen.engine import ScriptEngine, build_engine
 from core.script_gen.generator import draft
 from core.script_gen.judge import repair, review
 from core.script_gen.linter import (
+    ADVISORY,
     STYLE_CODES,
     Violation,
     check,
@@ -62,6 +69,13 @@ DURATION_BANDS: dict[str, tuple[float, float]] = {
 # remembers. Bounded so a config reused across a long batch doesn't grow an
 # ever-larger exclude list.
 RECENT_BACKGROUNDS_LIMIT = 5
+
+# Duration control (kill-switch MOODSCAPE_DURATION_CONTROL=0). A script whose
+# estimate is more than this fraction outside the target window gets one
+# targeted length rewrite from the judge; anything still outside the window
+# afterwards is nudged in by scaling pauses within PAUSE_SCALE_BOUNDS. Drift
+# itself stays ADVISORY: neither step can fail a job.
+LENGTH_REPAIR_TOLERANCE = 0.15
 
 
 class ScriptGenerationError(RuntimeError):
@@ -240,6 +254,9 @@ class ScriptOutcome:
     originality_shared_span: int = 0
     brief: str = ""
     sampling: dict = field(default_factory=dict)
+    # {"length_repair": bool, "pause_scale": float}; pause_scale is 1.0 when
+    # no pause scaling was applied.
+    duration_control: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -308,6 +325,46 @@ def _write_failure_artifacts(
         encoding="utf-8",
     )
     return base
+
+
+def _duration_control_enabled() -> bool:
+    return os.environ.get("MOODSCAPE_DURATION_CONTROL", "1") != "0"
+
+
+def _length_repair_violation(
+    script: str, estimated_sec: float, min_sec: float, max_sec: float
+) -> Violation:
+    """An ADVISORY violation asking the judge to rewrite to the window's midpoint."""
+    target_mid = (min_sec + max_sec) / 2
+    current_words = len(script.split())
+    target_words = round(current_words * target_mid / estimated_sec)
+    return Violation(
+        code="DURATION_OUT_OF_WINDOW",
+        severity=ADVISORY,
+        message=(
+            f"Estimated runtime {estimated_sec:.0f}s; target {min_sec:.0f}-{max_sec:.0f}s. "
+            f"Rewrite to about {target_words} words of speech (keep the same "
+            f"[pause] marker style), aiming for {target_mid:.0f}s."
+        ),
+    )
+
+
+def _pause_scale_factor(
+    script: str, estimated_sec: float, min_sec: float, max_sec: float
+) -> float | None:
+    """Pause factor that moves the estimate to the nearest window edge.
+
+    Only explicit [pause:Xs] seconds scale; everything else (speech, breath
+    cues, paragraph pauses) is held fixed. Returns None when there is nothing
+    to scale. The result is clamped to PAUSE_SCALE_BOUNDS.
+    """
+    pauses = total_pause_sec(script)
+    if pauses <= 0:
+        return None
+    fixed = estimated_sec - pauses
+    target = max_sec if estimated_sec > max_sec else min_sec
+    lo, hi = PAUSE_SCALE_BOUNDS
+    return round(min(hi, max(lo, (target - fixed) / pauses)), 3)
 
 
 def generate_script(
@@ -422,23 +479,23 @@ def generate_script(
             sampling=stage_sampling["judge"],
         )
 
-        repairs_used = 0
-        while True:
-            estimated_sec = estimate_duration_sec(
-                script,
+        def _lint(text: str):
+            """Estimate + every check, so violations always match ``text``."""
+            est = estimate_duration_sec(
+                text,
                 engine=config.tts_engine,
                 content_type=config.content_type,
             )
-            violations = check(
-                script,
-                estimated_sec=estimated_sec,
+            found = check(
+                text,
+                estimated_sec=est,
                 target_min_sec=config.target_min_sec,
                 target_max_sec=config.target_max_sec,
             )
             if pack is not None:
-                violations = violations + check_pack_rules(script, pack)
+                found = found + check_pack_rules(text, pack)
 
-            report = None
+            rep = None
             if config.originality:
                 # IDF over EVERY genre (that is what learns generic meditation
                 # vocabulary); comparison within this genre only (that is
@@ -450,14 +507,87 @@ def generate_script(
                     entry.text
                     for entry in load_corpus(limit=500, corpus_dir=config.corpus_dir)
                 ]
-                report = assess(
-                    script, compare_against=same_genre, idf_texts=all_texts
+                rep = assess(
+                    text, compare_against=same_genre, idf_texts=all_texts
                 )
-                violations = violations + check_originality(report)
+                found = found + check_originality(rep)
+            return est, found, rep
 
+        duration_control = _duration_control_enabled()
+        min_sec, max_sec = config.target_min_sec, config.target_max_sec
+        length_repair = False
+        # (script, changelog) as they were just before the length repair: a
+        # fatal-free fallback if the rewrite breaks something the remaining
+        # repair budget cannot fix -- duration drift must never fail a job.
+        pre_length_repair: tuple[str, str] | None = None
+        pause_scale = 1.0
+        pause_scale_tried = False
+
+        repairs_used = 0
+        while True:
+            estimated_sec, violations, report = _lint(script)
             fatal = fatal_violations(violations)
 
             if not fatal:
+                # Post-lint steps, in order. Each either loops back for a
+                # fresh lint (``continue``) or falls through to the next.
+                # (A later content-check step slots in after duration control.)
+                if duration_control:
+                    # Step 1: one targeted length repair when far outside the window.
+                    far_outside = not (
+                        min_sec * (1 - LENGTH_REPAIR_TOLERANCE)
+                        <= estimated_sec
+                        <= max_sec * (1 + LENGTH_REPAIR_TOLERANCE)
+                    )
+                    if (
+                        far_outside
+                        and not length_repair
+                        and repairs_used < config.max_repairs
+                        and estimated_sec > 0
+                    ):
+                        pre_length_repair = (script, changelog)
+                        length_repair = True
+                        repairs_used += 1
+                        if progress_cb:
+                            progress_cb(0.15, "Adjusting script length")
+                        script, repair_log = repair(
+                            judge_engine,
+                            script,
+                            [_length_repair_violation(script, estimated_sec, min_sec, max_sec)]
+                            + [v for v in violations if v.code in STYLE_CODES],
+                            judge_system,
+                            max_tokens=config.max_tokens,
+                            sampling=stage_sampling["repair"],
+                        )
+                        changelog = f"{changelog}\n{repair_log}".strip()
+                        continue
+
+                    # Step 2: bounded pause scaling toward the nearest edge.
+                    # Applied at most once, in place, and only kept if the
+                    # scaled script lints fatal-free (e.g. a 55s pause scaled
+                    # past the 60s marker limit is rejected, not repaired).
+                    if not pause_scale_tried and not (min_sec <= estimated_sec <= max_sec):
+                        pause_scale_tried = True
+                        factor = _pause_scale_factor(script, estimated_sec, min_sec, max_sec)
+                        scaled = scale_pauses(script, factor) if factor is not None else script
+                        if scaled != script:
+                            s_est, s_violations, s_report = _lint(scaled)
+                            if not fatal_violations(s_violations):
+                                script = scaled
+                                estimated_sec, violations, report = s_est, s_violations, s_report
+                                pause_scale = factor
+                                logger.info(
+                                    "Duration control: scaled pauses x%.3f -> estimate %.0fs",
+                                    factor,
+                                    estimated_sec,
+                                )
+                            else:
+                                logger.warning(
+                                    "Duration control: pause scaling x%.3f introduced fatal "
+                                    "violations; keeping unscaled script",
+                                    factor,
+                                )
+
                 return ScriptOutcome(
                     script=script,
                     draft_script=draft_script,
@@ -471,7 +601,25 @@ def generate_script(
                     sampling={
                         k: v.as_dict() for k, v in stage_sampling.items() if v is not None
                     },
+                    duration_control={
+                        "length_repair": length_repair,
+                        "pause_scale": pause_scale,
+                    },
                 )
+
+            if repairs_used >= config.max_repairs and pre_length_repair is not None:
+                # The length rewrite (or a repair after it) left fatal problems
+                # and the budget is spent: fall back to the fatal-free script
+                # from before it. Duration drift is advisory; it never fails a job.
+                logger.warning(
+                    "Duration control: length repair left fatal violations (%s); "
+                    "reverting to the pre-repair script",
+                    ", ".join(sorted({v.code for v in fatal})),
+                )
+                script, changelog = pre_length_repair
+                changelog = f"{changelog}\n- duration control: length repair reverted".strip()
+                pre_length_repair = None
+                continue
 
             if repairs_used >= config.max_repairs:
                 codes = ", ".join(sorted({v.code for v in fatal}))
@@ -769,6 +917,7 @@ def run(
         "originality_shared_span": outcome.originality_shared_span,
         "brief": outcome.brief,
         "sampling": outcome.sampling,
+        "duration_control": outcome.duration_control,
     }
     rendered = render_script(
         outcome.script,

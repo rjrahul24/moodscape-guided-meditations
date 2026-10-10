@@ -121,6 +121,7 @@ All of these are read from the environment. `AutoConfig.from_env()` (`core/auto_
 | `MOODSCAPE_ORIGINALITY_ADVISORY` | `0.65` | `linter.check_originality()` cosine threshold (≥ = ADVISORY, feeds next avoid-list) |
 | `MOODSCAPE_GENRE_PACKS_DIR` | `docs/genre_packs` | `genres.load_pack()` directory |
 | `MOODSCAPE_SCRIPT_MAX_REPAIRS` | `2` | `AutoConfig.from_env()` |
+| `MOODSCAPE_DURATION_CONTROL` | `1` | `auto_generate.generate_script()` kill-switch: one judge length repair when the estimate is >15% outside the window (shares the repair budget), then pause scaling ×0.85–1.15 toward the window; drift stays ADVISORY; result in meta `duration_control` |
 | `MOODSCAPE_SCRIPT_MAX_RETRIES` | `3` (total attempts) | Both `script_gen/adapters/openai_compat.py` and `script_gen/adapters/anthropic_api.py` — see "Retrying a flaky provider" below |
 | `MOODSCAPE_TARGET_MIN_SEC` (for a given band) | `180` / `360` / `600` | `AutoConfig.from_env()` duration band → seconds mapping |
 | `MOODSCAPE_TARGET_MAX_SEC` (for a given band) | `360` / `600` / `900` | `AutoConfig.from_env()` duration band → seconds mapping |

@@ -467,6 +467,9 @@ class TestRun(unittest.TestCase):
         self.assertEqual(set(meta["sampling"]), {"writer", "judge", "repair"})
         self.assertEqual(meta["background"], "Healing Forest — 23:12")
         self.assertEqual(meta["background_path"], "/bg/forest.mp3")
+        self.assertEqual(
+            meta["duration_control"], {"length_repair": False, "pause_scale": 1.0}
+        )
 
     def test_pipeline_receives_the_script_and_background(self):
         pipeline = StubPipeline(self.dir)
@@ -866,6 +869,10 @@ class OriginalityIntegrationTest(unittest.TestCase):
             "corpus_dir": self.dir / "corpus",
             "background_scan": lambda: [("Bed — 10:00", "/bg/a.mp3")],
             "genre": "sleep",
+            # Wide window: these tests are about the corpus, not duration
+            # control (which would otherwise rescale the short test script).
+            "target_min_sec": 1.0,
+            "target_max_sec": 100000.0,
         }
         values.update(overrides)
         return AutoConfig(**values)
@@ -1187,6 +1194,152 @@ class GenrePathTest(unittest.TestCase):
         )
         self.assertTrue(result.audio_path)
         self.assertEqual(result.genre, "")
+
+
+LONG_SCRIPT = "\n\n[pause:5s]\n\n".join([CLEAN_SCRIPT] * 6)
+
+# Long pauses, so a +-15% pause scale moves the estimate measurably.
+PAUSY_SCRIPT = (
+    "Settle in and let your shoulders drop.\n\n"
+    "[pause:20s]\n\n"
+    "If it feels right, you might let your eyes close.\n\n"
+    "[pause:20s]\n\n"
+    "Notice the weight of your hands.\n\n"
+    "[pause:20s]\n\n"
+    "Rest here."
+)
+
+
+def _est(script: str) -> float:
+    return estimate_duration_sec(script, engine="f5", content_type="meditation")
+
+
+class DurationControlTest(unittest.TestCase):
+    """One length repair when far out of window, then bounded pause scaling."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.failure_dir = Path(self._tmp.name) / "failures"
+        env = patch.dict(os.environ, {}, clear=False)
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("MOODSCAPE_DURATION_CONTROL", None)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _clean_window_config(self, **kw) -> AutoConfig:
+        # CLEAN_SCRIPT sits inside the window; LONG_SCRIPT is far above it.
+        clean = _est(CLEAN_SCRIPT)
+        return AutoConfig(
+            target_min_sec=clean * 0.9,
+            target_max_sec=clean * 1.1,
+            failure_dir=self.failure_dir,
+            **kw,
+        )
+
+    def _gen(self, judge, config, draft_script=CLEAN_SCRIPT):
+        return generate_script(
+            "p",
+            generator_engine=FakeScriptEngine([draft_script]),
+            judge_engine=judge,
+            config=config,
+        )
+
+    def test_over_long_script_gets_exactly_one_length_repair(self):
+        self.assertGreater(_est(LONG_SCRIPT), _est(CLEAN_SCRIPT) * 1.1 * 1.15)
+        judge = FakeScriptEngine([judged(LONG_SCRIPT), judged(CLEAN_SCRIPT)])
+        outcome = self._gen(judge, self._clean_window_config(max_repairs=2))
+        self.assertEqual(len(judge.calls), 2)
+        self.assertIn("Rewrite to about", judge.calls[1]["user"])
+        self.assertEqual(outcome.script, CLEAN_SCRIPT)
+        self.assertEqual(outcome.repairs_used, 1)
+        self.assertEqual(
+            outcome.duration_control, {"length_repair": True, "pause_scale": 1.0}
+        )
+
+    def test_length_repair_is_not_retried_when_still_long(self):
+        judge = FakeScriptEngine([judged(LONG_SCRIPT)])  # always long
+        outcome = self._gen(judge, self._clean_window_config(max_repairs=2))
+        length_calls = [c for c in judge.calls if "Rewrite to about" in c["user"]]
+        self.assertEqual(len(length_calls), 1)
+        self.assertEqual(len(judge.calls), 2)
+        self.assertTrue(outcome.duration_control["length_repair"])
+        # Still long, so pauses were shrunk by the floor factor; drift stays advisory.
+        self.assertEqual(outcome.duration_control["pause_scale"], 0.85)
+        self.assertTrue(
+            any(v.code == "DURATION_OUT_OF_WINDOW" for v in outcome.violations)
+        )
+
+    def test_length_repair_message_names_target_words(self):
+        judge = FakeScriptEngine([judged(LONG_SCRIPT), judged(CLEAN_SCRIPT)])
+        config = self._clean_window_config()
+        self._gen(judge, config)
+        est = _est(LONG_SCRIPT)
+        mid = (config.target_min_sec + config.target_max_sec) / 2
+        words = len(LONG_SCRIPT.split())
+        self.assertIn(f"about {round(words * mid / est)} words", judge.calls[1]["user"])
+        self.assertIn(f"aiming for {mid:.0f}s", judge.calls[1]["user"])
+
+    def test_ten_percent_over_scales_pauses_without_repair(self):
+        est = _est(PAUSY_SCRIPT)
+        max_sec = est / 1.10
+        config = AutoConfig(
+            target_min_sec=max_sec * 0.6,
+            target_max_sec=max_sec,
+            failure_dir=self.failure_dir,
+        )
+        judge = FakeScriptEngine([judged(PAUSY_SCRIPT)])
+        outcome = self._gen(judge, config, draft_script=PAUSY_SCRIPT)
+        self.assertEqual(len(judge.calls), 1)  # review only, no repair
+        self.assertFalse(outcome.duration_control["length_repair"])
+        self.assertLess(outcome.duration_control["pause_scale"], 1.0)
+        self.assertNotEqual(outcome.script, PAUSY_SCRIPT)
+        self.assertNotIn("[pause:20s]", outcome.script)
+        # Returned estimate and violations describe the returned (scaled) script.
+        self.assertAlmostEqual(outcome.estimated_sec, _est(outcome.script))
+        self.assertLess(outcome.estimated_sec, est)
+        self.assertFalse(
+            any(v.code == "DURATION_OUT_OF_WINDOW" for v in outcome.violations)
+        )
+
+    def test_kill_switch_disables_repair_and_scaling(self):
+        os.environ["MOODSCAPE_DURATION_CONTROL"] = "0"
+        judge = FakeScriptEngine([judged(LONG_SCRIPT), judged(CLEAN_SCRIPT)])
+        outcome = self._gen(judge, self._clean_window_config(max_repairs=2))
+        self.assertEqual(len(judge.calls), 1)
+        self.assertEqual(outcome.script, LONG_SCRIPT)
+        self.assertEqual(
+            outcome.duration_control, {"length_repair": False, "pause_scale": 1.0}
+        )
+
+    def test_zero_repair_budget_means_no_length_repair(self):
+        judge = FakeScriptEngine([judged(LONG_SCRIPT), judged(CLEAN_SCRIPT)])
+        outcome = self._gen(judge, self._clean_window_config(max_repairs=0))
+        self.assertEqual(len(judge.calls), 1)
+        self.assertFalse(outcome.duration_control["length_repair"])
+        self.assertEqual(outcome.repairs_used, 0)
+
+    def test_fatal_repair_comes_before_length_repair(self):
+        judge = FakeScriptEngine(
+            [judged(BROKEN_SCRIPT), judged(LONG_SCRIPT), judged(CLEAN_SCRIPT)]
+        )
+        outcome = self._gen(judge, self._clean_window_config(max_repairs=2))
+        self.assertEqual(len(judge.calls), 3)
+        self.assertNotIn("Rewrite to about", judge.calls[1]["user"])
+        self.assertIn("Rewrite to about", judge.calls[2]["user"])
+        self.assertEqual(outcome.script, CLEAN_SCRIPT)
+        self.assertEqual(outcome.repairs_used, 2)
+
+    def test_length_repair_that_breaks_the_script_never_fails_the_job(self):
+        # The length rewrite introduces a fatal problem and the budget is gone:
+        # duration is advisory, so fall back to the pre-repair script.
+        judge = FakeScriptEngine([judged(LONG_SCRIPT), judged(UNSAFE_SCRIPT)])
+        outcome = self._gen(judge, self._clean_window_config(max_repairs=1))
+        self.assertIn("Rewrite to about", judge.calls[1]["user"])
+        self.assertNotIn("cure", outcome.script)
+        self.assertIn("Settle in", outcome.script)
+        self.assertTrue(outcome.duration_control["length_repair"])
 
 
 if __name__ == "__main__":
