@@ -197,6 +197,9 @@ class TestReview:
         assert "| `spectral` | 1 | 10 | 2 | 2 | 0 | 0 |" in text  # voice QA
         assert "| `base` | 1/1 | 1/1 | 1.10-1.10 | 1/1 | 2 | 1 |" in text  # script controls
         assert "all-cached for `spectral`" in text
+        assert "reuse an earlier arm's voice render" in text
+        assert "same-voice only when both its arms share one render" in text
+        assert "pure mix comparison" not in text
         assert "chunked: produced no results" in text
         assert "spectral / c2: boom" in text
         assert "WARNING: spectral c2 re-rendered" in text and "export abB exit=1" in text

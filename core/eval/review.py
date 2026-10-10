@@ -129,7 +129,8 @@ def build_review_lines(spec: EvalSpec, out: Path) -> list[str]:
            "- **LUFS as played** should be -16 (-18 for a sleep story) in every arm."]
     if cached_arms:
         how.append("- **Voice from cache** should be all-cached for " + ", ".join(f"`{n}`" for n in cached_arms)
-                   + " - that is what makes their rounds a pure mix comparison. "
+                   + " - cached arms reuse an earlier arm's voice render (their `from` / cache source). "
+                   + "A round is same-voice only when both its arms share one render. "
                    + ", ".join(f"`{n}`" for n in fresh_arms) + " render a fresh voice (0 cached is expected).")
     how.append("- **Mid-word gaps** vary a lot between two F5 renders of the same script, so small differences mean nothing; "
                "your ears decide.")
