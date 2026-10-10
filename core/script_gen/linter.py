@@ -229,6 +229,7 @@ _SENSITIVE_TOPIC = re.compile(
     r"\b(?:"
     r"pregnan\w*|miscarriag\w*"
     r"|(?:heart|lung|respiratory|medical|health|chronic)\s+(?:condition|disease|problem|issue)s?"
+    r"|grandchild\w*|womb"
     r"|illness(?:es)?|sick(?:ness)?|hospitals?|asthma|diseases?|cancer|diagnos\w*|medications?|surger(?:y|ies)"
     r"|child(?!['\u2019]s\s+pose)|children|kids?|bab(?:y|ies)|toddlers?|newborns?|infants?|little\s+ones?"
     r"|inner\s+child|younger\s+(?:self|you)|younger\s+version\s+of\s+(?:yourself|you)"
@@ -395,8 +396,8 @@ def check_safety(script: str, *, max_hold_sec: int = MAX_BREATH_HOLD_SEC) -> lis
                     severity=FATAL,
                     message=(
                         f"Instructs a {seconds}-second breath hold. Holds over "
-                        f"{max_hold_sec}s are a real risk for listeners "
-                        "with panic disorder or asthma. Shorten it or remove it."
+                        f"{max_hold_sec}s are risky for anxious or sensitive "
+                        "listeners. Shorten it or remove it."
                     ),
                     # span=None: see Violation.span docstring.
                     span=None,

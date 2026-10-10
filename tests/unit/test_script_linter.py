@@ -479,6 +479,12 @@ class SensitiveTopicTest(unittest.TestCase):
             with self.subTest(t=t):
                 self.assertTrue(_SENSITIVE_TOPIC.search(t))
 
+    def test_grandchildren_and_womb_match(self):
+        from core.script_gen.linter import _SENSITIVE_TOPIC
+        for t in ["your grandchildren", "a grandchild", "the womb"]:
+            with self.subTest(t=t):
+                self.assertTrue(_SENSITIVE_TOPIC.search(t))
+
     def test_childs_pose_and_ill_at_ease_are_allowed(self):
         from core.script_gen.linter import _SENSITIVE_TOPIC
         for t in ["Settle into child's pose", "Settle into child\u2019s pose", "ill at ease"]:
