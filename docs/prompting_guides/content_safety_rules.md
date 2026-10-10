@@ -24,8 +24,7 @@ those and the judgment calls the linter cannot make.
    what is present; do not override it.
 
 4. **No extended breath holds.** Never instruct a hold longer than about seven
-   seconds. Long holds are a genuine physical risk for listeners with panic
-   disorder or asthma.
+   seconds. Long holds are risky for anxious or sensitive listeners.
 
 5. **No dissociation-adjacent imagery.** Never write "leave your body", "float
    away from yourself", or "you are not your body". This is actively

@@ -344,7 +344,7 @@ codes except the two advisory ones below are **FATAL**.
 | `OUTCOME_PROMISE` | FATAL | Safety | A guaranteed emotional outcome ("you will be completely calm", "this will eliminate your stress"). |
 | `INVALIDATING` | FATAL | Safety | Instructions like "don't feel anxious" or "there's nothing wrong with you" that dismiss the listener's actual state. |
 | `DISSOCIATION` | FATAL | Safety | Dissociation-adjacent imagery ("leave your body", "float away from yourself") — contraindicated for trauma survivors. |
-| `BREATH_HOLD` | FATAL | Safety | An instructed breath hold longer than 7 seconds (or the pack's stricter `max_breath_hold_sec`) — a real risk for listeners with panic disorder or asthma. |
+| `BREATH_HOLD` | FATAL | Safety | An instructed breath hold longer than 7 seconds (or the pack's stricter `max_breath_hold_sec`) — risky for anxious or sensitive listeners. |
 | `RAPID_BREATHING` | FATAL | Safety | Hyperventilation, "breath of fire", "as fast as you can" breathing, or a count of 30+ fast breaths. |
 | `PAIN_ELIMINATION` | FATAL | Safety | A promise that breathing or attention will make pain disappear. |
 | `ENERGY_HEALING_CLAIM` | FATAL | Safety | Chakras, energy, vibrations, frequencies or aura said to heal, cure, cleanse or repair. |
