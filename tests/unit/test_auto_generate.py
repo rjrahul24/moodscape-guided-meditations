@@ -310,7 +310,10 @@ class PackRulesWiringTest(unittest.TestCase):
                 + CLEAN_SCRIPT * 3
             )
             judge = FakeScriptEngine([judged(CLEAN_SCRIPT), judged(fixed)])
-            with patch("core.auto_generate.plan", return_value="a brief"):
+            # Counts judge calls; keep the LLM content check out of the queue.
+            with patch("core.auto_generate.plan", return_value="a brief"), patch.dict(
+                os.environ, {"MOODSCAPE_CONTENT_CHECK": "0"}
+            ):
                 outcome = generate_script(
                     "p",
                     generator_engine=FakeScriptEngine([CLEAN_SCRIPT]),
@@ -468,7 +471,11 @@ class TestRun(unittest.TestCase):
         self.assertEqual(meta["background"], "Healing Forest — 23:12")
         self.assertEqual(meta["background_path"], "/bg/forest.mp3")
         self.assertEqual(
-            meta["duration_control"], {"length_repair": False, "pause_scale": 1.0}
+            meta["duration_control"],
+            {"length_repair": False, "length_repair_reverted": False, "pause_scale": 1.0},
+        )
+        self.assertEqual(
+            set(meta["content_check"]), {"ran", "findings_first", "findings_final"}
         )
 
     def test_pipeline_receives_the_script_and_background(self):
@@ -1224,6 +1231,9 @@ class DurationControlTest(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         os.environ.pop("MOODSCAPE_DURATION_CONTROL", None)
+        # These tests count judge calls; the LLM content check (its own
+        # tests are in ContentCheckIntegrationTest) would add to them.
+        os.environ["MOODSCAPE_CONTENT_CHECK"] = "0"
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -1255,7 +1265,8 @@ class DurationControlTest(unittest.TestCase):
         self.assertEqual(outcome.script, CLEAN_SCRIPT)
         self.assertEqual(outcome.repairs_used, 1)
         self.assertEqual(
-            outcome.duration_control, {"length_repair": True, "pause_scale": 1.0}
+            outcome.duration_control,
+            {"length_repair": True, "length_repair_reverted": False, "pause_scale": 1.0},
         )
 
     def test_length_repair_is_not_retried_when_still_long(self):
@@ -1310,7 +1321,8 @@ class DurationControlTest(unittest.TestCase):
         self.assertEqual(len(judge.calls), 1)
         self.assertEqual(outcome.script, LONG_SCRIPT)
         self.assertEqual(
-            outcome.duration_control, {"length_repair": False, "pause_scale": 1.0}
+            outcome.duration_control,
+            {"length_repair": False, "length_repair_reverted": False, "pause_scale": 1.0},
         )
 
     def test_zero_repair_budget_means_no_length_repair(self):
@@ -1340,6 +1352,230 @@ class DurationControlTest(unittest.TestCase):
         self.assertNotIn("cure", outcome.script)
         self.assertIn("Settle in", outcome.script)
         self.assertTrue(outcome.duration_control["length_repair"])
+        self.assertTrue(outcome.duration_control["length_repair_reverted"])
+
+
+FLAGGED_SCRIPT = CLEAN_SCRIPT + "\n\n[pause:5s]\n\nRemember the old kitchen table."
+
+
+def _finding(quote: str = "old kitchen table", reason: str = "alienating") -> str:
+    return json.dumps([{"quote": quote, "reason": reason}])
+
+
+class _UnloadAwareJudge(FakeScriptEngine):
+    """Records how many times it had been unloaded at each complete() call."""
+
+    def __init__(self, responses):
+        super().__init__(responses)
+        self.unloads_at_call: list[int] = []
+
+    def complete(self, system, user, **kw):
+        self.unloads_at_call.append(self.unload_calls)
+        return super().complete(system, user, **kw)
+
+
+class ContentCheckIntegrationTest(unittest.TestCase):
+    """LLM content check (Part K) wired into generate_script's lint loop."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.failure_dir = Path(self._tmp.name) / "failures"
+        env = patch.dict(os.environ, {}, clear=False)
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("MOODSCAPE_CONTENT_CHECK", None)  # default ON
+        os.environ.pop("MOODSCAPE_DURATION_CONTROL", None)
+
+    def _config(self, **kw) -> AutoConfig:
+        kw.setdefault("target_min_sec", 1.0)
+        kw.setdefault("target_max_sec", 100000.0)
+        return AutoConfig(failure_dir=self.failure_dir, genre="body_scan", **kw)
+
+    def _gen(self, judge, config, draft_script=FLAGGED_SCRIPT):
+        return generate_script(
+            "p",
+            generator_engine=FakeScriptEngine([draft_script]),
+            judge_engine=judge,
+            config=config,
+        )
+
+    @staticmethod
+    def _check_calls(judge):
+        from core.script_gen.content_check import CONTENT_SYSTEM_PROMPT
+
+        return [c for c in judge.calls if c["system"] == CONTENT_SYSTEM_PROMPT]
+
+    def test_clean_reply_means_no_repair(self):
+        judge = FakeScriptEngine([judged(CLEAN_SCRIPT), "[]"])
+        outcome = self._gen(judge, self._config(), draft_script=CLEAN_SCRIPT)
+        self.assertEqual(len(judge.calls), 2)
+        self.assertEqual(len(self._check_calls(judge)), 1)
+        self.assertIn("genre: body_scan", judge.calls[1]["user"])
+        self.assertEqual(outcome.repairs_used, 0)
+        self.assertEqual(
+            outcome.content_check, {"ran": True, "findings_first": 0, "findings_final": 0}
+        )
+
+    def test_check_uses_judge_stage_sampling(self):
+        judge = FakeScriptEngine([judged(CLEAN_SCRIPT), "[]"])
+        self._gen(judge, self._config(), draft_script=CLEAN_SCRIPT)
+        self.assertEqual(judge.calls[1]["sampling"], judge.calls[0]["sampling"])
+
+    def test_one_finding_gets_one_fatal_repair_then_clean(self):
+        judge = FakeScriptEngine(
+            [judged(FLAGGED_SCRIPT), _finding(), judged(CLEAN_SCRIPT), "[]"]
+        )
+        outcome = self._gen(judge, self._config())
+        self.assertEqual(len(judge.calls), 4)
+        repair_user = judge.calls[2]["user"]
+        self.assertIn("[SENSITIVE_CONTENT/fatal]", repair_user)
+        self.assertIn("old kitchen table", repair_user)
+        self.assertEqual(outcome.script, CLEAN_SCRIPT)
+        self.assertEqual(outcome.repairs_used, 1)
+        self.assertFalse(any(v.code == "SENSITIVE_CONTENT" for v in outcome.violations))
+        self.assertEqual(
+            outcome.content_check, {"ran": True, "findings_first": 1, "findings_final": 0}
+        )
+
+    def test_finding_after_the_repair_is_advisory(self):
+        # The repair leaves the passage in; the second check only reports.
+        still_flagged = FLAGGED_SCRIPT + "\n\nRest."
+        judge = FakeScriptEngine(
+            [judged(FLAGGED_SCRIPT), _finding(), judged(still_flagged), _finding()]
+        )
+        outcome = self._gen(judge, self._config(max_repairs=3))
+        self.assertEqual(len(judge.calls), 4)
+        self.assertEqual(len(self._check_calls(judge)), 2)
+        self.assertEqual(outcome.repairs_used, 1)
+        content = [v for v in outcome.violations if v.code == "SENSITIVE_CONTENT"]
+        self.assertEqual(len(content), 1)
+        self.assertEqual(content[0].severity, "advisory")
+        self.assertEqual(
+            outcome.content_check, {"ran": True, "findings_first": 1, "findings_final": 1}
+        )
+
+    def test_absent_quote_is_dropped(self):
+        judge = FakeScriptEngine([judged(FLAGGED_SCRIPT), _finding("your illness")])
+        outcome = self._gen(judge, self._config())
+        self.assertEqual(len(judge.calls), 2)
+        self.assertEqual(outcome.repairs_used, 0)
+        self.assertEqual(outcome.content_check["findings_first"], 0)
+
+    def test_malformed_twice_skips_and_renders(self):
+        judge = FakeScriptEngine([judged(FLAGGED_SCRIPT), "nope", "still nope"])
+        with self.assertLogs("core.script_gen.content_check", level="WARNING"):
+            outcome = self._gen(judge, self._config())
+        self.assertEqual(len(judge.calls), 3)
+        self.assertEqual(outcome.script, FLAGGED_SCRIPT)
+        self.assertEqual(outcome.repairs_used, 0)
+        self.assertEqual(
+            outcome.content_check, {"ran": False, "findings_first": 0, "findings_final": 0}
+        )
+
+    def test_budget_exhausted_returns_advisory_without_raising(self):
+        judge = FakeScriptEngine([judged(FLAGGED_SCRIPT), _finding()])
+        outcome = self._gen(judge, self._config(max_repairs=0))
+        self.assertEqual(len(judge.calls), 2)
+        self.assertEqual(outcome.script, FLAGGED_SCRIPT)
+        content = [v for v in outcome.violations if v.code == "SENSITIVE_CONTENT"]
+        self.assertEqual([v.severity for v in content], ["advisory"])
+        self.assertEqual(outcome.content_check["findings_final"], 1)
+
+    def test_kill_switch_never_calls_the_check(self):
+        os.environ["MOODSCAPE_CONTENT_CHECK"] = "0"
+        judge = FakeScriptEngine([judged(FLAGGED_SCRIPT), _finding()])
+        outcome = self._gen(judge, self._config())
+        self.assertEqual(len(judge.calls), 1)
+        self.assertEqual(self._check_calls(judge), [])
+        self.assertEqual(
+            outcome.content_check, {"ran": False, "findings_first": 0, "findings_final": 0}
+        )
+
+    def test_judge_is_not_unloaded_before_the_check(self):
+        judge = _UnloadAwareJudge([judged(CLEAN_SCRIPT), "[]"])
+        self._gen(judge, self._config(), draft_script=CLEAN_SCRIPT)
+        self.assertEqual(judge.unloads_at_call, [0, 0])
+        self.assertEqual(judge.unload_calls, 1)
+
+    def test_content_repair_that_breaks_the_script_reverts_with_advisory(self):
+        # Repair introduces a fatal problem and the budget is spent: restore
+        # the fatal-free pre-repair script; its (cached) findings become
+        # advisory. No extra check call, no exception.
+        judge = FakeScriptEngine([judged(FLAGGED_SCRIPT), _finding(), judged(UNSAFE_SCRIPT)])
+        outcome = self._gen(judge, self._config(max_repairs=1))
+        self.assertEqual(len(judge.calls), 3)
+        self.assertEqual(outcome.script, FLAGGED_SCRIPT)
+        self.assertIn("wording repair reverted", outcome.changelog)
+        self.assertEqual(outcome.content_check["findings_final"], 1)
+        self.assertFalse(outcome.duration_control["length_repair_reverted"])
+
+    def test_restored_pre_length_script_is_checked_again(self):
+        # check1 flags -> content repair returns LONG -> length repair breaks
+        # it -> budget spent -> fallback restores LONG, which was never
+        # checked: the check runs on it before returning.
+        # FLAGGED sits inside the window; LONG is far above it.
+        config = self._config(
+            target_min_sec=_est(CLEAN_SCRIPT) * 0.9,
+            target_max_sec=_est(FLAGGED_SCRIPT) * 1.05,
+        )
+        judge = FakeScriptEngine(
+            [
+                judged(FLAGGED_SCRIPT),
+                _finding(),
+                judged(LONG_SCRIPT),
+                judged(UNSAFE_SCRIPT),
+                "[]",
+            ]
+        )
+        outcome = self._gen(judge, config)
+        self.assertEqual(len(judge.calls), 5)
+        self.assertIn("Rewrite to about", judge.calls[3]["user"])
+        self.assertEqual(len(self._check_calls(judge)), 2)
+        self.assertIn("Settle in", outcome.script)
+        self.assertNotIn("cure", outcome.script)
+        self.assertTrue(outcome.duration_control["length_repair_reverted"])
+        self.assertEqual(
+            outcome.content_check, {"ran": True, "findings_first": 1, "findings_final": 0}
+        )
+
+    def test_call_cap_carries_present_findings_forward_as_advisory(self):
+        judge = FakeScriptEngine(
+            [judged(FLAGGED_SCRIPT), _finding(), judged(FLAGGED_SCRIPT + "\n\nRest.")]
+        )
+        with patch("core.auto_generate.CONTENT_CHECK_MAX_CALLS", 1):
+            outcome = self._gen(judge, self._config(max_repairs=3))
+        self.assertEqual(len(self._check_calls(judge)), 1)
+        content = [v for v in outcome.violations if v.code == "SENSITIVE_CONTENT"]
+        self.assertEqual([v.severity for v in content], ["advisory"])
+
+    def test_unchanged_script_is_not_rechecked(self):
+        # A repair that returns the same text hits the cache: no second call.
+        judge = FakeScriptEngine([judged(FLAGGED_SCRIPT), _finding(), judged(FLAGGED_SCRIPT)])
+        outcome = self._gen(judge, self._config(max_repairs=3))
+        self.assertEqual(len(judge.calls), 3)
+        self.assertEqual(outcome.content_check["findings_final"], 1)
+
+    def test_meta_records_content_check(self):
+        tmp = Path(self._tmp.name)
+        pipeline = StubPipeline(tmp)
+        result = run(
+            "I feel anxious",
+            generator_engine=FakeScriptEngine([CLEAN_SCRIPT]),
+            judge_engine=FakeScriptEngine([judged(CLEAN_SCRIPT), "[]"]),
+            config=AutoConfig(
+                target_min_sec=1.0,
+                target_max_sec=100000.0,
+                failure_dir=self.failure_dir,
+                originality=False,
+                background_scan=FAKE_SCAN,
+            ),
+            pipeline=pipeline,
+        )
+        meta = json.loads(Path(result.meta_path).read_text())
+        self.assertEqual(
+            meta["content_check"], {"ran": True, "findings_first": 0, "findings_final": 0}
+        )
 
 
 if __name__ == "__main__":
@@ -1350,6 +1586,10 @@ class TestSlopInRepairs(unittest.TestCase):
     SLOPPY = "Gently, softly, slowly let go and drift. " * 6
 
     def setUp(self):
+        # Counts judge calls; keep the LLM content check out of the queue.
+        env = patch.dict(os.environ, {"MOODSCAPE_CONTENT_CHECK": "0"})
+        env.start()
+        self.addCleanup(env.stop)
         self._tmp = tempfile.TemporaryDirectory()
         self.config = AutoConfig(
             target_min_sec=1.0,

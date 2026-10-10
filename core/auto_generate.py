@@ -17,6 +17,11 @@ from pathlib import Path
 from core.background_picker import pick_background
 from core.genres import load_pack, pick_angle
 from core.originality import add_to_corpus, assess, avoid_terms, load_corpus, recent_angles
+from core.script_gen.content_check import (
+    content_findings,
+    findings_to_violations,
+    verify_findings,
+)
 from core.script_gen.duration import (
     PAUSE_SCALE_BOUNDS,
     estimate_duration_sec,
@@ -29,6 +34,7 @@ from core.script_gen.generator import draft
 from core.script_gen.judge import repair, review
 from core.script_gen.linter import (
     ADVISORY,
+    FATAL,
     STYLE_CODES,
     Violation,
     check,
@@ -76,6 +82,12 @@ RECENT_BACKGROUNDS_LIMIT = 5
 # afterwards is nudged in by scaling pauses within PAUSE_SCALE_BOUNDS. Drift
 # itself stays ADVISORY: neither step can fail a job.
 LENGTH_REPAIR_TOLERANCE = 0.15
+
+# LLM content check (kill-switch MOODSCAPE_CONTENT_CHECK=0). Hard cap on judge
+# calls per script generation: normally at most two (one that may trigger a
+# repair, one that only reports); the third covers a fallback that restores an
+# earlier, never-checked script.
+CONTENT_CHECK_MAX_CALLS = 3
 
 
 class ScriptGenerationError(RuntimeError):
@@ -254,9 +266,15 @@ class ScriptOutcome:
     originality_shared_span: int = 0
     brief: str = ""
     sampling: dict = field(default_factory=dict)
-    # {"length_repair": bool, "pause_scale": float}; pause_scale is 1.0 when
-    # no pause scaling was applied.
+    # {"length_repair": bool, "length_repair_reverted": bool,
+    # "pause_scale": float}; pause_scale is 1.0 when no pause scaling was
+    # applied; length_repair_reverted is True when the budget-spent fallback
+    # discarded the length rewrite.
     duration_control: dict = field(default_factory=dict)
+    # {"ran": bool, "findings_first": int, "findings_final": int}. ran is True
+    # when at least one LLM content check returned a usable answer;
+    # findings_final counts the SENSITIVE_CONTENT advisories returned.
+    content_check: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -329,6 +347,10 @@ def _write_failure_artifacts(
 
 def _duration_control_enabled() -> bool:
     return os.environ.get("MOODSCAPE_DURATION_CONTROL", "1") != "0"
+
+
+def _content_check_enabled() -> bool:
+    return os.environ.get("MOODSCAPE_CONTENT_CHECK", "1") != "0"
 
 
 def _length_repair_violation(
@@ -516,12 +538,68 @@ def generate_script(
         duration_control = _duration_control_enabled()
         min_sec, max_sec = config.target_min_sec, config.target_max_sec
         length_repair = False
-        # (script, changelog) as they were just before the length repair: a
-        # fatal-free fallback if the rewrite breaks something the remaining
-        # repair budget cannot fix -- duration drift must never fail a job.
-        pre_length_repair: tuple[str, str] | None = None
+        length_repair_reverted = False
         pause_scale = 1.0
         pause_scale_tried = False
+
+        # Fatal-free snapshots (kind, script, changelog) taken just before a
+        # repair that was not fixing a fatal problem: the length rewrite
+        # ("length") and the content repair ("content"). If that repair -- or
+        # a repair after it -- leaves fatal problems once the budget is spent,
+        # the most recent snapshot is restored. Neither duration drift nor a
+        # model's opinion of the wording may fail a job.
+        fallbacks: list[tuple[str, str, str]] = []
+
+        # LLM content check (spec Part K). Results are cached by exact script
+        # text, so re-linting the same script (or restoring a snapshot that
+        # was already checked) costs no judge call; calls are capped at
+        # CONTENT_CHECK_MAX_CALLS.
+        content_check = _content_check_enabled()
+        content_genre = config.genre or (getattr(pack, "slug", "") if pack is not None else "")
+        content_cache: dict[str, list[dict] | None] = {}
+        content_calls = 0
+        content_repaired = False
+        content_ran = False
+        content_first: int | None = None
+        content_last: list[dict] = []
+        content_advisories: list[Violation] = []
+
+        def _content_findings_for(text: str) -> list[dict]:
+            """Findings for ``text``; [] when clean or the check was skipped.
+
+            When the check cannot run on ``text`` (malformed replies, engine
+            error, or the call cap), the last usable findings whose quotes
+            are still present in ``text`` are carried forward: a quote that
+            survived a repair is still a finding.
+            """
+            nonlocal content_calls, content_ran, content_first, content_last
+            if text in content_cache:
+                found = content_cache[text]
+            elif content_calls >= CONTENT_CHECK_MAX_CALLS:
+                logger.warning(
+                    "Content check: call cap (%d) reached; carrying earlier findings forward",
+                    CONTENT_CHECK_MAX_CALLS,
+                )
+                found = None
+            else:
+                content_calls += 1
+                if progress_cb:
+                    progress_cb(0.16, "Checking script wording")
+                found = content_findings(
+                    judge_engine,
+                    text,
+                    genre=content_genre,
+                    sampling=stage_sampling["judge"],
+                )
+                content_cache[text] = found
+                if found is not None:
+                    content_ran = True
+                    if content_first is None:
+                        content_first = len(found)
+                    content_last = found
+            if found is None:
+                return verify_findings(content_last, text)
+            return found
 
         repairs_used = 0
         while True:
@@ -529,9 +607,9 @@ def generate_script(
             fatal = fatal_violations(violations)
 
             if not fatal:
-                # Post-lint steps, in order. Each either loops back for a
-                # fresh lint (``continue``) or falls through to the next.
-                # (A later content-check step slots in after duration control.)
+                # Post-lint steps, in order: length repair, content check,
+                # pause scaling. Each either loops back for a fresh lint
+                # (``continue``) or falls through to the next.
                 if duration_control:
                     # Step 1: one targeted length repair when far outside the window.
                     far_outside = not (
@@ -545,7 +623,7 @@ def generate_script(
                         and repairs_used < config.max_repairs
                         and estimated_sec > 0
                     ):
-                        pre_length_repair = (script, changelog)
+                        fallbacks.append(("length", script, changelog))
                         length_repair = True
                         repairs_used += 1
                         if progress_cb:
@@ -562,7 +640,36 @@ def generate_script(
                         changelog = f"{changelog}\n{repair_log}".strip()
                         continue
 
-                    # Step 2: bounded pause scaling toward the nearest edge.
+                # Step 2: LLM content check, after the length rewrite so the
+                # rewrite is checked too, and before pause scaling so the
+                # content-repaired script is the one that gets scaled. One
+                # repair at most (FATAL-for-repair within the shared budget);
+                # anything found after that, or once the budget is spent, is
+                # returned as ADVISORY so a false positive never stops a job.
+                content_advisories = []
+                if content_check:
+                    found = _content_findings_for(script)
+                    if found and not content_repaired and repairs_used < config.max_repairs:
+                        fallbacks.append(("content", script, changelog))
+                        content_repaired = True
+                        repairs_used += 1
+                        if progress_cb:
+                            progress_cb(0.17, "Repairing sensitive wording")
+                        script, repair_log = repair(
+                            judge_engine,
+                            script,
+                            findings_to_violations(found, severity=FATAL)
+                            + [v for v in violations if v.code in STYLE_CODES],
+                            judge_system,
+                            max_tokens=config.max_tokens,
+                            sampling=stage_sampling["repair"],
+                        )
+                        changelog = f"{changelog}\n{repair_log}".strip()
+                        continue
+                    content_advisories = findings_to_violations(found, severity=ADVISORY)
+
+                if duration_control:
+                    # Step 3: bounded pause scaling toward the nearest edge.
                     # Applied at most once, in place, and only kept if the
                     # scaled script lints fatal-free (e.g. a 55s pause scaled
                     # past the 60s marker limit is rejected, not repaired).
@@ -592,7 +699,7 @@ def generate_script(
                     script=script,
                     draft_script=draft_script,
                     changelog=changelog,
-                    violations=violations,
+                    violations=violations + content_advisories,
                     estimated_sec=estimated_sec,
                     repairs_used=repairs_used,
                     originality_cosine=report.max_cosine if report else 0.0,
@@ -603,22 +710,35 @@ def generate_script(
                     },
                     duration_control={
                         "length_repair": length_repair,
+                        "length_repair_reverted": length_repair_reverted,
                         "pause_scale": pause_scale,
+                    },
+                    content_check={
+                        "ran": content_ran,
+                        "findings_first": content_first or 0,
+                        "findings_final": len(content_advisories),
                     },
                 )
 
-            if repairs_used >= config.max_repairs and pre_length_repair is not None:
-                # The length rewrite (or a repair after it) left fatal problems
-                # and the budget is spent: fall back to the fatal-free script
-                # from before it. Duration drift is advisory; it never fails a job.
+            if repairs_used >= config.max_repairs and fallbacks:
+                # A length rewrite or content repair (or a repair after it)
+                # left fatal problems and the budget is spent: fall back to the
+                # most recent fatal-free script from before it. Duration drift
+                # and the LLM's content opinion are advisory; they never fail
+                # a job. The restored script goes through the post-lint steps
+                # again, so the content check covers it too.
+                kind, script, changelog = fallbacks.pop()
                 logger.warning(
-                    "Duration control: length repair left fatal violations (%s); "
-                    "reverting to the pre-repair script",
+                    "%s repair left fatal violations (%s); reverting to the pre-repair script",
+                    "Duration control: length" if kind == "length" else "Content check: wording",
                     ", ".join(sorted({v.code for v in fatal})),
                 )
-                script, changelog = pre_length_repair
-                changelog = f"{changelog}\n- duration control: length repair reverted".strip()
-                pre_length_repair = None
+                if kind == "length":
+                    length_repair_reverted = True
+                    note = "duration control: length repair reverted"
+                else:
+                    note = "content check: wording repair reverted"
+                changelog = f"{changelog}\n- {note}".strip()
                 continue
 
             if repairs_used >= config.max_repairs:
@@ -918,6 +1038,7 @@ def run(
         "brief": outcome.brief,
         "sampling": outcome.sampling,
         "duration_control": outcome.duration_control,
+        "content_check": outcome.content_check,
     }
     rendered = render_script(
         outcome.script,

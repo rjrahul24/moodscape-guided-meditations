@@ -45,6 +45,12 @@ from core.script_gen.sampling import SamplingParams, sampling_for
 from core.script_gen.generator import draft, strip_wrapper
 from core.script_gen.judge import parse_judge_response, repair, review
 from core.script_gen.planner import plan
+from core.script_gen.content_check import (
+    CONTENT_CODE,
+    content_findings,
+    findings_to_violations,
+    verify_findings,
+)
 
 __all__ = [
     "ADVISORY",
@@ -82,6 +88,10 @@ __all__ = [
     "repair",
     "review",
     "plan",
+    "CONTENT_CODE",
+    "content_findings",
+    "findings_to_violations",
+    "verify_findings",
     "SamplingParams",
     "sampling_for",
 ]
