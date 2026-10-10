@@ -14,10 +14,7 @@ from core.script_gen.sampling import SamplingParams
 from core.script_gen.generator import strip_wrapper
 from core.script_gen.linter import MAX_BREATH_HOLD_SEC
 
-_DISCLAIMER_LINE = (
-    "If you are pregnant, have a heart or respiratory condition, or feel "
-    "lightheaded at any point, return to natural breathing."
-)
+_DISCLAIMER_LINE = "If anything feels uncomfortable at any point, simply breathe naturally."
 
 
 def _bullet(items: Sequence[str]) -> str:

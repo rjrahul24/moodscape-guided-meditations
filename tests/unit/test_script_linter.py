@@ -599,7 +599,7 @@ class TestPackRules(unittest.TestCase):
 
     def test_disclaimer_present_early(self):
         from core.script_gen.linter import check_pack_rules
-        text = ("If you are pregnant or feel lightheaded at any point, return to natural breathing. "
+        text = ("If you feel lightheaded at any point, return to natural breathing. "
                 + "Breathe in slowly. " * 40)
         self.assertEqual(check_pack_rules(text, self._pack(requires_disclaimer=True)), [])
 
@@ -610,10 +610,10 @@ class TestPackRules(unittest.TestCase):
             "If you feel dizzy, let the counting go and breathe as you usually do.",
             "If you feel unwell, stop and let your breath return to normal.",
             "Stop if you feel lightheaded or unwell, and breathe naturally.",
-            "If you have a heart issue, keep to ordinary breathing.",
-            "With any heart or lung condition, breathe normally instead.",
-            "If you live with a heart ailment, breathe as you usually do.",
-            "If you have a lung condition, return to ordinary breathing.",
+            "If the pace feels like too much, keep to ordinary breathing.",
+            "If you notice any strain, breathe normally instead.",
+            "If anything feels uncomfortable, breathe as you usually do.",
+            "If it feels uncomfortable, return to ordinary breathing.",
         ]
         for opening in openings:
             with self.subTest(opening=opening):
@@ -637,9 +637,21 @@ class TestPackRules(unittest.TestCase):
 
     def test_disclaimer_canonical_planner_line(self):
         from core.script_gen.linter import check_pack_rules
-        text = ("If you are pregnant, have a heart or respiratory condition, or feel "
-                "lightheaded at any point, return to natural breathing. " + "Breathe in slowly. " * 40)
+        text = ("If anything feels uncomfortable at any point, simply breathe naturally. "
+                + "Breathe in slowly. " * 40)
         self.assertEqual(check_pack_rules(text, self._pack(requires_disclaimer=True)), [])
+
+    def test_old_medical_disclaimer_no_longer_satisfies(self):
+        from core.script_gen.linter import check_pack_rules
+        text = ("If you are pregnant, breathe naturally. " + "Breathe in slowly. " * 40)
+        v = check_pack_rules(text, self._pack(requires_disclaimer=True))
+        self.assertEqual([x.code for x in v], ["MISSING_DISCLAIMER"])
+
+    def test_safety_rules_doc_content(self):
+        from pathlib import Path
+        doc = (Path(__file__).resolve().parents[2] / "docs/prompting_guides/content_safety_rules.md").read_text()
+        self.assertIn("Sensitive topics", doc)
+        self.assertNotIn("pregnant, have a heart", doc)
 
     def test_disclaimer_too_late(self):
         from core.script_gen.linter import check_pack_rules

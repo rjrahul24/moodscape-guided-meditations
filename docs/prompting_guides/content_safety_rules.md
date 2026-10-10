@@ -64,9 +64,9 @@ those and the judgment calls the linter cannot make.
     feeling, name it once with warmth, then offer somewhere to rest attention.
     Do not analyse it, explain it, or promise to remove it.
 
-14. **Breathwork disclaimer.** In breathwork sessions, say once in the opening:
-    if you are pregnant, have a heart or respiratory condition, or feel
-    lightheaded at any point, return to natural breathing.
+14. **Breathwork safety line.** In breathwork sessions, say once in the opening, gently: if anything feels uncomfortable at any point, simply breathe naturally. Never name medical conditions.
+
+15. **Sensitive topics.** Never mention illness, disease, medical or physical conditions, pregnancy, diagnoses, medication or surgery. Never ask the listener to picture a child, children, a baby, or a younger version of themselves. These alienate or distress some listeners even when meant kindly.
 
 ## Tone
 

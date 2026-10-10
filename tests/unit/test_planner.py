@@ -114,10 +114,7 @@ if __name__ == "__main__":
 
 class PlannerPackRuleSectionsTest(unittest.TestCase):
     HOLD = "Do not add breath holds unless the technique calls for them; any hold stays at or under {n} seconds."
-    DISCLAIMER = (
-        "If you are pregnant, have a heart or respiratory condition, or feel "
-        "lightheaded at any point, return to natural breathing."
-    )
+    DISCLAIMER = "If anything feels uncomfortable at any point, simply breathe naturally."
 
     def _user(self, **overrides):
         from dataclasses import replace
@@ -131,6 +128,7 @@ class PlannerPackRuleSectionsTest(unittest.TestCase):
         user = self._user(max_breath_hold_sec=4, requires_disclaimer=True)
         self.assertIn(self.HOLD.format(n=4), user)
         self.assertIn(self.DISCLAIMER, user)
+        self.assertNotIn("pregnant", user)
 
     def test_energising_like_pack(self):
         user = self._user(max_breath_hold_sec=3, requires_disclaimer=True)

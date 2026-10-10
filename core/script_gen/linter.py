@@ -584,7 +584,7 @@ def check_originality(
 
 
 _DISCLAIMER_CONDITION = re.compile(
-    r"\b(?:pregnan\w*|(?:heart|lung)\s+(?:or\s+lung\s+)?(?:condition|disease|problem|issue|ailment)\w*|respiratory|light-?headed|dizzy|uncomfortable|unwell)\b", re.IGNORECASE
+    r"\b(?:uncomfortable|unwell|light-?headed|dizzy|strain\w*|too\s+much)\b", re.IGNORECASE
 )
 _DISCLAIMER_ACTION = re.compile(
     r"\b(?:"
@@ -660,7 +660,6 @@ def check_pack_rules(script: str, pack) -> list[Violation]:
             violations.append(Violation(
                 code="MISSING_DISCLAIMER", severity=FATAL,
                 message=("Breathwork session without an early safety line. In the opening, say once: "
-                         "if you are pregnant, have a heart or respiratory condition, or feel "
-                         "lightheaded at any point, return to natural breathing."),
+                         "If anything feels uncomfortable at any point, simply breathe naturally."),
             ))
     return violations
