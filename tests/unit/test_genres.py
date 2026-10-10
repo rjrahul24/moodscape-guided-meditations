@@ -344,12 +344,17 @@ class ShippedPacksTest(unittest.TestCase):
         technique = load_all_packs()["yoga_nidra"].technique.lower()
         self.assertIn("short session", technique)
 
-    def test_self_compassion_bans_inner_child_phrasing(self):
-        from core.script_gen.linter import check_banned_phrases
+    def test_self_compassion_inner_child_phrasing_caught_globally(self):
+        """The pack-level child/younger bans were replaced by the global SENSITIVE_TOPIC rule."""
+        from core.script_gen.linter import check
         banned = load_all_packs()["self_compassion"].banned
+        self.assertNotIn("child", banned)
+        self.assertNotIn("younger", banned)
+        self.assertIn("time heals", banned)
         for line in ("Greet your inner child.", "Picture your younger self.",
                      "Imagine a younger version of yourself.", "See the small child you were."):
-            self.assertTrue(check_banned_phrases(line, banned), msg=line)
+            codes = [v.code for v in check(line)]
+            self.assertIn("SENSITIVE_TOPIC", codes, msg=line)
 
     def test_all_shipped_packs_load_and_validate(self):
         packs = load_all_packs()
@@ -402,6 +407,43 @@ class PickAngleTest(unittest.TestCase):
         first = pick_angle(pack, rng=random.Random(7)).name
         second = pick_angle(pack, rng=random.Random(7)).name
         self.assertEqual(first, second)
+
+
+class SensitiveWordingCorpusScanTest(unittest.TestCase):
+    """No shipped pack or prompting guide may itself contain sensitive wording."""
+
+    @staticmethod
+    def _strings(value, key=""):
+        if key == "banned":
+            return
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for k, v in value.items():
+                yield from SensitiveWordingCorpusScanTest._strings(v, k)
+        elif isinstance(value, (list, tuple)):
+            for v in value:
+                yield from SensitiveWordingCorpusScanTest._strings(v, key)
+
+    def test_no_sensitive_wording_in_packs_and_guides(self):
+        import tomllib
+        from core.script_gen.linter import _SENSITIVE_TOPIC
+        root = GENRE_PACKS_DIR.parent
+        hits = []
+        for path in sorted(GENRE_PACKS_DIR.glob("*.toml")):
+            with open(path, "rb") as fh:
+                data = tomllib.load(fh)
+            for text in self._strings(data):
+                m = _SENSITIVE_TOPIC.search(text)
+                if m:
+                    hits.append(f"{path.name}: {m.group(0)!r}")
+        files = [GENRE_PACKS_DIR / "README.md", *sorted((root / "prompting_guides").glob("vocal_*"))]
+        self.assertGreaterEqual(len(files), 5)
+        for path in files:
+            m = _SENSITIVE_TOPIC.search(path.read_text(encoding="utf-8"))
+            if m:
+                hits.append(f"{path.name}: {m.group(0)!r}")
+        self.assertEqual(hits, [])
 
 
 if __name__ == "__main__":

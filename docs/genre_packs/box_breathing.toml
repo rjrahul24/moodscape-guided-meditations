@@ -23,7 +23,7 @@ safety = """
 Holds never exceed four seconds, and every hold is optional — say so. Anyone
 lightheaded should return to natural breathing immediately, and the script
 must say that before the first hold. Do not present this as a treatment for
-panic disorder or asthma.
+anything.
 """
 
 banned = [

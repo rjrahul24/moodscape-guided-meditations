@@ -24,9 +24,9 @@ hook for harm. It is not a feeling to be achieved by the end of the session.
 Avoid affirmations ("you are enough") that sound like slogans rather than an
 invitation to practice. Some listeners will feel self-directed kindness as
 unfamiliar or uncomfortable — that is normal and does not mean they are doing
-it wrong. Do not ask the listener to picture a child or a younger version of
-themselves: inner-child imagery can surface childhood pain that an unguided
-recording cannot hold safely.
+it wrong. Keep all imagery in the present moment and the
+listener's current adult life; never picture earlier stages of life, because
+that can surface old pain an unguided recording cannot hold safely.
 """
 
 banned = [
@@ -38,8 +38,7 @@ banned = [
     "you deserve happiness",
     "better place",
     "everything happens for a reason",
-    "child",
-    "younger",
+    "time heals",
 ]
 
 [[angles]]

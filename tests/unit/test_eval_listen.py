@@ -72,3 +72,7 @@ def test_round_trip_score(tmp_path):
     res = score(ab)
     assert res["challenger_wins"] == 1 and res["challenger_leans"] == 1
     assert res["unanswered"] == 0
+
+
+def test_tags_include_wording_problem_sensitive():
+    assert "wording problem / sensitive" in listen.TAGS

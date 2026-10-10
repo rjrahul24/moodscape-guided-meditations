@@ -13,6 +13,7 @@ VALID_CHOICES = {v for v, _ in CHOICES}
 TAGS = (
     "voice more natural", "better pacing / pauses", "better wording", "fewer clichés",
     "music balance / clarity", "fewer glitches / gaps", "right length", "calmer / more soothing",
+    "wording problem / sensitive",
 )
 
 
