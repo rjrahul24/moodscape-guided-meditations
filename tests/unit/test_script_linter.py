@@ -472,6 +472,19 @@ class SensitiveTopicTest(unittest.TestCase):
                   "at any point, return to natural breathing.")
         self.assertIn(("SENSITIVE_TOPIC", FATAL), [(x.code, x.severity) for x in v])
 
+    def test_controller_additions_match(self):
+        from core.script_gen.linter import _SENSITIVE_TOPIC
+        for t in ["your inner child", "a sick day", "sickness passes", "in hospital", "asthma",
+                  "a newborn", "an infant", "your little one", "baby steps"]:
+            with self.subTest(t=t):
+                self.assertTrue(_SENSITIVE_TOPIC.search(t))
+
+    def test_childs_pose_and_ill_at_ease_are_allowed(self):
+        from core.script_gen.linter import _SENSITIVE_TOPIC
+        for t in ["Settle into child's pose", "Settle into child\u2019s pose", "ill at ease"]:
+            with self.subTest(t=t):
+                self.assertIsNone(_SENSITIVE_TOPIC.search(t))
+
     def test_across_tags(self):
         from core.script_gen.linter import check_safety
         v = check_safety("Notice your [pause:2s] inner child.")

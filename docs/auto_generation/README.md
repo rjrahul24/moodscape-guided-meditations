@@ -308,7 +308,7 @@ codes except the two advisory ones below are **FATAL**.
 | `RAPID_BREATHING` | FATAL | Safety | Hyperventilation, "breath of fire", "as fast as you can" breathing, or a count of 30+ fast breaths. |
 | `PAIN_ELIMINATION` | FATAL | Safety | A promise that breathing or attention will make pain disappear. |
 | `ENERGY_HEALING_CLAIM` | FATAL | Safety | Chakras, energy, vibrations, frequencies or aura said to heal, cure, cleanse or repair. |
-| `MISSING_DISCLAIMER` | FATAL | Safety | Pack has `requires_disclaimer = true` and the opening lacks a breathwork contraindication line (pregnancy, heart or respiratory condition, lightheadedness: return to natural breathing). |
+| `MISSING_DISCLAIMER` | FATAL | Safety | Pack has `requires_disclaimer = true` and the opening lacks the gentle breathwork line ("If anything feels uncomfortable at any point, simply breathe naturally."). Medical conditions are never named: the global `SENSITIVE_TOPIC` rule (FATAL, Safety) rejects any mention of illness, medical conditions, pregnancy, medication, surgery, or a child, baby or younger self. |
 | `ORIGINALITY_COSINE_HIGH` | FATAL | Originality | Cosine similarity to same-genre corpus ≥ `MOODSCAPE_ORIGINALITY_FATAL` (default 0.80) — near-verbatim regeneration. |
 | `ORIGINALITY_RARE_NGRAM` | FATAL | Originality | A lifted 5-gram passage (document frequency ≤ 2 across entire corpus) found in the script. |
 | `ORIGINALITY_COSINE_MID` | ADVISORY | Originality | Cosine similarity to same-genre corpus ≥ `MOODSCAPE_ORIGINALITY_ADVISORY` (default 0.65, < fatal threshold) — close enough to concern, seeded into next run's avoid-list. |

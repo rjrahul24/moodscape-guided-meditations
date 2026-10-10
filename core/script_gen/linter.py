@@ -229,8 +229,8 @@ _SENSITIVE_TOPIC = re.compile(
     r"\b(?:"
     r"pregnan\w*|miscarriag\w*"
     r"|(?:heart|lung|respiratory|medical|health|chronic)\s+(?:condition|disease|problem|issue)s?"
-    r"|illness(?:es)?|diseases?|cancer|diagnos\w*|medications?|surger(?:y|ies)"
-    r"|child|children|kids?|bab(?:y|ies)|toddlers?"
+    r"|illness(?:es)?|sick(?:ness)?|hospitals?|asthma|diseases?|cancer|diagnos\w*|medications?|surger(?:y|ies)"
+    r"|child(?!['\u2019]s\s+pose)|children|kids?|bab(?:y|ies)|toddlers?|newborns?|infants?|little\s+ones?"
     r"|inner\s+child|younger\s+(?:self|you)|younger\s+version\s+of\s+(?:yourself|you)"
     r")\b",
     re.IGNORECASE,
