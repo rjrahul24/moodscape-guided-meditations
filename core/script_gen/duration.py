@@ -176,3 +176,44 @@ def log_estimate_accuracy(
     )
     logger.info(line)
     return line
+
+
+# Bounded pause-length adjustment (duration control). Pauses are scaled by at
+# most ±15% so a script that lands slightly outside its window can be nudged
+# in without a rewrite; anything further needs a length repair instead.
+PAUSE_SCALE_BOUNDS: tuple[float, float] = (0.85, 1.15)
+
+# Only the canonical [pause:Xs] form is scaled; [N second pause] variants are
+# normalised by the preprocessor and left untouched here.
+_PAUSE_MARKER = re.compile(r"\[pause:(\d+(?:\.\d+)?)s\]")
+
+# A scaled pause never drops below this, so short beats survive scaling.
+_MIN_SCALED_PAUSE_SEC = 1.0
+
+
+def _format_pause_sec(value: float) -> str:
+    """3.0 → "3", 2.5 → "2.5"."""
+    return str(int(value)) if value == int(value) else f"{value:.1f}"
+
+
+def scale_pauses(script: str, factor: float) -> str:
+    """Scale every [pause:Xs] marker by ``factor`` (clamped to PAUSE_SCALE_BOUNDS).
+
+    Each result is rounded to the nearest 0.5 s with a 1.0 s floor. All other
+    text, including other bracket tags, is left untouched.
+    """
+    lo, hi = PAUSE_SCALE_BOUNDS
+    factor = min(hi, max(lo, factor))
+    if factor == 1.0:
+        return script
+
+    def _scale(match: re.Match) -> str:
+        scaled = max(_MIN_SCALED_PAUSE_SEC, round(float(match.group(1)) * factor * 2) / 2)
+        return f"[pause:{_format_pause_sec(scaled)}s]"
+
+    return _PAUSE_MARKER.sub(_scale, script)
+
+
+def total_pause_sec(script: str) -> float:
+    """Sum of the explicit [pause:Xs] markers — the seconds scale_pauses acts on."""
+    return sum(float(m.group(1)) for m in _PAUSE_MARKER.finditer(script))

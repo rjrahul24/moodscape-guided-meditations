@@ -22,8 +22,11 @@ from core.script_gen.linter import (
 from core.script_gen.duration import (
     BREATH_SEC,
     DEFAULT_WPM,
+    PAUSE_SCALE_BOUNDS,
     estimate_duration_sec,
     log_estimate_accuracy,
+    scale_pauses,
+    total_pause_sec,
 )
 from core.script_gen.rules import (
     build_generator_system_prompt,
@@ -61,6 +64,9 @@ __all__ = [
     "DEFAULT_WPM",
     "estimate_duration_sec",
     "log_estimate_accuracy",
+    "PAUSE_SCALE_BOUNDS",
+    "scale_pauses",
+    "total_pause_sec",
     "build_generator_system_prompt",
     "build_judge_system_prompt",
     "build_planner_system_prompt",

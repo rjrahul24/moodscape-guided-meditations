@@ -8,7 +8,10 @@ import unittest
 from core.script_gen.duration import (
     DEFAULT_WPM,
     estimate_duration_sec,
+    PAUSE_SCALE_BOUNDS,
     log_estimate_accuracy,
+    scale_pauses,
+    total_pause_sec,
 )
 
 
@@ -192,6 +195,58 @@ class TestAccuracyLogging(unittest.TestCase):
     def test_log_handles_zero_actual(self):
         line = log_estimate_accuracy(300.0, 0.0, "f5")
         self.assertIsInstance(line, str)
+
+
+class TestScalePauses(unittest.TestCase):
+    def test_bounds_constant(self):
+        self.assertEqual(PAUSE_SCALE_BOUNDS, (0.85, 1.15))
+
+    def test_factor_one_is_identity(self):
+        script = "Breathe in. [pause:4s] And out. [pause:2.5s] Rest."
+        self.assertEqual(scale_pauses(script, 1.0), script)
+
+    def test_shrinks_and_rounds_to_half_second(self):
+        self.assertEqual(scale_pauses("A. [pause:4s] B.", 0.85), "A. [pause:3.5s] B.")
+
+    def test_one_second_floor(self):
+        self.assertEqual(scale_pauses("A. [pause:1s] B.", 0.85), "A. [pause:1s] B.")
+
+    def test_tiny_pauses_floor_at_one_second(self):
+        out = scale_pauses("A. [pause:0.5s] B. [pause:1.2s] C.", 0.85)
+        self.assertEqual(out, "A. [pause:1s] B. [pause:1s] C.")
+
+    def test_factor_above_bound_is_clamped(self):
+        # 10 * 1.15 = 11.5 (not 20)
+        self.assertEqual(scale_pauses("[pause:10s]", 2.0), "[pause:11.5s]")
+
+    def test_factor_below_bound_is_clamped(self):
+        # 10 * 0.85 = 8.5 (not 1)
+        self.assertEqual(scale_pauses("[pause:10s]", 0.1), "[pause:8.5s]")
+
+    def test_decimal_input_and_integer_output_format(self):
+        # 2.5 * 1.15 = 2.875 -> round(5.75)/2 = 3.0 -> "3s"
+        self.assertEqual(scale_pauses("[pause:2.5s]", 1.15), "[pause:3s]")
+
+    def test_no_pauses_unchanged(self):
+        script = "Just speech, nothing else.\n\nAnother paragraph."
+        self.assertEqual(scale_pauses(script, 0.85), script)
+
+    def test_other_bracket_tags_untouched(self):
+        script = "[breath] In. [inhale] [pause:6s] [exhale] [voice:calm] Out."
+        self.assertEqual(
+            scale_pauses(script, 0.85),
+            "[breath] In. [inhale] [pause:5s] [exhale] [voice:calm] Out.",
+        )
+
+
+class TestTotalPauseSec(unittest.TestCase):
+    def test_sums_explicit_markers(self):
+        self.assertAlmostEqual(
+            total_pause_sec("A. [pause:4s] B. [pause:2.5s] C. [breath]"), 6.5
+        )
+
+    def test_no_pauses_is_zero(self):
+        self.assertEqual(total_pause_sec("No pauses here."), 0.0)
 
 
 if __name__ == "__main__":
