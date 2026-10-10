@@ -23,6 +23,7 @@ if running on non-Apple-Silicon hardware.
 
 import gc
 import logging
+import os
 
 import numpy as np
 
@@ -73,6 +74,16 @@ def unload_model():
         _model_loaded = False
         gc.collect()
         logger.info("[DeepFilterNet] Model unloaded.")
+
+
+def _clear_mlx_cache() -> None:
+    """Release MLX's cached Metal buffers; never raises."""
+    try:
+        import mlx.core as mx
+        clear = getattr(mx, "clear_cache", None) or mx.metal.clear_cache
+        clear()
+    except Exception as e:
+        logger.debug("[DeepFilterNet] clear_cache failed: %s", e)
 
 
 def _blend_wet_dry(dry: np.ndarray, wet: np.ndarray, wet_amount: float) -> np.ndarray:
@@ -137,9 +148,17 @@ def enhance_voice_deepfilter(
     )
 
     try:
-        # enhance_array() processes a 1-D float32 numpy array at 48 kHz
-        enhanced_audio = model.enhance_array(audio.astype(np.float32))
+        # enhance_array() builds a whole-file MLX graph (+23 GB on a 12-min
+        # voice); the streaming variant bounds it to 4 s chunks.
+        audio32 = audio.astype(np.float32)
+        if os.environ.get("MOODSCAPE_DF_STREAMING", "1") != "0":
+            enhanced_audio = model.enhance_array_streaming(
+                audio32, chunk_samples=int(4.0 * sr)
+            )
+        else:
+            enhanced_audio = model.enhance_array(audio32)
         enhanced_audio = np.asarray(enhanced_audio, dtype=np.float32)
+        _clear_mlx_cache()
 
         if enhanced_audio.ndim > 1:
             enhanced_audio = enhanced_audio.squeeze()
