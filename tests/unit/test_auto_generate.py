@@ -1302,9 +1302,28 @@ class DurationControlTest(unittest.TestCase):
         self._gen(judge, config)
         est = _est(LONG_SCRIPT)
         mid = (config.target_min_sec + config.target_max_sec) / 2
-        words = len(LONG_SCRIPT.split())
-        self.assertIn(f"about {round(words * mid / est)} words", judge.calls[1]["user"])
+        from core.script_gen.duration import total_pause_sec
+        from core.script_gen.linter import _strip_tags
+        words = len(_strip_tags(LONG_SCRIPT).split())
+        pauses = total_pause_sec(LONG_SCRIPT)
+        expected = round(words * max(1.0, mid - pauses) / max(1.0, est - pauses))
+        self.assertIn(f"about {expected} words", judge.calls[1]["user"])
         self.assertIn(f"aiming for {mid:.0f}s", judge.calls[1]["user"])
+
+    def test_length_repair_target_scales_speech_not_pauses(self):
+        from core.auto_generate import _length_repair_violation
+        from core.script_gen.duration import total_pause_sec
+        script = "One two three four five six seven eight nine ten.\n\n[pause:20s]\n\n" * 3
+        est, lo, hi = 200.0, 100.0, 140.0
+        v = _length_repair_violation(script, est, lo, hi)
+        pauses = total_pause_sec(script)
+        self.assertEqual(pauses, 60.0)
+        speech = 30
+        expected = round(speech * (120.0 - pauses) / (est - pauses))
+        self.assertIn(f"about {expected} words", v.message)
+        old = round(len(script.split()) * 120.0 / est)
+        self.assertEqual((expected, old), (13, 20))
+        self.assertLess(expected, old)
 
     def test_ten_percent_over_scales_pauses_without_repair(self):
         est = _est(PAUSY_SCRIPT)

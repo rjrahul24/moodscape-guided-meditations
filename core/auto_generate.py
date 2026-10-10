@@ -42,6 +42,7 @@ from core.script_gen.linter import (
     check_pack_rules,
     fatal_violations,
 )
+from core.script_gen.linter import _strip_tags
 from core.script_gen.planner import plan
 from core.script_gen.rules import (
     build_generator_system_prompt,
@@ -358,8 +359,13 @@ def _length_repair_violation(
 ) -> Violation:
     """An ADVISORY violation asking the judge to rewrite to the window's midpoint."""
     target_mid = (min_sec + max_sec) / 2
-    current_words = len(script.split())
-    target_words = round(current_words * target_mid / estimated_sec)
+    # Scale SPEECH only: pauses are not words, so a pause-heavy script must not
+    # have its word count scaled by the pause-inclusive time ratio.
+    speech_words = len(_strip_tags(script).split())
+    pauses = total_pause_sec(script)
+    target_words = round(
+        speech_words * max(1.0, target_mid - pauses) / max(1.0, estimated_sec - pauses)
+    )
     return Violation(
         code="DURATION_OUT_OF_WINDOW",
         severity=ADVISORY,
