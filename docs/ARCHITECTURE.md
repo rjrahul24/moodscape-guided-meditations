@@ -358,6 +358,8 @@ Load Music → generate() → unload_model() → gc.collect() → [cache clear]
 [Optional] Load Demucs subprocess → separate → subprocess exits (memory reclaimed by OS)
 ```
 
+TTS is unloaded right after synthesis, before upsample/denoise. DeepFilterNet runs offline by default (whole-file MLX graph is large); `MOODSCAPE_DF_STREAMING=1` streams it in 4 s chunks for a bounded graph (~21× slower), and the MLX cache is freed after every call.
+
 Never load two engines simultaneously. Peak memory per phase:
 - Kokoro: ~200 MB (CPU RAM only)
 - F5-TTS: ~1.5 GB (MPS)

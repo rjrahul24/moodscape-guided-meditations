@@ -81,7 +81,7 @@ python scripts/ab_export.py --a <base>/<config> --b <new>/<config> --out var/eva
 
 1. **Parse script** → `{tts}/preprocessor.py :: prepare_segments()`
 2. **TTS synth** → 24 kHz mono float32
-3. **Unload TTS**, load music engine (sequential — 32 GB RAM constraint)
+3. **Unload TTS right after synthesis** (before upsample/denoise), then load music engine (sequential — 32 GB RAM constraint)
 4. **Music gen** → 48 kHz mono float32 (Lyria or `upload_music` — decode + resample + loop/trim-fit the uploaded file to the same contract)
 5. **Stem separation** (optional; skipped for uploads) → `stem_separator.remove_drums_and_vocals()`
 6. **TTS upsample** 24 → 48 kHz via `audio_processor.upsample_audio(high_accuracy=True)`; then per-chunk humanize (Kokoro)
@@ -217,6 +217,7 @@ From the 2026-06-13 research pass ([Research Execution Process Outline.md]). Bug
 | `MOODSCAPE_DURATION_CONTROL` (**1**) | Script-stage length control: one judge length repair when the estimate is >15% outside the window (shared repair budget), then pause scaling ×0.85–1.15; falls back to the last fatal-free script; never fails a job. Result in meta `duration_control`. `0` = off. | `core/auto_generate.py::generate_script` |
 | `MOODSCAPE_CONTENT_CHECK` (**1**) | Judge-model check for sensitive wording (illness/medical, pregnancy, medication/surgery, medical settings, children/younger self, non-grief death, self-harm, weight); the pack's own subject is allowed; one `SENSITIVE_CONTENT` repair, ADVISORY after; result in meta `content_check`. `0` = off. | `core/script_gen/content_check.py`, `core/auto_generate.py` |
 | `MOODSCAPE_VOICE_BY_FAMILY` (**0**) | `1` picks the narrator per genre family from measured clip traits; `0` keeps Brittney. `voice_map.toml` overrides apply either way. | `core/voice_selection.py` |
+| `MOODSCAPE_DF_STREAMING` (**0**) | `1` streams DeepFilterNet in 4 s chunks (bounded MLX graph, numerically equivalent, ~21× slower); default offline. MLX cache freed after every call. | `core/deepfilter_enhancer.py` |
 
 Rejected research items (don't revisit): true-peak-limiter removal (false premise — `true_peak_limit` is transparent below ceiling), SRC reorder (already correct — soxr_vhq before FX; the 48 kHz path has no extra audio resampling beyond the limiter's oversampling), full LR crossover for "harshness" (the 14 kHz LPF is already a gentle 2nd-order min-phase filter), look-ahead ducker (the 600 ms predictive pre-descent already beats it), colon→comma / ALL-CAPS text fixes (already in the preprocessor), dithering relocation (there is no dithering). Parked for a later "Issue-1 polish" round: upload LPF→high-shelf, `true_peak_limit` gain-envelope refactor, master bus saturation.
 
