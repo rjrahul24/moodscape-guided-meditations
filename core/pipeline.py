@@ -310,6 +310,20 @@ class MeditationPipeline:
                         except Exception as e:
                             logger.warning("Failed to save TTS cache: %s", e)
 
+                    # Free the TTS model (~14 GB for F5) now that the voice is
+                    # rendered, before upsampling / DeepFilterNet / mastering.
+                    # Nothing below reads `tts` (last_qa was captured above).
+                    tts.unload_model()
+                    if tts_engine != "kokoro" and custom_tts_engine is None:
+                        tts = None
+                    gc.collect()
+                    try:
+                        import torch
+                        if torch.backends.mps.is_available():
+                            torch.mps.empty_cache()
+                    except Exception:
+                        pass
+
                 # ── Vocal sanity check ──────────────────────────────────
                 # Catch broken TTS output BEFORE it reaches the post-processor.
                 _progress(progress_cb, 0.36, "Validating vocal stem...")
@@ -406,12 +420,7 @@ class MeditationPipeline:
                 voice_activity = np.zeros(0, dtype=bool)
 
             if not is_vocals:
-                # ── Step 4: Unload TTS, load music model ────────────────────────
-                if not is_instrumental and tts is not None:
-                    tts.unload_model()
-                    if tts_engine != "kokoro" and custom_tts_engine is None:
-                        del tts
-
+                # ── Step 4: Load music model (TTS already unloaded after synthesis) ──
                 music_model_label = {
                     "lyria": "Lyria RealTime",
                     "upload": "Background Music",

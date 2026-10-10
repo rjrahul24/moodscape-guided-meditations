@@ -207,3 +207,54 @@ def test_pipeline_records_tts_cache_hit_flag(temp_tts_cache, monkeypatch):
     # reset at the start of the next generate on the same instance
     pipeline2.generate(**{**kw, "script": "A different script entirely. [pause:2s]"})
     assert pipeline2.last_tts_cache_hit is False
+
+
+def test_pipeline_unloads_tts_before_upsample_and_deepfilter(temp_tts_cache, monkeypatch):
+    """TTS is unloaded right after synthesis, before upsample/DeepFilterNet."""
+    monkeypatch.setattr("core.upload_music.UploadMusicEngine", MockMusicEngine)
+    order = []
+
+    class OrderTTS(MockTTS):
+        last_qa = {"chunks": 1}
+
+        def unload_model(self):
+            order.append("unload")
+            super().unload_model()
+
+    import core.audio_processor as ap
+    import core.deepfilter_enhancer as dfe
+    real_up = ap.upsample_audio
+    monkeypatch.setattr(
+        ap, "upsample_audio",
+        lambda *a, **k: (order.append("upsample"), real_up(*a, **k))[1],
+    )
+    monkeypatch.setattr(
+        dfe, "enhance_voice_deepfilter",
+        lambda audio, sr=48000, wet=1.0: (order.append("deepfilter"), audio)[1],
+    )
+    tts = OrderTTS()
+    pipeline = MeditationPipeline()
+    pipeline.generate(
+        script="Breathe gently. [pause:2s]", music_prompt="ambient", tts_engine="mock",
+        custom_tts_engine=tts, music_model="upload", uploaded_music_path="dummy.wav",
+        use_tts_cache=False,
+    )
+    assert order[0] == "unload"
+    assert order.index("unload") < order.index("upsample")
+    assert order.index("unload") < order.index("deepfilter")
+    assert tts.unload_count == 1
+    assert pipeline.last_speech_qa == {"chunks": 1}
+
+
+def test_pipeline_cache_hit_never_loads_or_unloads_tts(temp_tts_cache, monkeypatch):
+    monkeypatch.setattr("core.upload_music.UploadMusicEngine", MockMusicEngine)
+    tts = MockTTS()
+    kw = dict(
+        script="Close your eyes and breathe gently. [pause:2s]",
+        music_prompt="ambient", tts_engine="mock", custom_tts_engine=tts,
+        music_model="upload", uploaded_music_path="dummy.wav", use_tts_cache=True,
+    )
+    MeditationPipeline().generate(**kw)
+    assert tts.unload_count == 1
+    MeditationPipeline().generate(**kw)
+    assert tts.load_count == 1 and tts.unload_count == 1
