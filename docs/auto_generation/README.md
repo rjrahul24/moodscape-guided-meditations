@@ -137,10 +137,10 @@ why `MISSING_DISCLAIMER` now only checks for the gentle line.
 
 ## Duration control
 
-`MOODSCAPE_DURATION_CONTROL` (default `1`; `0` disables). After the content
-check, when the runtime estimate is more than 15% outside the duration band,
-the judge gets one targeted length repair (sharing `MOODSCAPE_SCRIPT_MAX_REPAIRS`).
-If the estimate is still outside the window, pause lengths are scaled by a
+`MOODSCAPE_DURATION_CONTROL` (default `1`; `0` disables). Order: length repair, then content check, then pause scaling. When the runtime
+estimate is more than 15% outside the duration band, the judge gets one
+targeted length repair (sharing `MOODSCAPE_SCRIPT_MAX_REPAIRS`). After the
+content check, if the estimate is still outside the window, pause lengths are scaled by a
 bounded factor (x0.85 to x1.15) toward it. If a step leaves a fatal violation,
 the last fatal-free script is used. Drift stays ADVISORY and never fails a job.
 The outcome is recorded in meta `duration_control`.
@@ -513,7 +513,7 @@ with ears, so metrics reject bad output and ears choose between good outputs.
 
 A TOML spec describes a whole multi-arm eval so the zsh chain and review notes
 are generated rather than hand-written. Fields: `title`, `testset`, `out`,
-`configs` (`name=provider:model|...`), optional `positions` (`start,middle,end`);
+`configs` (`name=provider:model|...`), optional `positions` (subset of `start,middle,end`; default `start,middle`);
 `[[arms]]` with `name`, `desc`, `env` (table of env vars), `cached` (expects TTS
 cache hits) and `from` (take scripts from an earlier arm; default the first arm,
 which is the only full LLM run); `[[rounds]]` with `id`, `name`, `a`, `b`
