@@ -589,6 +589,8 @@ def generate_script(
                     judge_engine,
                     text,
                     genre=content_genre,
+                    label=getattr(pack, "label", "") or "",
+                    technique=getattr(pack, "technique", "") or "",
                     sampling=stage_sampling["judge"],
                 )
                 content_cache[text] = found

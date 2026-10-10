@@ -22,6 +22,20 @@ from core.auto_generate import (
 from core.script_gen.duration import estimate_duration_sec
 from core.script_gen.engine import FakeScriptEngine
 
+
+def setUpModule():
+    # Most tests here script the judge's replies call by call and predate the
+    # LLM content check; with it ON they would feed those replies to the
+    # check (and silently take its "malformed twice -> skipped" path).
+    # ContentCheckIntegrationTest turns it back on for its own tests.
+    global _CONTENT_CHECK_ENV
+    _CONTENT_CHECK_ENV = patch.dict(os.environ, {"MOODSCAPE_CONTENT_CHECK": "0"})
+    _CONTENT_CHECK_ENV.start()
+
+
+def tearDownModule():
+    _CONTENT_CHECK_ENV.stop()
+
 CLEAN_SCRIPT = (
     "Settle in and let your shoulders drop.\n\n"
     "[pause:5s]\n\n"
@@ -1555,6 +1569,30 @@ class ContentCheckIntegrationTest(unittest.TestCase):
         outcome = self._gen(judge, self._config(max_repairs=3))
         self.assertEqual(len(judge.calls), 3)
         self.assertEqual(outcome.content_check["findings_final"], 1)
+
+    def test_pack_label_and_technique_reach_the_check(self):
+        from types import SimpleNamespace
+
+        pack = SimpleNamespace(
+            slug="pain_and_discomfort", label="Pain & Discomfort",
+            technique="Attention rests with the sensation, not the story.",
+            banned=[], requires_disclaimer=False, max_breath_hold_sec=7,
+        )
+        judge = FakeScriptEngine([judged(CLEAN_SCRIPT), "[]"])
+        generate_script(
+            "p",
+            generator_engine=FakeScriptEngine([CLEAN_SCRIPT]),
+            judge_engine=judge,
+            pack=pack,
+            config=AutoConfig(
+                target_min_sec=1.0, target_max_sec=100000.0,
+                failure_dir=self.failure_dir, originality=False,
+            ),
+        )
+        (check,) = self._check_calls(judge)
+        self.assertIn("genre: pain_and_discomfort", check["user"])
+        self.assertIn("session: Pain & Discomfort", check["user"])
+        self.assertIn("technique: Attention rests with the sensation", check["user"])
 
     def test_meta_records_content_check(self):
         tmp = Path(self._tmp.name)
