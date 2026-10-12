@@ -290,7 +290,7 @@ name):
   format, output basename, content type, original output path.
 
 Skipped for "Instrumental Only" / "Vocals Only" modes (Remix hidden). Prune to
-the newest `MOODSCAPE_MIX_SESSIONS_KEEP` (default 20) after each save.
+the newest `MOODSCAPE_MIX_SESSIONS_KEEP` (default 5 — a 15-min session is ~350 MB of float32 stems) after each save.
 `pipeline.last_run_id` exposes the id.
 
 ### `core/remix.py`
@@ -356,7 +356,7 @@ Only the chunk text, voice id, and settings are sent to ElevenLabs.
 | `MOODSCAPE_ELEVENLABS_MAX_RETRIES` | 3 | Transient retry budget |
 | `MOODSCAPE_ELEVENLABS_DEESS` | 1 | Gentle split-band de-ess (post-TTS; in cache key by prefix though applied after cache) |
 | `MOODSCAPE_ELEVENLABS_CACHE_DIR` | `var/elevenlabs_cache` | Chunk cache |
-| `MOODSCAPE_MIX_SESSIONS_KEEP` | 20 | Remix session retention (not TTS) |
+| `MOODSCAPE_MIX_SESSIONS_KEEP` | 5 | Remix session retention (not TTS) |
 
 ## 9. Testing
 
