@@ -22,6 +22,8 @@ from core.speech_engine import SpeechEngine
 
 logger = logging.getLogger("moodscape.elevenlabs")
 SR = 48000
+# Statuses that, when previous_request_ids were sent, mean the ids were rejected.
+_STALE_IDS_STATUSES = (400, 422)
 
 
 def _env_float(name: str, default: float) -> float:
@@ -110,12 +112,30 @@ class ElevenLabsEngine(SpeechEngine):
                     manifest["cache_hits"] += 1
                     manifest["chars_cached"] += len(text)
                 else:
+                    ids = list(recent) if (stitch and recent) else None
                     try:
-                        pcm, rid = self._client.convert(
-                            text, voice_id, model_id=p.model_id, stability=p.stability,
-                            similarity=p.similarity, seed=p.seed,
-                            previous_request_ids=list(recent) if (stitch and recent) else None,
-                        )
+                        try:
+                            pcm, rid = self._client.convert(
+                                text, voice_id, model_id=p.model_id, stability=p.stability,
+                                similarity=p.similarity, seed=p.seed,
+                                previous_request_ids=ids,
+                            )
+                        except ElevenLabsAPIError as exc:
+                            if not (ids and exc.status in _STALE_IDS_STATUSES):
+                                raise
+                            # Stale/expired request ids (e.g. from old cache hits):
+                            # render this chunk unstitched and stop stitching for
+                            # the rest of the run so later chunks don't fail twice.
+                            logger.warning(
+                                "ElevenLabs rejected previous_request_ids (status %s); "
+                                "retrying chunk %d without stitching for the rest of this render",
+                                exc.status, done + 1)
+                            recent, stitch = [], False
+                            pcm, rid = self._client.convert(
+                                text, voice_id, model_id=p.model_id, stability=p.stability,
+                                similarity=p.similarity, seed=p.seed,
+                                previous_request_ids=None,
+                            )
                     except Exception as exc:
                         status = getattr(exc, "status", None)
                         raise ElevenLabsAPIError(

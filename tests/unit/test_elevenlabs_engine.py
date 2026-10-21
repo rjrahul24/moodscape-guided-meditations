@@ -103,3 +103,46 @@ def test_cache_extra_contains_all_render_params():
     extra = p.cache_extra("[warm]")
     assert extra == {"voice_id": "v", "stability": 0.4, "similarity": 0.75,
                      "model_id": "eleven_v4", "seed": 42, "direction": "[warm]"}
+
+
+class StaleIdsClient(FakeClient):
+    """Rejects any request that carries previous_request_ids (stale/expired ids)."""
+    def __init__(self, status=422, always=False):
+        super().__init__()
+        self.status, self.always = status, always
+    def convert(self, text, voice_id, **kw):
+        if self.always or kw.get("previous_request_ids"):
+            self.calls.append(dict(text=text, voice_id=voice_id, **kw))
+            raise ElevenLabsAPIError(self.status, f"ElevenLabs error {self.status}: bad ids")
+        return super().convert(text, voice_id, **kw)
+
+
+@pytest.mark.parametrize("status", [400, 422])
+def test_stale_request_ids_retry_once_without_ids(status, caplog):
+    _engine(FakeClient()).synthesize(_segs(1))          # line 0 cached with an old rid
+    client = StaleIdsClient(status)
+    audio, _ = _engine(client).synthesize(_segs(3))     # line 0 hit, lines 1-2 miss
+    assert len(audio) > 0
+    assert len(client.calls) == 3
+    assert client.calls[0]["previous_request_ids"] == ["rid1"]   # rejected
+    assert client.calls[1]["previous_request_ids"] is None       # same chunk, retried
+    assert client.calls[1]["text"] == client.calls[0]["text"]
+    assert client.calls[2]["previous_request_ids"] is None       # next chunk: no ids
+    assert "previous_request_ids" in caplog.text
+
+
+def test_422_without_ids_still_raises():
+    client = StaleIdsClient(422, always=True)
+    with pytest.raises(ElevenLabsAPIError) as ei:
+        _engine(client).synthesize(_segs(2))
+    assert ei.value.status == 422
+    assert len(client.calls) == 1
+
+
+def test_other_errors_with_ids_are_not_retried():
+    _engine(FakeClient()).synthesize(_segs(1))
+    client = StaleIdsClient(402)
+    with pytest.raises(ElevenLabsAPIError) as ei:
+        _engine(client).synthesize(_segs(2))
+    assert ei.value.status == 402
+    assert len(client.calls) == 1
