@@ -46,13 +46,9 @@ DEFAULT_WPM: dict[str, float] = {
     "kokoro": 90.0,
 }
 
-# Measured from assets/breath_sounds/ (breath.wav 1.200s, inhale.wav 1.500s,
-# exhale.wav 1.800s). Calibrate alongside DEFAULT_WPM if those samples change.
-BREATH_SEC: dict[str, float] = {
-    "breath": 1.2,
-    "inhale": 1.5,
-    "exhale": 1.8,
-}
+# Silent-beat lengths for [breath]/[inhale]/[exhale]; every engine renders
+# these markers as silence of exactly this length (no breath samples).
+from core.speech_engine import BREATH_SILENCE_SEC as BREATH_SEC  # noqa: E402
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 

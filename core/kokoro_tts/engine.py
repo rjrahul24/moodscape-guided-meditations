@@ -319,11 +319,11 @@ class KokoroEngine(SpeechEngine):
                 activity_chunks.append(np.zeros(len(room_tone), dtype=bool))
 
             elif segment["type"] == "breath":
-                from core.breath_sounds import load_breath
-
-                breath_audio = load_breath(segment["subtype"], target_sr=SAMPLE_RATE)
-                audio_chunks.append(breath_audio)
-                activity_chunks.append(np.zeros(len(breath_audio), dtype=bool))
+                # Silent beat, rendered like a pause (no breath samples).
+                from core.speech_engine import breath_silence_sec
+                beat = generate_room_tone(breath_silence_sec(segment["subtype"]), sr=SAMPLE_RATE)
+                audio_chunks.append(beat)
+                activity_chunks.append(np.zeros(len(beat), dtype=bool))
 
             if progress_cb is not None:
                 progress_cb(idx + 1, total)

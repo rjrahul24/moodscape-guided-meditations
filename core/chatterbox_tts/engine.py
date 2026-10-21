@@ -330,6 +330,13 @@ class ChatterboxEngine(SpeechEngine):
         gc.collect()
         logger.debug("ChatterboxTTS unloaded and memory freed.")
 
+    @staticmethod
+    def _breath_piece(seg: dict) -> tuple[np.ndarray, np.ndarray]:
+        """Silent beat for a breath marker (no breath samples)."""
+        from core.speech_engine import breath_silence_sec
+        n = int(round(breath_silence_sec(seg.get("subtype", "breath")) * SAMPLE_RATE))
+        return np.zeros(n, dtype=np.float32), np.zeros(n, dtype=bool)
+
     def synthesize(
         self,
         segments: list[dict[str, Any]],
@@ -422,6 +429,11 @@ class ChatterboxEngine(SpeechEngine):
                     pause_activity = np.zeros(num_samples, dtype=bool)
                     audio_pieces.append(pause_audio)
                     activity_pieces.append(pause_activity)
+
+            elif seg_type == "breath":
+                beat, beat_act = self._breath_piece(seg)
+                audio_pieces.append(beat)
+                activity_pieces.append(beat_act)
 
             elif seg_type == "speech":
                 text = seg.get("text", "").strip()

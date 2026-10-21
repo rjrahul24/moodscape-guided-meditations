@@ -6,15 +6,29 @@ import numpy as np
 
 SAMPLE_RATE = 24000
 
+# Breath markers ([breath]/[inhale]/[exhale]) render as SILENCE of these
+# lengths in every engine. No model produces natural breath or sigh sounds,
+# so no engine may ever emit one (user rule, 2026-10-12).
+BREATH_SILENCE_SEC: dict[str, float] = {"breath": 1.2, "inhale": 1.5, "exhale": 1.8}
+
+
+def breath_silence_sec(subtype: str) -> float:
+    """Silent-beat length for a breath marker; unknown subtypes use 'breath'."""
+    return BREATH_SILENCE_SEC.get(subtype, BREATH_SILENCE_SEC["breath"])
+
 
 class SpeechEngine(ABC):
     """Interface that all TTS engines must implement.
 
-    Every engine produces mono float32 audio at 24 000 Hz together with a
+    Every engine produces mono float32 audio at `sample_rate` Hz (24 000 unless the engine overrides it) together with a
     boolean voice-activity mask of the same length.  The rest of the pipeline
     (Pedalboard FX, mixer) is engine-agnostic — it only depends on
     this contract.
     """
+
+    #: Native output rate. Local engines produce 24 kHz; an engine may override
+    #: (ElevenLabs returns 48 kHz). The pipeline honours this attribute.
+    sample_rate: int = SAMPLE_RATE
 
     @abstractmethod
     def load_model(self) -> None:

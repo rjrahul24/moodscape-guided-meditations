@@ -744,11 +744,12 @@ class F5Engine(SpeechEngine):
                 chunks.append((room_tone, silence_act, "pause", None, None))
 
             elif seg["type"] == "breath":
-                from core.breath_sounds import load_breath
-
-                breath_audio = load_breath(seg["subtype"], target_sr=SAMPLE_RATE)
-                breath_act = np.zeros(len(breath_audio), dtype=bool)
-                chunks.append((breath_audio, breath_act, "breath", None, None))
+                # Breath markers are a silent beat (no breath samples), rendered
+                # exactly like a pause of the marker's length.
+                from core.kokoro_tts.postprocessor import generate_room_tone
+                from core.speech_engine import breath_silence_sec
+                beat = generate_room_tone(breath_silence_sec(seg["subtype"]), sr=SAMPLE_RATE)
+                chunks.append((beat, np.zeros(len(beat), dtype=bool), "breath", None, None))
 
             if progress_cb is not None:
                 progress_cb(idx + 1, total)
