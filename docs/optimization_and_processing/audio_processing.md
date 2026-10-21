@@ -98,29 +98,17 @@ Crossfade technique varies by context:
 - **Music looping** (`mixer.py`): 2-second crossfade when music is looped to cover the full meditation duration.
 - **TTS chunk assembly**: 300ms cosine-squared crossfade for both Kokoro and F5-TTS engines.
 
-## 6. Paralinguistic Breath Sound Injection
+## 6. Breath Markers (silence only)
 
-Both TTS engines support audible breath cues at tagged positions in the meditation script. Instead of inserting silence, actual breath audio samples are spliced in.
+Breath markers are silence in every engine; no breath samples are injected (user rule: no vocal sounds).
 
-**Supported tags in scripts:**
+| Tag | Rendered as | Duration |
+|-----|-------------|----------|
+| `[breath]` | Silence | 1.2s |
+| `[inhale]` | Silence | 1.5s |
+| `[exhale]` | Silence | 1.8s |
 
-| Tag | Injected sound | Duration |
-|-----|---------------|----------|
-| `[breath]` | Neutral breath | 1.2s |
-| `[inhale]` | Rising inhale | 1.5s |
-| `[exhale]` | Falling exhale | 1.8s |
-
-**How it works:**
-- `core/kokoro_tts/preprocessor.py` and `core/f5_tts/preprocessor.py` parse these tags and emit `{"type": "breath", "subtype": "inhale"|"exhale"|"breath"}` segments (not pause segments).
-- The TTS engines load the appropriate WAV from `assets/breath_sounds/` via `core/breath_sounds.py` (cached module-level, 75ms cosine fade-in/fade-out applied).
-- F5-TTS blends the breath audio with low-amplitude room tone to avoid digital silence.
-- If the WAV files are missing, both engines fall back to 1.2s of silence (graceful degradation).
-
-**Regenerating the synthetic breath samples:**
-```bash
-python scripts/generate_breath_samples.py
-```
-This creates `assets/breath_sounds/inhale.wav`, `exhale.wav`, and `breath.wav` at 24 kHz mono.
+The preprocessors emit pause-style segments for these tags. ElevenLabs additionally strips every user-typed `[...]` tag from speech.
 
 ## 7. Streaming Exports (Memory Safety)
 

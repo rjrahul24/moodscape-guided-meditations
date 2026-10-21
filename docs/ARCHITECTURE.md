@@ -108,6 +108,8 @@ class SpeechEngine(ABC):
     def get_available_voices(self) -> list[dict]: ...
 ```
 
+**ElevenLabsEngine** (`core/elevenlabs_tts/engine.py`, cloud, selected by the Voice Provider toggle): returns **48 kHz** mono directly (`pcm_48000`), so Phases 5 (upsample) and DeepFilterNet are skipped and the voice chain is a light de-ess + HPF + optional reverb. Chunks of ~1500 chars carry a sanitized `[direction]` prefix, are stitched with up to 3 `previous_request_ids`, loudness-matched (-21 LUFS), joined with 30 ms crossfades and cached per chunk (`var/elevenlabs_cache`). No speed/style exists in v4. See [model_implementation_guides/elevenlabs_v4.md](model_implementation_guides/elevenlabs_v4.md).
+
 **KokoroEngine specifics:**
 - CPU-forced on Apple Silicon: `device = "cpu"` (MPS causes SIGBUS deallocation errors)
 - Two KPipeline instances: `lang_code="a"` (default) + `lang_code="b"` (British voices: `bf_*`, `bm_*`)
@@ -174,6 +176,7 @@ class SpeechEngine(ABC):
 - Integer ratio (2×): `voice_activity` mask extended via `np.repeat(mask, 2)`
 - Non-integer ratio (e.g. 24 → 44.1): `resample_highly_accurate()` (same soxr_vhq backend)
 - Do not downsample then re-upsample — always upsample from the lower-rate source
+- ElevenLabs output is already 48 kHz and skips this phase
 
 ---
 
@@ -407,6 +410,10 @@ F5-TTS (24 kHz mono float32)
   → build_f5_voice_chain() @ 48 kHz
   → mix() @ 48 kHz
 
+ElevenLabs v4 (48 kHz mono float32, pcm_48000)
+  → deess_elevenlabs() + HPF (+ optional reverb) @ 48 kHz   (no upsample, no DeepFilterNet)
+  → mix() @ 48 kHz
+
 Lyria RealTime (48 kHz stereo int16 PCM → mono float32)
   → normalize_loudness(premix_lufs=-16)
   → make_lyria_music_chain() @ 48 kHz
@@ -537,6 +544,10 @@ is ADVISORY. The full code-by-code reference is in
 [docs/auto_generation/README.md](auto_generation/README.md#violation-code-reference).
 
 ---
+
+## Remix
+
+`mix()` inputs (processed voice, activity mask, processed music, params, and the `MOODSCAPE_*` env in effect) are saved as a mix session in `var/mix_sessions/` (`core/mix_session.py`) at the end of each run; the newest `MOODSCAPE_MIX_SESSIONS_KEEP` (5) are kept (~350 MB each for 15 min). `core/remix.py` reloads one and re-runs only mix → master → export with new voice/music trims, bed/duck and fade settings, so no TTS or music is regenerated. Remix and Generate share one Gradio concurrency group.
 
 ## Test Coverage Map
 

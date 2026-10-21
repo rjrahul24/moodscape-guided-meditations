@@ -201,19 +201,9 @@ Export: 44.1 kHz or 48 kHz / 24-bit WAV | Target: playback -16 LUFS (sleep -18; 
 
 ---
 
-## 5. Breath Sound Injection
+## 5. Breath Markers (no vocal sounds)
 
-`[breath]`, `[inhale]`, and `[exhale]` tags in meditation scripts inject real breath audio samples instead of silence:
-
-| Tag | File | Duration |
-|-----|------|----------|
-| `[breath]` | `assets/breath_sounds/breath.wav` | 1.2s |
-| `[inhale]` | `assets/breath_sounds/inhale.wav` | 1.5s |
-| `[exhale]` | `assets/breath_sounds/exhale.wav` | 1.8s |
-
-**How it works:** Both preprocessors emit `{"type": "breath", "subtype": "..."}` segments. TTS engines load and splice the audio via `core/breath_sounds.py` (cached per session, 75ms cosine fade applied). F5-TTS blends room tone behind the breath audio. Falls back to 1.2s silence if files are missing.
-
-**Regenerate samples:** `python scripts/generate_breath_samples.py`
+`[breath]`, `[inhale]`, and `[exhale]` tags render as **silence** in every engine (1.2 s / 1.5 s / 1.8 s). No breath samples are injected, by user rule: no engine renders vocal sounds. For ElevenLabs, every user-typed `[...]` tag is stripped from the spoken text and the direction sanitizer rejects sound words.
 
 ---
 
@@ -252,7 +242,6 @@ Selectable in the UI under "Reverb Space". Applied via Pedalboard `Convolution` 
 |---|---|
 | `core/kokoro_tts/postprocessor.py` | Per-chunk cleanup, crossfade assembly, spectral gating, unified voice FX chain (`build_voice_chain()`) |
 | `core/f5_tts/postprocessor.py` | `F5MasteringEngine` — split-band de-esser, crossfade assembly, F5 Phase B EQ |
-| `core/breath_sounds.py` | Shared breath sample loader (cached, 75ms fade-in/out) |
 | `core/mixer.py` | Breathing sidechain duck (script + reactive), overlay, cosine crossfade looping, exponential fades, LUFS, true-peak limiting, streaming export |
 | `core/kokoro_tts/preprocessor.py` | Script parsing (breath/pause/voice), text expansion, IPA injection, prosody punctuation, token chunking |
 | `core/f5_tts/preprocessor.py` | Script parsing (breath/pause/voice), character-count chunking |

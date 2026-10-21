@@ -24,7 +24,9 @@ When you need to change something, start here. Locate the row that matches your 
 | Text normalization (digits, abbrevs) | `core/text_utils.py` | — |
 | DeepFilter voice enhancement | `core/deepfilter_enhancer.py` | `core/pipeline.py` (toggle) |
 | Stereo upmix (Haas) | `core/stereo_upmix.py` | `core/pipeline.py` |
-| Breath sound loading | `core/breath_sounds.py` | `scripts/generate_breath_samples.py` |
+| Change ElevenLabs voices | `assets/elevenlabs/voices.toml` | `core/elevenlabs_tts/voices.py` |
+| ElevenLabs direction / chunking / stitching | `core/elevenlabs_tts/` | `docs/model_implementation_guides/elevenlabs_v4.md` |
+| Remix (re-mix without re-synthesis) | `core/remix.py` | `core/mix_session.py`, `core/provider_ui.py` |
 | Change how scripts are written | `docs/prompting_guides/` | `core/script_gen/rules.py` |
 | Add a safety rule | `docs/prompting_guides/content_safety_rules.md` | `core/script_gen/linter.py` **and** a case in `tests/unit/test_script_linter.py` |
 | Change sensitive-wording rules / content check | `core/script_gen/content_check.py` | `core/script_gen/linter.py` (`SENSITIVE_TOPIC`), `docs/prompting_guides/content_safety_rules.md` |

@@ -8,7 +8,7 @@ Where each model's weights live, and how to obtain them.
 | F5-TTS | HF hub | `~/.cache/huggingface/` | Auto-downloaded on first synth |
 | HT Demucs | torch hub | `~/.cache/torch/hub/` | Auto-downloaded by `demucs` on first stem-sep call |
 | Convolution IRs | local | `assets/impulse_responses/{warm_studio,wooden_hall,stone_chapel}.wav` | Committed to repo |
-| Breath samples | local | `assets/breath_sounds/{breath,inhale,exhale}.wav` | Committed to repo |
+| ElevenLabs voices | local | `assets/elevenlabs/voices.toml` | Committed to repo; needs `ELEVENLABS_API_KEY` (cloud, no weights) |
 | F5 voice assets | local | `assets/speakers/*.wav` + `assets/speakers/transcripts/*.txt` + `assets/speakers/voices.toml` | Committed to repo |
 
 ## Notes

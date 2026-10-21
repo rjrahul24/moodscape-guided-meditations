@@ -29,7 +29,12 @@ Authoritative map of every class and module in `core/`. Use this when you need t
 | QA monitor | `core/qa_monitor.py` | — | `run_qa_checks()`, `compute_composite_score()`, `check_voice_music_ratio()`, `check_ducking_smoothness()` |
 | Stem separator | `core/stem_separator.py` | `StemSeparator` | `remove_drums_and_vocals()` |
 | Text utils | `core/text_utils.py` | — | `expand_text()`, `ABBREV_MAP` |
-| Breath sounds | `core/breath_sounds.py` | — | `load_breath()` |
+| ElevenLabs engine | `core/elevenlabs_tts/engine.py` | `ElevenLabsEngine` | `synthesize()` (48 kHz, chunked, stitched) |
+| ElevenLabs client / direction | `core/elevenlabs_tts/client.py`, `direction.py` | — | `sanitize_direction()`, `default_direction()` |
+| ElevenLabs preprocess / assembly / cache / postproc | `core/elevenlabs_tts/{preprocessor,assembly,chunk_cache,postprocessor,voices}.py` | — | `deess_elevenlabs()`; voices from `assets/elevenlabs/voices.toml` |
+| Mix session | `core/mix_session.py` | `MixSession` | `save_session()`, `load_session()`, `update_params()`, `prune_sessions()` |
+| Remix | `core/remix.py` | — | re-runs mix → master → export from a saved session |
+| Provider UI logic | `core/provider_ui.py` | — | `is_cloud()`, `resolve_tts_engine()` |
 | DeepFilter enhancer | `core/deepfilter_enhancer.py` | — | `enhance_voice_deepfilter()` |
 | Stereo upmix | `core/stereo_upmix.py` | — | `haas_stereo()`, `center_pan_voice()` |
 
