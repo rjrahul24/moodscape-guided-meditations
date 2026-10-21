@@ -54,6 +54,7 @@ def _convert(c, **kw):
 
 def test_missing_key_raises_config_error(monkeypatch):
     monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("ELEVEN_LABS_API_KEY", raising=False)
     with pytest.raises(ElevenLabsConfigError, match="ELEVENLABS_API_KEY"):
         ElevenLabsClient(sdk=object())
 
@@ -115,3 +116,12 @@ def test_voice_exists_retries_transient():
     c._sdk.voices.get = flaky
     assert c.voice_exists("ok") is True
     assert state["n"] == 2
+
+
+def test_key_name_fallback(monkeypatch):
+    from core.elevenlabs_tts.client import get_api_key, has_api_key
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.setenv("ELEVEN_LABS_API_KEY", "abc")
+    assert get_api_key() == "abc" and has_api_key()
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "primary")
+    assert get_api_key() == "primary"

@@ -32,7 +32,11 @@ class ElevenLabsAPIError(RuntimeError):
 
 
 def get_api_key() -> str:
-    return os.environ.get("ELEVENLABS_API_KEY", "").strip()
+    for name in ("ELEVENLABS_API_KEY", "ELEVEN_LABS_API_KEY"):
+        key = os.environ.get(name, "").strip()
+        if key:
+            return key
+    return ""
 
 
 def has_api_key() -> bool:
@@ -90,7 +94,7 @@ class ElevenLabsClient:
         key = api_key or get_api_key()
         if not key:
             raise ElevenLabsConfigError(
-                "ELEVENLABS_API_KEY is not set. Add it to .env to use the ElevenLabs provider."
+                "ELEVENLABS_API_KEY (or ELEVEN_LABS_API_KEY) is not set. Add it to .env to use the ElevenLabs provider."
             )
         if sdk is None:
             from elevenlabs.client import ElevenLabs
