@@ -18,7 +18,7 @@ Hard-won lessons. The most load-bearing entries are repeated in `CLAUDE.md`; the
 - **Requires verbatim transcript**: Each reference audio in `assets/speakers/` needs a matching `.txt` of the same slug under `assets/speakers/transcripts/`.
 - **VAD on**: Silero VAD is loaded via `torch.hub.load('snakers4/silero-vad', 'silero_vad')` to trim silence at chunk boundaries.
 
-- **Cache fingerprint**: TTS cache keys include every `MOODSCAPE_F5_*` / `MOODSCAPE_CHATTERBOX_*` env var (plus `MOODSCAPE_ELEVENLABS_*` for ElevenLabs keys only). A new TTS-affecting env var must use that prefix or the cache serves a stale voice. Mix-only flags (`MOODSCAPE_BED_*`, `MOODSCAPE_LOUDNESS_*`) are deliberately outside it, so mix-only eval arms reuse cached TTS.
+- **Cache fingerprint**: TTS cache keys include every `MOODSCAPE_F5_*` / `MOODSCAPE_CHATTERBOX_*` env var (plus `MOODSCAPE_ELEVENLABS_*` for ElevenLabs keys only). A new TTS-affecting env var must use that prefix or the cache serves a stale voice. Mix-only flags (`MOODSCAPE_BED_*`, `MOODSCAPE_LOUDNESS_*`) are deliberately outside it, so mix-only eval arms reuse cached TTS. The prefix is necessary but not sufficient: `_TTS_ENV_EXCLUDE` in `core/tts_cache.py` leaves out `MOODSCAPE_ELEVENLABS_CACHE_DIR` and `MOODSCAPE_ELEVENLABS_MAX_RETRIES` (they never change audio). The legacy key format is pinned by a golden hash in `tests/unit/test_tts_cache.py`.
 - **F5 chunking/QA are opt-in**: `MOODSCAPE_F5_CHUNKING=1` renders breath groups with punctuation-length gaps; `MOODSCAPE_F5_CHUNK_QA=1` (requires chunking) re-renders failing chunks best-of-3, records `speech_qa` in `meta.json` and never fails a job.
 
 ## ElevenLabs v4
@@ -26,8 +26,9 @@ Hard-won lessons. The most load-bearing entries are repeated in `CLAUDE.md`; the
 - **No vocal sounds**: breath markers render as silence in every engine. ElevenLabs strips every user-typed `[...]` tag from speech, and `direction.sanitize_direction()` rejects sound words (breath/sigh/laugh/yawn/hum etc., including inflections and interjections like "mm-hmm"). Don't reintroduce sound samples or sound-word directions.
 - **Eleven v4 has no speed/style**: pacing = direction + punctuation + programmatic silence. The UI hides Speed for ElevenLabs; speed is not in its cache key.
 - **Cache keys**: All `MOODSCAPE_ELEVENLABS_*` vars except `_CACHE_DIR` and `_MAX_RETRIES` are fingerprinted, and only into ElevenLabs keys (`tts_env_fingerprint(engine="elevenlabs")`); they never affect F5/Kokoro/Chatterbox keys. A whole-render cache hit reports `chars_billed` 0.
-- **API key**: `ELEVENLABS_API_KEY`, falling back to `ELEVEN_LABS_API_KEY`. Stitching sends up to 3 `previous_request_ids`.
-- **Mix sessions** exist only for voice + music renders (not Vocals Only / Instrumental Only), so Remix needs one. ~350 MB each for 15 min; newest `MOODSCAPE_MIX_SESSIONS_KEEP` (5) kept. Remix and Generate share one Gradio concurrency group.
+- **API key**: `ELEVENLABS_API_KEY`, falling back to `ELEVEN_LABS_API_KEY`. Stitching sends up to 3 `previous_request_ids`; if a request carrying them fails 400/422 (stale ids, e.g. from old cache hits), that chunk is retried once without ids and stitching stays off for the rest of the render.
+- **Chunk cache grows without bound**: `var/elevenlabs_cache` holds 48 kHz int16 PCM, ~5.5 MB per minute of speech for every voice/settings/direction combination, never pruned. Delete the directory to reclaim space; the next render re-bills those chunks.
+- **Mix sessions** exist only for voice + music renders (not Vocals Only / Instrumental Only), so Remix needs one. ~350 MB each for 15 min; newest `MOODSCAPE_MIX_SESSIONS_KEEP` (5) kept. Remix, Manual Generate and Auto Generate share one Gradio concurrency group (`"render"`), and Remix swaps only the mix-affecting env vars (`core/remix.py::MIX_ENV_PREFIXES`) while it runs.
 - **`tests/__init__.py` must stay**: it stops site-packages `tests` packages from shadowing the repo's.
 
 ## Mixing & Mastering

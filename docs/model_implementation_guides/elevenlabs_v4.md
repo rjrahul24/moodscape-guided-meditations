@@ -20,15 +20,15 @@ Released 2026-09-28. Sources: [What is Eleven v4](https://elevenlabs.io/docs/hel
 - **Chunking**: the script is split into chunks of about `MOODSCAPE_ELEVENLABS_CHUNK_MAX_CHARS` (1500), well under the 10,000 limit.
 - **Direction**: every chunk is prefixed with one bracketed voice-quality direction (default `[soft, slow, calm voice]`, overridable in the UI and via `MOODSCAPE_ELEVENLABS_DIRECTION`). `direction.sanitize_direction()` rejects sound words (breath, sigh, laugh, yawn, hum, etc., including inflections and interjections such as "mm-hmm") and anything over 80 characters.
 - **No vocal sounds**: the preprocessor strips every user-typed `[...]` tag from the spoken text. `[breath]`, `[inhale]`, `[exhale]` and `[pause:Xs]` become programmatic silence.
-- **Stitching**: each request sends up to 3 `previous_request_ids` (`MOODSCAPE_ELEVENLABS_STITCH`, default on) for prosodic continuity across chunks.
+- **Stitching**: each request sends up to 3 `previous_request_ids` (`MOODSCAPE_ELEVENLABS_STITCH`, default on) for prosodic continuity across chunks. If a request carrying ids fails 400/422 (stale ids, e.g. from old cache hits), the chunk is retried once without ids and stitching stays off for the rest of that render.
 - **Silence and joins**: pauses are inserted programmatically; chunk joins use 30 ms equal-power crossfades; each chunk is loudness-matched to -21 LUFS before joining.
 - **48 kHz, clean chain**: audio is requested as `pcm_48000`, so there is no 24 to 48 kHz upsample and no DeepFilterNet or F5 mastering engine. Post-processing is a gentle split-band de-ess (`MOODSCAPE_ELEVENLABS_DEESS`), an HPF and optional room reverb.
 - **Caches**:
-  - Per-chunk PCM cache in `var/elevenlabs_cache` (`MOODSCAPE_ELEVENLABS_CACHE_DIR`). Request ids are excluded from the key, and speed is not part of it (v4 has no speed).
+  - Per-chunk PCM cache in `var/elevenlabs_cache` (`MOODSCAPE_ELEVENLABS_CACHE_DIR`). Request ids are excluded from the key, and speed is not part of it (v4 has no speed). It is never pruned: 48 kHz int16 PCM is ~5.5 MB per minute of speech for every voice/settings/direction combination. Delete the directory to clear it (the next render re-bills those chunks).
   - Whole-render cache via `core/tts_cache.py`. All `MOODSCAPE_ELEVENLABS_*` vars except `_CACHE_DIR` and `_MAX_RETRIES` enter the fingerprint, and only for ElevenLabs keys (`tts_env_fingerprint(engine="elevenlabs")`); they never affect F5/Kokoro/Chatterbox keys.
   - A whole-render cache hit reports `chars_billed: 0` in meta (the original count is kept as `chars_cached`).
 - **Billing**: per character; the UI shows a cost line and `meta.json` records `chars_billed`.
-- **Remix**: for voice + music renders only (not Vocals Only / Instrumental Only), after mixing, the pipeline saves a mix session (`var/mix_sessions/`, `core/mix_session.py`) so `core/remix.py` can re-run only mix, master and export without paying for TTS again. Sessions are large (~350 MB for 15 min of 48 kHz float32); the newest `MOODSCAPE_MIX_SESSIONS_KEEP` (default 5) are kept. Remix and Generate share one Gradio concurrency group so they never run together.
+- **Remix**: for voice + music renders only (not Vocals Only / Instrumental Only), after mixing, the pipeline saves a mix session (`var/mix_sessions/`, `core/mix_session.py`) so `core/remix.py` can re-run only mix, master and export without paying for TTS again. Sessions are large (~350 MB for 15 min of 48 kHz float32); the newest `MOODSCAPE_MIX_SESSIONS_KEEP` (default 5) are kept. Remix, Manual Generate and Auto Generate share one Gradio concurrency group (`"render"`) so they never run together, and Remix swaps only the mix-affecting env vars (`core/remix.py::MIX_ENV_PREFIXES`).
 
 ## Tuning knobs
 
@@ -43,7 +43,7 @@ Released 2026-09-28. Sources: [What is Eleven v4](https://elevenlabs.io/docs/hel
 | `MOODSCAPE_ELEVENLABS_XFADE_MS` | 30 | Join crossfade |
 | `MOODSCAPE_ELEVENLABS_CHUNK_LUFS` | -21 (`off` disables) | Per-chunk loudness match |
 | `MOODSCAPE_ELEVENLABS_STITCH` | 1 | Send `previous_request_ids` (max 3) |
-| `MOODSCAPE_ELEVENLABS_MAX_RETRIES` | 3 | Transient retry budget |
+| `MOODSCAPE_ELEVENLABS_MAX_RETRIES` | 3 | Transient retry budget (network/timeout, 408, 429, 5xx; TypeError/AttributeError are never retried) |
 | `MOODSCAPE_ELEVENLABS_DEESS` | 1 | Gentle split-band de-ess (applied after the cache, but still in the ElevenLabs cache key via its prefix; harmless) |
 | `MOODSCAPE_ELEVENLABS_CACHE_DIR` | `var/elevenlabs_cache` | Per-chunk PCM cache |
 | `MOODSCAPE_MIX_SESSIONS_KEEP` | 5 | Remix session retention (not a TTS var) |
