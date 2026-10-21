@@ -153,3 +153,17 @@ class TestEnvFingerprint:
         # Existing caches stay valid when no TTS flag is set.
         assert compute_cache_key("x", tts_engine="f5", seed=1) == \
             compute_cache_key("x", tts_engine="f5", seed=1, env_fingerprint="")
+
+
+class TestElevenLabsCacheKey:
+    def test_extra_changes_key_and_none_is_backward_compatible(self):
+        base = dict(script="Hi.", tts_engine="elevenlabs", voice="v")
+        assert compute_cache_key(**base) == compute_cache_key(**base, extra=None)
+        assert compute_cache_key(**base, extra={"stability": 0.5}) != \
+               compute_cache_key(**base, extra={"stability": 0.6})
+
+    def test_elevenlabs_env_in_fingerprint_except_non_audio_vars(self):
+        fp = tts_env_fingerprint({"MOODSCAPE_ELEVENLABS_SEED": "7",
+                                  "MOODSCAPE_ELEVENLABS_CACHE_DIR": "/x",
+                                  "MOODSCAPE_ELEVENLABS_MAX_RETRIES": "5"})
+        assert fp == "MOODSCAPE_ELEVENLABS_SEED=7"

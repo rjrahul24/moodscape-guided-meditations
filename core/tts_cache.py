@@ -26,7 +26,9 @@ logger = logging.getLogger("moodscape.tts_cache")
 # Default directory for persistent TTS cache (under project var/)
 DEFAULT_CACHE_DIR = Path(__file__).resolve().parent.parent / "var" / "tts_cache"
 
-_TTS_ENV_PREFIXES = ("MOODSCAPE_F5_", "MOODSCAPE_CHATTERBOX_")
+_TTS_ENV_PREFIXES = ("MOODSCAPE_F5_", "MOODSCAPE_CHATTERBOX_", "MOODSCAPE_ELEVENLABS_")
+# Prefixed vars that never change rendered audio (paths, retry budgets).
+_TTS_ENV_EXCLUDE = {"MOODSCAPE_ELEVENLABS_CACHE_DIR", "MOODSCAPE_ELEVENLABS_MAX_RETRIES"}
 
 
 def get_cache_dir() -> Path:
@@ -39,7 +41,7 @@ def get_cache_dir() -> Path:
 def tts_env_fingerprint(environ: Mapping[str, str] | None = None) -> str:
     """Stable string of every set TTS-affecting env var, so flag arms never share a cache entry."""
     env = os.environ if environ is None else environ
-    items = sorted((k, v) for k, v in env.items() if k.startswith(_TTS_ENV_PREFIXES))
+    items = sorted((k, v) for k, v in env.items() if k.startswith(_TTS_ENV_PREFIXES) and k not in _TTS_ENV_EXCLUDE)
     return ";".join(f"{k}={v}" for k, v in items)
 
 
@@ -54,11 +56,15 @@ def compute_cache_key(
     microprosody: bool = False,
     seed: int | None = None,
     env_fingerprint: str = "",
+    extra: dict | None = None,
 ) -> str:
     """Compute a deterministic SHA-256 hash key for TTS inputs.
 
     Normalizes text and parameters so trivial differences (e.g. trailing
     whitespace) do not cause spurious cache misses.
+
+    ``extra`` carries engine-specific render params (e.g. ElevenLabs
+    voice/stability/similarity/direction/model/seed).
     """
     normalized_script = script.strip().replace("\r\n", "\n")
     key_dict = {
@@ -74,6 +80,8 @@ def compute_cache_key(
     }
     if env_fingerprint:
         key_dict["env"] = env_fingerprint
+    if extra:
+        key_dict["extra"] = extra
     payload = json.dumps(key_dict, sort_keys=True).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
