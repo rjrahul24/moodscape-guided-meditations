@@ -10,6 +10,7 @@ numpy
 scipy
 soundfile
 pyloudnorm
+elevenlabs==2.71.0   # ElevenLabs v4 cloud TTS (core/elevenlabs_tts)
 noisereduce
 librosa>=0.10.0           # audio utils (resampling, analysis)
 pyworld>=0.3.4
