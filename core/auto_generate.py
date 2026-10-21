@@ -164,6 +164,8 @@ class AutoConfig:
     voice: str | None = None
     # F5/Chatterbox/Qwen3 reference voice; set per genre family by from_genre.
     voice_slug: str | None = None
+    # ElevenLabs voice id (provider = ElevenLabs); set by from_genre.
+    elevenlabs_voice_id: str | None = None
     target_min_sec: float = 300.0
     target_max_sec: float = 420.0
     max_repairs: int = 2
@@ -247,6 +249,9 @@ class AutoConfig:
                 raise
             except Exception as exc:
                 logger.warning("voice selection failed for %s (%s); using engine default voice", pack.family, exc)
+        if engine == "elevenlabs" and "elevenlabs_voice_id" not in overrides:
+            from core.elevenlabs_tts.voices import voice_for_family as el_voice_for_family
+            pack_values["elevenlabs_voice_id"] = el_voice_for_family(pack.family)
         config = replace(config, **pack_values)
         if overrides:
             config = replace(config, **overrides)
@@ -825,6 +830,26 @@ class RenderResult:
     voice: str  # slug or ""
 
 
+def tts_preflight(config: AutoConfig, client_factory=None) -> None:
+    """Fail in seconds, before any LLM stage, if the TTS provider cannot render."""
+    if config.tts_engine != "elevenlabs":
+        return
+    from core.elevenlabs_tts.client import ElevenLabsClient, ElevenLabsConfigError
+    from core.elevenlabs_tts.direction import default_direction
+    from core.elevenlabs_tts.voices import default_voice_id
+    try:
+        default_direction()
+        client = (client_factory or ElevenLabsClient)()
+        voice_id = config.elevenlabs_voice_id or default_voice_id()
+        if not client.voice_exists(voice_id):
+            raise ScriptGenerationError(
+                f"ElevenLabs voice {voice_id!r} is not in this account — add it from the "
+                "ElevenLabs Voice Library (Add to my voices), or change assets/elevenlabs/voices.toml."
+            )
+    except (ElevenLabsConfigError, ValueError) as exc:
+        raise ScriptGenerationError(str(exc)) from exc
+
+
 def render_script(
     script: str,
     *,
@@ -867,6 +892,18 @@ def render_script(
     if voice_slug:
         generate_kwargs["f5_voice_slug"] = voice_slug
 
+    el_voice = None
+    est_chars = 0
+    if config.tts_engine == "elevenlabs":
+        from core.elevenlabs_tts.preprocessor import estimate_billed_chars, prepare_segments
+        from core.elevenlabs_tts.voices import default_voice_id
+        el_voice = config.elevenlabs_voice_id or default_voice_id()
+        generate_kwargs["elevenlabs_voice_id"] = el_voice
+        est_chars = estimate_billed_chars(prepare_segments(script, content_type=config.content_type))
+        logger.info("ElevenLabs: ~%d characters for this render (before cache)", est_chars)
+        if progress_cb is not None:
+            progress_cb(0.0, f"ElevenLabs: ~{est_chars:,} characters (cached chunks are free)")
+
     generate_kwargs.update(pipeline_kwargs)
 
     audio_path, _status = pipeline.generate(
@@ -897,7 +934,7 @@ def render_script(
             "content_type": config.content_type,
             "genre": config.genre,
             "tts_engine": config.tts_engine,
-            "voice": voice_slug,
+            "voice": el_voice or voice_slug,
             "background": background_label,
             "background_path": background_path,
             "actual_sec": actual_sec,
@@ -910,6 +947,10 @@ def render_script(
     tts_cache_hit = getattr(pipeline, "last_tts_cache_hit", None)
     if isinstance(tts_cache_hit, bool):
         meta["tts_cache_hit"] = tts_cache_hit
+    if el_voice is not None:
+        manifest = getattr(pipeline, "last_tts_manifest", None)
+        meta["elevenlabs"] = {**(manifest if isinstance(manifest, dict) else {}),
+                              "estimated_chars": est_chars}
 
     script_path.write_text(script, encoding="utf-8")
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
@@ -919,7 +960,7 @@ def render_script(
         script_path=str(script_path),
         meta_path=str(meta_path),
         actual_sec=actual_sec,
-        voice=voice_slug or "",
+        voice=el_voice or voice_slug or "",
     )
 
 
@@ -961,6 +1002,7 @@ def run(
         AutoResult with paths to the audio, script, and metadata.
     """
     config = config or AutoConfig.from_env()
+    tts_preflight(config)
 
     pack, angle = None, None
     if genre:

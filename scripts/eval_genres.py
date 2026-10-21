@@ -178,7 +178,7 @@ def main() -> int:
     parser.add_argument("--testset", default="", help="path to a testset TOML (overrides --genres/--band/--runs)")
     parser.add_argument("--metrics", action="store_true", help="compute script/speech/mix metrics per run")
     parser.add_argument("--export-stems", action="store_true", help="export voice stem so speech metrics avoid the bed")
-    parser.add_argument("--engine", default="f5", help="TTS engine for AutoConfig.tts_engine (f5, qwen3, ...)")
+    parser.add_argument("--engine", default="f5", help="TTS engine for AutoConfig.tts_engine (f5, elevenlabs, ...); elevenlabs bills per character — see meta.json 'elevenlabs'")
     parser.add_argument("--corpus-from", default="",
                         help="earlier eval --out dir; reuse its corpus_snapshot instead of snapshotting the live corpus")
     args = parser.parse_args()
