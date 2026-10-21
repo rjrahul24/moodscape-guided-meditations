@@ -125,9 +125,10 @@ class ElevenLabsClient:
 
     def voice_exists(self, voice_id: str) -> bool:
         try:
-            self._sdk.voices.get(voice_id)
+            with_retries(lambda: self._sdk.voices.get(voice_id),
+                         attempts=self._attempts, sleep=self._sleep)
             return True
-        except Exception as exc:  # noqa: BLE001
-            if _status_of(exc) in (400, 404):
+        except ElevenLabsAPIError as exc:
+            if exc.status in (400, 404):
                 return False
-            raise ElevenLabsAPIError(_status_of(exc), _describe(_status_of(exc), exc)) from exc
+            raise

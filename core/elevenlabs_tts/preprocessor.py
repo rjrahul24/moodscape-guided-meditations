@@ -97,7 +97,7 @@ def prepare_segments(script: str, content_type: str = "meditation",
                      direction: str | None = None) -> list[dict]:
     from core.content_profiles import get_profile
 
-    tag = sanitize_direction(direction) if direction is not None else default_direction()
+    tag = sanitize_direction(direction) if direction else default_direction()
     limit = chunk_max_chars() - len(tag) - 1
     raw = parse_script(
         script, paragraph_pause_sec=get_profile(content_type)["elevenlabs_paragraph_pause_sec"]
@@ -111,6 +111,12 @@ def prepare_segments(script: str, content_type: str = "meditation",
             return
         text = " ".join(speech_buf)
         speech_buf.clear()
+        # Joining can reassemble tags across segments; strip again, then drop
+        # any stray bracket so nothing bracketed but the direction reaches the API.
+        text = _TAG_RE.sub(" ", text)
+        text = re.sub(r"\s+", " ", re.sub(r"[\[\]]", " ", text)).strip()
+        if not text:
+            return
         for piece in _pack(_split_sentences(text), limit):
             out.append({"type": "speech", "text": f"{tag} {piece}"})
 

@@ -100,3 +100,18 @@ def test_voice_exists():
     c = _client([])
     assert c.voice_exists("ok") is True
     assert c.voice_exists("missing") is False
+
+
+def test_voice_exists_retries_transient():
+    c = _client([])
+    state = {"n": 0}
+
+    def flaky(voice_id):
+        state["n"] += 1
+        if state["n"] == 1:
+            raise _Err(503)
+        return object()
+
+    c._sdk.voices.get = flaky
+    assert c.voice_exists("ok") is True
+    assert state["n"] == 2

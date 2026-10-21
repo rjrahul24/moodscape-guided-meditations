@@ -1,3 +1,4 @@
+import pytest
 import re
 
 from core.elevenlabs_tts.direction import DEFAULT_DIRECTION
@@ -99,3 +100,29 @@ def test_malformed_chunk_env_names_variable(monkeypatch):
     monkeypatch.setenv("MOODSCAPE_ELEVENLABS_CHUNK_MAX_CHARS", "lots")
     with pytest.raises(ValueError, match="MOODSCAPE_ELEVENLABS_CHUNK_MAX_CHARS"):
         prepare_segments("Hello.")
+
+
+@pytest.mark.parametrize("script", [
+    "Hi there [laughs [voice:brittney] ] and rest.",
+    "Hello [laughs softly there.",
+    "Rest [[laughs]] now.",
+])
+def test_unbalanced_or_reassembled_tags_never_reach_api(script):
+    speech = _speech(prepare_segments(script))
+    assert speech
+    for text in speech:
+        body = text[len(DEFAULT_DIRECTION):]
+        assert "[" not in body and "]" not in body
+
+
+def test_empty_direction_falls_back_to_env_default(monkeypatch):
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_DIRECTION", "[warm, low voice]")
+    segs = prepare_segments("Hello there.", direction="")
+    assert _speech(segs)[0].startswith("[warm, low voice] ")
+
+
+def test_package_exports_postprocessor_and_cache():
+    import core.elevenlabs_tts as pkg
+    assert callable(pkg.deess_elevenlabs)
+    assert callable(pkg.build_elevenlabs_voice_chain)
+    assert hasattr(pkg.chunk_cache, "chunk_payload")

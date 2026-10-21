@@ -33,3 +33,21 @@ def test_too_long_rejected():
 def test_env_default(monkeypatch):
     monkeypatch.setenv("MOODSCAPE_ELEVENLABS_DIRECTION", "warm, low voice")
     assert default_direction() == "[warm, low voice]"
+
+
+@pytest.mark.parametrize("raw", [
+    "[laughter]", "[soft laughter]", "[sighed]", "[inhaled]", "[yawned]",
+    "[breathless]", "[clears throat]", "[groaning]", "[snoring]", "[sniffles]",
+    "[sigh_soft]", "[mm-hmm]", "[ahh]", "[mm hmm]",
+])
+def test_sound_directions_rejected(raw):
+    with pytest.raises(ValueError, match="voice quality"):
+        sanitize_direction(raw)
+
+
+@pytest.mark.parametrize("raw", [
+    "[soft, slow, calm voice]", "[warm, low voice]", "[whispered, gentle]",
+    "[human, humble tone]", "[sober, sighted narrator]",
+])
+def test_voice_quality_directions_pass(raw):
+    assert sanitize_direction(raw) == raw

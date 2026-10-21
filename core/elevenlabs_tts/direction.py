@@ -13,16 +13,16 @@ import re
 DEFAULT_DIRECTION = "[soft, slow, calm voice]"
 MAX_DIRECTION_CHARS = 80
 
-_SOUND_WORDS = (
-    "breath", "breaths", "breathe", "breathes", "breathing", "breathy",
-    "inhale", "inhales", "inhaling", "exhale", "exhales", "exhaling",
-    "sigh", "sighs", "sighing", "gasp", "gasps", "gasping",
-    "laugh", "laughs", "laughing", "chuckle", "chuckles", "giggle", "giggles",
-    "yawn", "yawns", "yawning", "hum", "hums", "humming",
-    "cough", "coughs", "sniff", "sniffs", "gulp", "gulps", "swallow", "swallows",
-    "whimper", "whimpers", "sob", "sobs", "sobbing", "cry", "cries", "crying",
+_SOUND_RE = re.compile(
+    r"\b("
+    r"breath\w*|inhal\w*|exhal\w*|sigh(?:s|ed|ing)?|gasp\w*|laugh\w*|chuckl\w*|"
+    r"giggl\w*|yawn\w*|hum|hums|hummed|humming|cough\w*|sniff\w*|gulp\w*|"
+    r"swallow\w*|whimper\w*|sob|sobs|sobbed|sobbing|cry|cries|cried|crying|"
+    r"groan\w*|moan\w*|snor\w*|sneez\w*|hiccup\w*|throat|scream\w*|whistl\w*|"
+    r"snicker\w*|snort\w*|mm+(?:\s?hmm)?|hmm+|ahh+|ohh+"
+    r")\b",
+    re.IGNORECASE,
 )
-_SOUND_RE = re.compile(r"\b(" + "|".join(_SOUND_WORDS) + r")\b", re.IGNORECASE)
 
 
 def sanitize_direction(text: str | None) -> str:
@@ -31,7 +31,7 @@ def sanitize_direction(text: str | None) -> str:
     inner = re.sub(r"\s+", " ", inner).strip(" ,")
     if not inner:
         return DEFAULT_DIRECTION
-    match = _SOUND_RE.search(inner)
+    match = _SOUND_RE.search(re.sub(r"[_-]", " ", inner))
     if match:
         raise ValueError(
             "Delivery direction must describe voice quality, not sounds "
