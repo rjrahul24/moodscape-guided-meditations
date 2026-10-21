@@ -24,6 +24,29 @@ TARGET_SR = 44100
 SAMPLE_RATE = 24000
 
 
+def _resolve_base_engine(tts_engine) -> str:
+    """Map an engine id (registry id, variant, or custom name) to its base engine."""
+    from core.engine_registry import get_engine_info
+    engine_info = get_engine_info(tts_engine)
+    base_engine = engine_info.get("base_engine", tts_engine) if engine_info else tts_engine
+    if base_engine not in ("f5", "kokoro", "chatterbox", "elevenlabs"):
+        base_engine = "f5" if "f5" in str(tts_engine).lower() else ("chatterbox" if "chatterbox" in str(tts_engine).lower() else "kokoro")
+    return base_engine
+
+
+def _reusable_for(cached: dict, base_engine: str) -> bool:
+    """True if a 'latest' TTS take came from this run's base engine and rate.
+
+    ElevenLabs renders 48 kHz; every local engine renders 24 kHz. A take from
+    the other provider must never be silently mixed into this run.
+    """
+    expected_sr = 48000 if base_engine == "elevenlabs" else SAMPLE_RATE
+    if int(cached.get("sample_rate", SAMPLE_RATE)) != expected_sr:
+        return False
+    cached_engine = (cached.get("metadata") or {}).get("tts_engine")
+    return cached_engine is None or _resolve_base_engine(cached_engine) == base_engine
+
+
 def _progress(cb, fraction, message):
     if cb is not None:
         cb(fraction, message)
@@ -149,6 +172,7 @@ class MeditationPipeline:
         self.last_tts_cache_hit = None
         self.last_tts_manifest = None
         self.last_run_id = None
+        pending_run_id = None  # becomes last_run_id once the session records output_path
         status_message = ""
 
         # Resolve the content profile (meditation vs sleep story). The profile
@@ -182,11 +206,7 @@ class MeditationPipeline:
         # Uploaded instrumentals are decoded/resampled to 48 kHz as well.
         # F5-TTS also mixes at 48 kHz.
         # TTS voice (24 kHz) is upsampled to match whichever rate is selected.
-        from core.engine_registry import get_engine_info
-        engine_info = get_engine_info(tts_engine)
-        base_engine = engine_info.get("base_engine", tts_engine) if engine_info else tts_engine
-        if base_engine not in ("f5", "kokoro", "chatterbox", "elevenlabs"):
-            base_engine = "f5" if "f5" in str(tts_engine).lower() else ("chatterbox" if "chatterbox" in str(tts_engine).lower() else "kokoro")
+        base_engine = _resolve_base_engine(tts_engine)
 
         # ElevenLabs: resolve params + direction once, up front, so a bad
         # direction raises before any TTS work. Local engines leave both None.
@@ -241,10 +261,17 @@ class MeditationPipeline:
                 if reuse_last_voice:
                     from core.tts_cache import get_latest_tts
                     cached_voice = get_latest_tts()
+                    if cached_voice is not None and not _reusable_for(cached_voice, base_engine):
+                        logger.warning(
+                            "Not reusing latest voice: it was rendered by %s at %s Hz, this run "
+                            "uses %s — synthesizing instead.",
+                            (cached_voice.get("metadata") or {}).get("tts_engine", "another engine"),
+                            cached_voice.get("sample_rate"), base_engine)
+                        cached_voice = None
                     if cached_voice is not None:
                         _progress(progress_cb, 0.10, "Reusing latest synthesized voice from cache...")
                         logger.info("TTS cache hit: reusing latest voice narration")
-                elif use_tts_cache:
+                if cached_voice is None and use_tts_cache:
                     from core.tts_cache import compute_cache_key, get_cached_tts, tts_env_fingerprint
                     if base_engine == "chatterbox":
                         cfg_val = float(os.environ.get("MOODSCAPE_CHATTERBOX_CFG", "0.50"))
@@ -452,7 +479,9 @@ class MeditationPipeline:
                     pass  # ElevenLabs returns pcm_48000 — already at the mix rate
                 else:
                     if tts_sr != SAMPLE_RATE:
-                        raise ValueError(f"Unsupported TTS sample rate {tts_sr} for mix rate {mix_sr}.")
+                        raise ValueError(
+                            f"Unsupported TTS sample rate {tts_sr} for mix rate {mix_sr} "
+                            "(cached voice from another engine? disable 'reuse last voice').")
                     if mix_sr == 48000:
                         from core.audio_processor import upsample_audio
                         _progress(progress_cb, 0.39, "Upsampling TTS audio to 48kHz (High Fidelity sinc)...")
@@ -758,11 +787,15 @@ class MeditationPipeline:
                         "use_upload": bool(use_upload), "content_type": content_type,
                         "env": {k: v for k, v in os.environ.items() if k.startswith("MOODSCAPE_")},
                     })
-                    mix_session.prune_sessions()
                 except Exception as e:  # Remix is a convenience; never fail a render for it
                     logger.warning("Could not save mix session: %s", e)
                     run_id = None
-                self.last_run_id = run_id
+                if run_id:
+                    try:
+                        mix_session.prune_sessions()
+                    except Exception as e:  # a prune failure must not drop this session
+                        logger.warning("Could not prune old mix sessions: %s", e)
+                pending_run_id = run_id
                 mixed = mix(
                     voice_audio,
                     voice_activity,
@@ -806,10 +839,13 @@ class MeditationPipeline:
                 mono_playback_offset_db=mono_offset,
             )
 
-            if self.last_run_id:
+            # Publish the run id only once its session knows the output path,
+            # so Remix never sees a half-written session.
+            if pending_run_id:
                 try:
                     from core import mix_session
-                    mix_session.update_params(self.last_run_id, {"output_path": output_path})
+                    mix_session.update_params(pending_run_id, {"output_path": output_path})
+                    self.last_run_id = pending_run_id
                 except Exception as e:
                     logger.warning("Could not record output path for mix session: %s", e)
 

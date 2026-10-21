@@ -59,3 +59,29 @@ def test_cost_line_reports_bad_direction():
 def test_remix_ui_without_run():
     path, msg = ui.remix_ui(None, 1.0, 0.0)
     assert path is None and "Generate" in msg
+
+
+def test_remix_ui_session_without_output_path_returns_message(tmp_path, monkeypatch):
+    import numpy as np
+    from core import mix_session as ms
+    monkeypatch.setenv("MOODSCAPE_MIX_SESSIONS_DIR", str(tmp_path / "s"))
+    sr = 48000
+    n = sr * 2
+    ms.save_session("noout", np.full(n, 0.1, np.float32), np.ones(n, bool),
+                    np.full(n, 0.05, np.float32), {
+        "mix_sr": sr, "duck_amount_db": -16.0, "music_volume_db": -16.0,
+        "fade_in_sec": 0.2, "fade_out_sec": 0.2, "stereo_output": False,
+        "phrases": None, "bed_overrides": None, "target_lufs": -16.0, "mono_offset": -3.01,
+        "output_format": "wav", "export_sr": sr, "use_upload": True,
+        "content_type": "meditation", "env": {}})
+    path, msg = ui.remix_ui("noout", 0.0, 0.0)
+    assert path is None and "output_path" in msg
+
+
+def test_remix_ui_os_error_returns_message(monkeypatch):
+    import core.remix as remix_mod
+    def boom(*a, **k):
+        raise PermissionError("read-only output dir")
+    monkeypatch.setattr(remix_mod, "remix", boom)
+    path, msg = ui.remix_ui("r1", 0.0, 0.0)
+    assert path is None and "read-only" in msg

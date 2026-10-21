@@ -133,3 +133,38 @@ def test_local_engine_cache_key_ignores_elevenlabs_params(tmp_path, monkeypatch)
                                   elevenlabs_stability=0.9, elevenlabs_voice_id="zzz")
     assert seen and seen[0].get("extra") is None
     assert "MOODSCAPE_ELEVENLABS_" not in seen[0]["env_fingerprint"]
+
+
+@pytest.fixture
+def reuse_env(tmp_path, monkeypatch):
+    """Like `env` but lets local runs upsample (both engines run in one test)."""
+    monkeypatch.setenv("MOODSCAPE_TTS_CACHE_DIR", str(tmp_path / "tts"))
+    monkeypatch.setenv("MOODSCAPE_MIX_SESSIONS_DIR", str(tmp_path / "sessions"))
+    monkeypatch.setattr("core.upload_music.UploadMusicEngine", FakeMusic)
+
+
+def _run_local(pipe, eng, **kw):
+    return pipe.generate(script="Close your eyes. [pause:2s]\n\nRest.", music_prompt="",
+                         tts_engine="mock", custom_tts_engine=eng, music_model="upload",
+                         uploaded_music_path="dummy.wav", **kw)
+
+
+def test_reuse_last_voice_ignores_elevenlabs_take_for_local_engine(reuse_env):
+    _run(MeditationPipeline(), FakeEL())                       # latest = 48 kHz EL take
+    local = MockTTS24()
+    out, _ = _run_local(MeditationPipeline(), local, reuse_last_voice=True)
+    assert out and local.synth == 1
+
+
+def test_reuse_last_voice_ignores_local_take_for_elevenlabs(reuse_env):
+    _run_local(MeditationPipeline(), MockTTS24())              # latest = 24 kHz local take
+    el = FakeEL()
+    out, _ = _run(MeditationPipeline(), el, reuse_last_voice=True)
+    assert out and el.synth == 1
+
+
+def test_reuse_last_voice_same_engine_still_reuses(reuse_env):
+    _run_local(MeditationPipeline(), MockTTS24())
+    local = MockTTS24()
+    _run_local(MeditationPipeline(), local, reuse_last_voice=True)
+    assert local.synth == 0

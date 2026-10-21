@@ -111,6 +111,8 @@ def remix_ui(run_id: str | None, voice_db: float, music_db: float) -> tuple[str 
         return None, "Generate a meditation first, then remix it."
     try:
         path = remix(run_id, float(voice_db), float(music_db))
-    except (MixSessionNotFound, ValueError) as exc:
+    except KeyError as exc:  # session saved by an older/failed run lacks a field
+        return None, f"Mix session is incomplete (missing {exc}) — generate again to remix."
+    except (MixSessionNotFound, ValueError, OSError) as exc:
         return None, str(exc)
     return path, f"Remixed (voice {voice_db:+g} dB, music {music_db:+g} dB) → {path}"

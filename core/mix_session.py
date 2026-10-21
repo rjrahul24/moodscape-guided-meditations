@@ -8,6 +8,7 @@ as passed to mixer.mix(), plus the parameters used. Sessions are large
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 import shutil
@@ -16,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+
+logger = logging.getLogger("moodscape.mix_session")
 
 DEFAULT_DIR = Path(__file__).resolve().parent.parent / "var" / "mix_sessions"
 
@@ -86,8 +89,21 @@ def load_session(run_id: str) -> MixSession:
     )
 
 
+DEFAULT_KEEP = 5
+
+
+def _keep_from_env() -> int:
+    raw = os.environ.get("MOODSCAPE_MIX_SESSIONS_KEEP", str(DEFAULT_KEEP))
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("MOODSCAPE_MIX_SESSIONS_KEEP=%r is not an integer; keeping %d sessions",
+                       raw, DEFAULT_KEEP)
+        return DEFAULT_KEEP
+
+
 def prune_sessions(keep: int | None = None) -> int:
-    keep = keep if keep is not None else int(os.environ.get("MOODSCAPE_MIX_SESSIONS_KEEP", "5"))
+    keep = keep if keep is not None else _keep_from_env()
     dirs = sorted((p for p in sessions_dir().iterdir() if p.is_dir()),
                   key=lambda p: p.stat().st_mtime, reverse=True)
     stale = dirs[max(0, keep):]
