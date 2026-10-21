@@ -41,6 +41,7 @@ class MeditationPipeline:
         self.last_speech_qa = None
         self.last_tts_cache_hit = None
         self.last_tts_manifest = None
+        self.last_run_id = None
 
     def generate(
         self,
@@ -147,6 +148,7 @@ class MeditationPipeline:
         self.last_speech_qa = None
         self.last_tts_cache_hit = None
         self.last_tts_manifest = None
+        self.last_run_id = None
         status_message = ""
 
         # Resolve the content profile (meditation vs sleep story). The profile
@@ -740,6 +742,27 @@ class MeditationPipeline:
                 mixed = apply_fades(voice_audio, mix_sr, fade_in_sec, fade_out_sec)
             else:
                 _progress(progress_cb, 0.82, "Mixing voice and music...")
+                run_id = None
+                try:
+                    from core import mix_session
+                    run_id = mix_session.new_run_id()
+                    mix_session.save_session(run_id, voice_audio, voice_activity, music_audio, {
+                        "mix_sr": mix_sr, "duck_amount_db": duck_amount_db,
+                        "music_volume_db": effective_music_volume_db,
+                        "fade_in_sec": fade_in_sec, "fade_out_sec": fade_out_sec,
+                        "stereo_output": bool(stereo_output), "phrases": mix_phrases,
+                        "bed_overrides": bed_profile["duck_kwargs"] if bed_profile else None,
+                        "target_lufs": target_lufs, "mono_offset": mono_offset,
+                        "output_format": output_format,
+                        "export_sr": 48000 if (use_lyria or use_upload or upsample_48k) else TARGET_SR,
+                        "use_upload": bool(use_upload), "content_type": content_type,
+                        "env": {k: v for k, v in os.environ.items() if k.startswith("MOODSCAPE_")},
+                    })
+                    mix_session.prune_sessions()
+                except Exception as e:  # Remix is a convenience; never fail a render for it
+                    logger.warning("Could not save mix session: %s", e)
+                    run_id = None
+                self.last_run_id = run_id
                 mixed = mix(
                     voice_audio,
                     voice_activity,
@@ -782,6 +805,13 @@ class MeditationPipeline:
                 target_lufs=target_lufs,
                 mono_playback_offset_db=mono_offset,
             )
+
+            if self.last_run_id:
+                try:
+                    from core import mix_session
+                    mix_session.update_params(self.last_run_id, {"output_path": output_path})
+                except Exception as e:
+                    logger.warning("Could not record output path for mix session: %s", e)
 
         finally:
             # Prevent PyTorch/MPS teardown segfaults

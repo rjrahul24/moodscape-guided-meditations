@@ -53,6 +53,7 @@ class MockMusicEngine:
 @pytest.fixture
 def temp_tts_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("MOODSCAPE_TTS_CACHE_DIR", str(tmp_path / "tts_cache"))
+    monkeypatch.setenv("MOODSCAPE_MIX_SESSIONS_DIR", str(tmp_path / "mix_sessions"))
     return tmp_path
 
 
