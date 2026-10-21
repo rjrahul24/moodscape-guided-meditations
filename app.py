@@ -230,6 +230,9 @@ def generate_meditation(
 ):
     from core import provider_ui
 
+    # A new run must never leave the Remix panel attached to the previous run.
+    pipeline.last_run_id = None
+
     # Initial status
     yield None, _render_status("Initializing Pipeline", 0.0)
 
@@ -281,7 +284,7 @@ def generate_meditation(
 
     tts_engine = provider_ui.resolve_tts_engine(provider_choice, tts_engine_choice)
 
-    if tts_engine == "elevenlabs":
+    if tts_engine == "elevenlabs" and generation_mode != "Instrumental Only":
         from core.elevenlabs_tts.client import has_api_key
         from core.elevenlabs_tts.direction import sanitize_direction
         if not has_api_key():
@@ -1301,7 +1304,7 @@ with gr.Blocks(
                 outputs=[speed_slider, duck_slider, music_volume_slider, reverb_slider, fade_in_slider, fade_out_slider],
             )
 
-            def _apply_provider(provider, mode, local_engine):
+            def _apply_provider(provider, mode, local_engine, content_type_label):
                 vis = provider_ui.provider_visibility(provider, mode)
                 cloud = provider_ui.is_cloud(provider)
                 show_kokoro = (not cloud) and local_engine == "Kokoro" \
@@ -1323,23 +1326,30 @@ with gr.Blocks(
                     updates += [gr.update(value=0.0),
                                 gr.update(choices=provider_ui.voice_choices(validation)),
                                 gr.update(value=provider_ui.api_key_banner()),
-                                gr.update(interactive=has_api_key())]
+                                gr.update(interactive=has_api_key() or mode == "Instrumental Only")]
                 else:
-                    updates += [gr.update(), gr.update(), gr.update(), gr.update(interactive=True)]
+                    # Restore the local reverb exactly as apply_content_profile sets it.
+                    from core.content_profiles import get_profile, normalize_content_type
+                    reverb_val = (0.0 if local_engine == "Chatterbox TTS" else
+                                  get_profile(normalize_content_type(content_type_label))["reverb_amount"])
+                    updates += [gr.update(value=reverb_val), gr.update(), gr.update(),
+                                gr.update(interactive=True)]
                 return updates
 
             provider_radio.change(
                 fn=_apply_provider,
-                inputs=[provider_radio, generation_mode, tts_engine_radio],
+                inputs=[provider_radio, generation_mode, tts_engine_radio, content_type_dropdown],
                 outputs=[tts_engine_radio, kokoro_settings, f5_settings, speed_slider,
                          f5_cfg_slider, microprosody_checkbox, elevenlabs_settings,
                          reverb_slider, el_voice_dropdown, el_banner, generate_btn],
             )
 
-            _cost_inputs = [script_input, content_type_dropdown, el_direction, el_voice_dropdown,
-                            el_stability, el_similarity]
+            _cost_inputs = [provider_radio, script_input, content_type_dropdown, el_direction,
+                            el_voice_dropdown, el_stability, el_similarity]
 
-            def _cost(script, ct_label, direction, voice_id, stab, sim):
+            def _cost(provider, script, ct_label, direction, voice_id, stab, sim):
+                if not provider_ui.is_cloud(provider):
+                    return ""
                 from core.content_profiles import normalize_content_type
                 return provider_ui.cost_line(script, normalize_content_type(ct_label), direction,
                                              voice_id, stab, sim)
