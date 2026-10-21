@@ -189,3 +189,15 @@ class TestElevenLabsCacheKey:
         after = compute_cache_key("x", tts_engine="f5", seed=1,
                                   env_fingerprint=tts_env_fingerprint(engine="f5"))
         assert before == after == compute_cache_key("x", tts_engine="f5", seed=1)
+
+
+def test_legacy_cache_key_format_is_pinned():
+    """Golden hash: local-engine (F5 golden path) cache keys must never change format.
+
+    Value produced by the pre-ElevenLabs compute_cache_key (1519dd5^) and the
+    current one alike; if this fails, every existing F5/Kokoro cache entry
+    would silently miss.
+    """
+    key = compute_cache_key(script="Rest.", content_type="meditation", tts_engine="f5",
+                            voice="brittney", speed=0.8, env_fingerprint="")
+    assert key == "5502ef93389a03421180042ca904edafcc236a393bfbfd6e62fd8f53e67b3eb2"
