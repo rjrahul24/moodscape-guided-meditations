@@ -222,7 +222,14 @@ def generate_meditation(
     f5_cfg_strength,
     content_type_choice,
     use_tts_cache_flag,
+    provider_choice,
+    el_voice,
+    el_stab,
+    el_sim,
+    el_dir,
 ):
+    from core import provider_ui
+
     # Initial status
     yield None, _render_status("Initializing Pipeline", 0.0)
 
@@ -272,16 +279,19 @@ def generate_meditation(
     # Resolve seed: 0 means auto
     seed = int(seed_value) if seed_value and int(seed_value) != 0 else None
 
-    # Map TTS engine label to key
-    if tts_engine_choice == "F5-TTS":
-        tts_engine = "f5"
-    elif tts_engine_choice == "Kokoro":
-        tts_engine = "kokoro"
-    elif tts_engine_choice == "Chatterbox TTS":
-        tts_engine = "chatterbox"
-    else:
-        label_map = {label: eid for label, eid in list_all_engines()}
-        tts_engine = label_map.get(tts_engine_choice, tts_engine_choice.lower())
+    tts_engine = provider_ui.resolve_tts_engine(provider_choice, tts_engine_choice)
+
+    if tts_engine == "elevenlabs":
+        from core.elevenlabs_tts.client import has_api_key
+        from core.elevenlabs_tts.direction import sanitize_direction
+        if not has_api_key():
+            yield None, _render_status("Error: ELEVENLABS_API_KEY missing", 0.0, "Add it to your .env file")
+            return
+        try:
+            sanitize_direction(el_dir)
+        except ValueError as exc:
+            yield None, _render_status("Error: invalid delivery direction", 0.0, str(exc))
+            return
 
     # Queue for streaming progress updates from the pipeline thread.
     # Items are (fraction, message) tuples; None is the sentinel for completion.
@@ -325,6 +335,10 @@ def generate_meditation(
                 uploaded_music_path=uploaded_music_file or None,
                 content_type=content_type,
                 use_tts_cache=bool(use_tts_cache_flag),
+                elevenlabs_voice_id=el_voice if tts_engine == "elevenlabs" else None,
+                elevenlabs_stability=float(el_stab) if tts_engine == "elevenlabs" else None,
+                elevenlabs_similarity=float(el_sim) if tts_engine == "elevenlabs" else None,
+                elevenlabs_direction=el_dir if tts_engine == "elevenlabs" else None,
             )
             result_container["result"] = result
         except Exception as e:
@@ -365,7 +379,12 @@ def generate_meditation(
     duration = _get_duration(output_path)
     minutes = int(duration // 60)
     seconds = int(duration % 60)
-    tts_label = {"f5": "F5-TTS", "kokoro": "Kokoro"}.get(tts_engine, "Kokoro")
+    tts_label = {"f5": "F5-TTS", "kokoro": "Kokoro", "chatterbox": "Chatterbox",
+                 "elevenlabs": "ElevenLabs v4"}.get(tts_engine, tts_engine)
+    manifest = pipeline.last_tts_manifest or {}
+    if tts_engine == "elevenlabs" and manifest:
+        tts_label += (f" ({manifest.get('chars_billed', 0):,} chars billed, "
+                      f"{manifest.get('cache_hits', 0)} chunks cached)")
     cached_tag = " (cached voice)" if "Reused cached TTS" in status_msg else ""
     detail = f"Synthesized with {tts_label}{cached_tag} + {music_model_choice} · {minutes}m {seconds}s"
     yield output_path, _render_status("Generation Complete", 1.0, detail, elapsed=elapsed)
@@ -932,6 +951,14 @@ with gr.Blocks(
         </div>
     """)
 
+    from core.provider_ui import DEFAULT_PROVIDER, PROVIDERS
+    provider_radio = gr.Radio(
+        choices=list(PROVIDERS), value=DEFAULT_PROVIDER, label="Voice Provider",
+        info="ElevenLabs = Eleven v4 cloud voices (billed per character). "
+             "Local Models = F5 / Kokoro / Chatterbox on this Mac.",
+        elem_classes="pill-radio",
+    )
+
     with gr.Tabs():
         with gr.Tab("Manual"):
             with gr.Row():
@@ -999,6 +1026,14 @@ with gr.Blocks(
                         _render_status("Ready", 0.0, "Ready to synthesize."),
                         elem_id="status-display",
                     )
+                    run_id_state = gr.State(None)
+                    with gr.Group(visible=False) as remix_group:
+                        gr.Markdown("#### Remix levels")
+                        with gr.Row():
+                            remix_voice_db = gr.Slider(-12, 12, 0, step=0.5, label="Voice level (dB)",
+                                                       info="Changes the voice-to-music balance; final loudness is re-normalized.")
+                            remix_music_db = gr.Slider(-12, 12, 0, step=0.5, label="Music level (dB)")
+                        remix_btn = gr.Button("Remix", variant="secondary")
 
                 # ── Right column: Settings Sidebar ────────────────────────────────
                 with gr.Column(scale=2, elem_classes="settings-sidebar"):
@@ -1049,6 +1084,26 @@ with gr.Blocks(
                                 label="Pacing (WPM)",
                                 info="0 = natural rhythm (recommended). 90–110 = meditation. 120–150 = narration.",
                             )
+                        from core import provider_ui
+                        from core.elevenlabs_tts.direction import DEFAULT_DIRECTION
+                        from core.elevenlabs_tts.voices import default_voice_id
+                        with gr.Group(visible=False, elem_id="elevenlabs-group") as elevenlabs_settings:
+                            el_banner = gr.Markdown(provider_ui.api_key_banner())
+                            el_voice_dropdown = gr.Dropdown(
+                                choices=provider_ui.voice_choices(), value=default_voice_id(),
+                                label="ElevenLabs Voice", elem_classes="dropdown-container",
+                            )
+                            with gr.Row():
+                                el_stability = gr.Slider(0.0, 1.0, 0.5, step=0.05, label="Stability",
+                                                         info="Lower = more expressive; higher = steadier.")
+                                el_similarity = gr.Slider(0.0, 1.0, 0.75, step=0.05, label="Similarity",
+                                                          info="How closely output matches the voice.")
+                            el_direction = gr.Textbox(
+                                value=DEFAULT_DIRECTION, label="Delivery direction",
+                                info="Voice quality only (no breaths/sighs). Eleven v4 has no speed control — "
+                                     "pacing comes from this and the script's pauses.",
+                            )
+                            el_cost = gr.Markdown("")
 
                         # ── Voice & mix experiments (A/B listening tests) ──────────────
                         with gr.Row():
@@ -1145,31 +1200,33 @@ with gr.Blocks(
 
             # ── Visibility Callbacks ───────────────────────────────────────────────
 
-            def toggle_mode_settings(mode, current_music_model, current_tts_engine):
+            def toggle_mode_settings(mode, current_music_model, current_tts_engine, provider):
                 is_inst = mode == "Instrumental Only"
                 is_voc = mode == "Vocals Only"
+                cloud = provider_ui.is_cloud(provider)
                 show_lyria = (current_music_model == "Lyria RealTime") and not is_voc
                 show_upload = (current_music_model == "Background Music") and not is_voc
-                show_kokoro = (current_tts_engine == "Kokoro") and not is_inst
-                show_f5 = (current_tts_engine != "Kokoro") and not is_inst
+                show_kokoro = (current_tts_engine == "Kokoro") and not is_inst and not cloud
+                show_f5 = (current_tts_engine != "Kokoro") and not is_inst and not cloud
                 return (
                     gr.update(visible=not is_inst),   # script_input
                     gr.update(visible=not is_voc),    # music_prompt
                     gr.update(visible=is_inst),       # music_duration
                     gr.update(visible=show_kokoro),   # kokoro_settings
-                    gr.update(visible=not is_inst),   # speed_slider
+                    gr.update(visible=not is_inst and not cloud),   # speed_slider
                     gr.update(visible=not is_voc),    # duck_slider
                     gr.update(visible=not is_voc),    # music_volume_slider
                     gr.update(visible=not is_inst),   # reverb_slider
                     gr.update(visible=show_lyria),    # lyria_settings
                     gr.update(visible=show_upload),   # upload_settings
                     gr.update(visible=show_f5),       # f5_settings
+                    gr.update(visible=cloud and not is_inst),  # elevenlabs_settings
                 )
 
             generation_mode.change(
                 fn=toggle_mode_settings,
-                inputs=[generation_mode, music_model_dropdown, tts_engine_radio],
-                outputs=[script_input, music_prompt, music_duration, kokoro_settings, speed_slider, duck_slider, music_volume_slider, reverb_slider, lyria_settings, upload_settings, f5_settings],
+                inputs=[generation_mode, music_model_dropdown, tts_engine_radio, provider_radio],
+                outputs=[script_input, music_prompt, music_duration, kokoro_settings, speed_slider, duck_slider, music_volume_slider, reverb_slider, lyria_settings, upload_settings, f5_settings, elevenlabs_settings],
             )
 
             def toggle_music_engine_ui(model, mode):
@@ -1198,24 +1255,27 @@ with gr.Blocks(
 
             refresh_backgrounds_btn.click(fn=_refresh_backgrounds, outputs=[uploaded_music])
 
-            def toggle_tts_engine_ui(tts_engine, mode):
+            def toggle_tts_engine_ui(tts_engine, mode, provider):
                 is_inst = mode == "Instrumental Only"
-                show_kokoro = (tts_engine == "Kokoro") and not is_inst
-                show_f5 = (tts_engine != "Kokoro") and not is_inst
+                cloud = provider_ui.is_cloud(provider)
+                show_kokoro = (tts_engine == "Kokoro") and not is_inst and not cloud
+                show_f5 = (tts_engine != "Kokoro") and not is_inst and not cloud
                 # Engine-optimal speed default (0.80 for calm meditation pacing)
                 speed_val = 0.80
                 speed_label = "Speech Speed"
                 reverb_val = 0.0 if tts_engine == "Chatterbox TTS" else 0.15
+                speed_update = (gr.update(value=speed_val, label=speed_label, visible=False) if cloud
+                                else gr.update(value=speed_val, label=speed_label))
                 return (
                     gr.update(visible=show_kokoro),
                     gr.update(visible=show_f5),
-                    gr.update(value=speed_val, label=speed_label),
+                    speed_update,
                     gr.update(value=reverb_val),
                 )
 
             tts_engine_radio.change(
                 fn=toggle_tts_engine_ui,
-                inputs=[tts_engine_radio, generation_mode],
+                inputs=[tts_engine_radio, generation_mode, provider_radio],
                 outputs=[kokoro_settings, f5_settings, speed_slider, reverb_slider],
             )
 
@@ -1240,6 +1300,62 @@ with gr.Blocks(
                 inputs=[content_type_dropdown, tts_engine_radio],
                 outputs=[speed_slider, duck_slider, music_volume_slider, reverb_slider, fade_in_slider, fade_out_slider],
             )
+
+            def _apply_provider(provider, mode, local_engine):
+                vis = provider_ui.provider_visibility(provider, mode)
+                cloud = provider_ui.is_cloud(provider)
+                show_kokoro = (not cloud) and local_engine == "Kokoro" \
+                    and mode != "Instrumental Only"
+                show_f5 = vis["f5_settings"] and local_engine != "Kokoro"
+                updates = [
+                    # Local Models keeps today's rule: the engine radio is always shown.
+                    gr.update(visible=not cloud),
+                    gr.update(visible=show_kokoro),
+                    gr.update(visible=show_f5),
+                    gr.update(visible=vis["speed_slider"]),
+                    gr.update(visible=vis["f5_cfg_slider"]),
+                    gr.update(visible=vis["microprosody_checkbox"]),
+                    gr.update(visible=vis["elevenlabs_settings"]),
+                ]
+                if cloud:
+                    from core.elevenlabs_tts.client import has_api_key
+                    validation = provider_ui.validate_account_voices()
+                    updates += [gr.update(value=0.0),
+                                gr.update(choices=provider_ui.voice_choices(validation)),
+                                gr.update(value=provider_ui.api_key_banner()),
+                                gr.update(interactive=has_api_key())]
+                else:
+                    updates += [gr.update(), gr.update(), gr.update(), gr.update(interactive=True)]
+                return updates
+
+            provider_radio.change(
+                fn=_apply_provider,
+                inputs=[provider_radio, generation_mode, tts_engine_radio],
+                outputs=[tts_engine_radio, kokoro_settings, f5_settings, speed_slider,
+                         f5_cfg_slider, microprosody_checkbox, elevenlabs_settings,
+                         reverb_slider, el_voice_dropdown, el_banner, generate_btn],
+            )
+
+            _cost_inputs = [script_input, content_type_dropdown, el_direction, el_voice_dropdown,
+                            el_stability, el_similarity]
+
+            def _cost(script, ct_label, direction, voice_id, stab, sim):
+                from core.content_profiles import normalize_content_type
+                return provider_ui.cost_line(script, normalize_content_type(ct_label), direction,
+                                             voice_id, stab, sim)
+
+            for comp in _cost_inputs:
+                comp.change(fn=_cost, inputs=_cost_inputs, outputs=[el_cost])
+
+            def _after_generate():
+                run_id = pipeline.last_run_id
+                return run_id, gr.update(visible=bool(run_id))
+
+            def _remix(run_id, voice_db, music_db):
+                path, message = provider_ui.remix_ui(run_id, voice_db, music_db)
+                if path is None:
+                    return gr.update(), _render_status("Remix failed", 0.0, message)
+                return path, _render_status("Remix complete", 1.0, message)
 
             generate_btn.click(
                 fn=generate_meditation,
@@ -1277,13 +1393,40 @@ with gr.Blocks(
                     f5_cfg_slider,
                     content_type_dropdown,
                     use_tts_cache_checkbox,
+                    provider_radio,
+                    el_voice_dropdown,
+                    el_stability,
+                    el_similarity,
+                    el_direction,
                 ],
                 outputs=[audio_output, status_display],
                 show_progress="full",
+                concurrency_id="render",
+                concurrency_limit=1,
+            ).then(fn=_after_generate, outputs=[run_id_state, remix_group])
+
+            remix_btn.click(
+                fn=_remix,
+                inputs=[run_id_state, remix_voice_db, remix_music_db],
+                outputs=[audio_output, status_display],
+                concurrency_id="render",
+                concurrency_limit=1,
+            )
+
+            provider_radio.change(
+                None, inputs=[provider_radio], outputs=None,
+                js="(p) => { try { localStorage.setItem('moodscape_provider', p); } catch (e) {} return p; }",
             )
 
         build_auto_tab()
         build_sandbox_tab()
+
+    demo.load(
+        None, inputs=None, outputs=[provider_radio],
+        js="() => { try { const v = localStorage.getItem('moodscape_provider'); "
+           "return (v === 'ElevenLabs' || v === 'Local Models') ? v : 'Local Models'; } "
+           "catch (e) { return 'Local Models'; } }",
+    )
 
 if __name__ == "__main__":
     # theme, css, and js moved here from gr.Blocks() per Gradio 6.0 API change.
