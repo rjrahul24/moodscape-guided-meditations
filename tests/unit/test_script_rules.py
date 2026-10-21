@@ -115,8 +115,13 @@ class PlannerSystemPromptTest(unittest.TestCase):
 
 class ElevenLabsGuideAliasTest(unittest.TestCase):
     def test_elevenlabs_uses_f5_guides(self):
+        # Same F5 template, rendered with ElevenLabs' own speaking rate.
+        from core.script_gen.duration import DEFAULT_WPM
+        f5_wpm, el_wpm = (f"{DEFAULT_WPM[e]:.0f}" for e in ("f5", "elevenlabs"))
         for ct in ("meditation", "sleep_story"):
-            self.assertEqual(load_guide("elevenlabs", ct), load_guide("f5", ct))
+            el = load_guide("elevenlabs", ct)
+            self.assertEqual(el, load_guide("f5", ct).replace(f5_wpm, el_wpm))
+            self.assertIn(f"about {el_wpm} words per minute", el)
 
 
 if __name__ == "__main__":
