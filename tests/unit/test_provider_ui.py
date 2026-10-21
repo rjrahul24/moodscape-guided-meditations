@@ -1,0 +1,61 @@
+import pytest
+
+from core import provider_ui as ui
+
+
+@pytest.fixture(autouse=True)
+def _cache(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(ui, "_VALIDATION_CACHE", None, raising=False)
+
+
+def test_resolve_engine():
+    assert ui.resolve_tts_engine("ElevenLabs", "F5-TTS") == "elevenlabs"
+    assert ui.resolve_tts_engine("Local Models", "F5-TTS") == "f5"
+    assert ui.resolve_tts_engine("Local Models", "Kokoro") == "kokoro"
+    assert ui.resolve_tts_engine("Local Models", "Chatterbox TTS") == "chatterbox"
+
+
+def test_visibility_cloud_vs_local():
+    cloud = ui.provider_visibility("ElevenLabs", "Instrumental + Vocal")
+    assert cloud["elevenlabs_settings"] and not cloud["tts_engine_radio"]
+    assert not cloud["speed_slider"] and not cloud["f5_settings"]
+    local = ui.provider_visibility("Local Models", "Instrumental + Vocal")
+    assert local["tts_engine_radio"] and not local["elevenlabs_settings"]
+    assert local["speed_slider"]
+    inst = ui.provider_visibility("ElevenLabs", "Instrumental Only")
+    assert not inst["elevenlabs_settings"]
+
+
+def test_voice_choices_mark_missing():
+    choices = dict((v, label) for label, v in ui.voice_choices({"pMsXgVXv3BLzUgSXRplE": False}))
+    assert choices["pMsXgVXv3BLzUgSXRplE"].endswith("(not in account)")
+    assert not choices["pjcYQlDFKMbcOUp6F5GD"].endswith("(not in account)")
+
+
+def test_validate_without_key_returns_none(monkeypatch):
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("ELEVEN_LABS_API_KEY", raising=False)
+    assert ui.validate_account_voices() is None
+    assert "ELEVENLABS_API_KEY" in ui.api_key_banner()
+
+
+def test_cost_line_counts_and_cache():
+    from core.elevenlabs_tts import chunk_cache
+    from core.elevenlabs_tts.engine import resolve_params
+    from core.elevenlabs_tts.preprocessor import prepare_segments
+    line = ui.cost_line("Rest here.\n\nLet go.", "meditation", None, "v", 0.5, 0.75)
+    assert "2 chunks" in line and "0/2 cached" in line
+    p = resolve_params(voice_id="v", stability=0.5, similarity=0.75)
+    first = prepare_segments("Rest here.\n\nLet go.")[0]["text"]
+    chunk_cache.store(chunk_cache.chunk_payload(first, "v", p.model_id, 0.5, 0.75, p.seed), b"\0\0", None)
+    assert "1/2 cached" in ui.cost_line("Rest here.\n\nLet go.", "meditation", None, "v", 0.5, 0.75)
+
+
+def test_cost_line_reports_bad_direction():
+    assert "voice quality" in ui.cost_line("Hi.", "meditation", "[sighs]", "v", 0.5, 0.75)
+
+
+def test_remix_ui_without_run():
+    path, msg = ui.remix_ui(None, 1.0, 0.0)
+    assert path is None and "Generate" in msg
