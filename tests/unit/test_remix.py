@@ -81,3 +81,61 @@ def test_trims_out_of_range_rejected(tmp_path, monkeypatch):
     run_id, _ = _pipeline_run(tmp_path, monkeypatch)
     with pytest.raises(ValueError, match="-12"):
         remix(run_id, 13.0, 0.0)
+
+
+def _synthetic_session(tmp_path, run_id, env):
+    t = np.arange(SR * 4) / SR
+    voice = (0.1 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+    act = np.zeros(len(t), bool); act[: SR * 2] = True
+    music = np.full(len(t), 0.05, np.float32)
+    out0 = str(tmp_path / f"{run_id}.wav")
+    sf.write(out0, np.zeros(10), SR)
+    params = {
+        "mix_sr": SR, "duck_amount_db": -16.0, "music_volume_db": -16.0,
+        "fade_in_sec": 0.5, "fade_out_sec": 0.5, "stereo_output": False,
+        "phrases": None, "bed_overrides": None, "target_lufs": -16.0, "mono_offset": -3.01,
+        "output_format": "wav", "export_sr": SR, "use_upload": True,
+        "content_type": "meditation", "env": env, "output_path": out0}
+    ms.save_session(run_id, voice, act, music, params)
+    return params
+
+
+def test_remix_env_swap_leaves_non_mix_keys_alone(tmp_path, monkeypatch):
+    import core.remix as remix_mod
+    _synthetic_session(tmp_path, "envs", {
+        "MOODSCAPE_SCRIPT_PLANNER": "saved-planner", "MOODSCAPE_F5_CFG": "9.9"})
+    monkeypatch.setenv("MOODSCAPE_SCRIPT_PLANNER", "live-planner")
+    monkeypatch.setenv("MOODSCAPE_F5_CFG", "1.2")
+    seen = {}
+    real_mix = remix_mod.mix
+
+    def spy(*a, **k):
+        seen["planner"] = os.environ.get("MOODSCAPE_SCRIPT_PLANNER")
+        seen["cfg"] = os.environ.get("MOODSCAPE_F5_CFG")
+        return real_mix(*a, **k)
+
+    monkeypatch.setattr(remix_mod, "mix", spy)
+    remix("envs", 0.0, 0.0)
+    assert seen == {"planner": "live-planner", "cfg": "1.2"}
+    assert os.environ["MOODSCAPE_SCRIPT_PLANNER"] == "live-planner"
+    assert os.environ["MOODSCAPE_F5_CFG"] == "1.2"
+
+
+def test_remix_applies_saved_mix_keys_then_restores(tmp_path, monkeypatch):
+    import core.remix as remix_mod
+    _synthetic_session(tmp_path, "mixenv", {"MOODSCAPE_SHARED_REVERB_SEND_DB": "-30"})
+    monkeypatch.delenv("MOODSCAPE_SHARED_REVERB_SEND_DB", raising=False)
+    monkeypatch.setenv("MOODSCAPE_BED_RISE_LIMIT", "1")   # live, not in saved env
+    seen = {}
+    real_mix = remix_mod.mix
+
+    def spy(*a, **k):
+        seen["send"] = os.environ.get("MOODSCAPE_SHARED_REVERB_SEND_DB")
+        seen["rise"] = os.environ.get("MOODSCAPE_BED_RISE_LIMIT")
+        return real_mix(*a, **k)
+
+    monkeypatch.setattr(remix_mod, "mix", spy)
+    remix("mixenv", 0.0, 0.0)
+    assert seen == {"send": "-30", "rise": None}
+    assert "MOODSCAPE_SHARED_REVERB_SEND_DB" not in os.environ
+    assert os.environ["MOODSCAPE_BED_RISE_LIMIT"] == "1"

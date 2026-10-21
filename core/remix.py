@@ -24,10 +24,32 @@ logger = logging.getLogger("moodscape.remix")
 TRIM_RANGE_DB = (-12.0, 12.0)
 
 
+# Env prefixes that mix() / export_audio() / the master chain actually read
+# (core/mixer.py). Remix swaps ONLY these: replacing every MOODSCAPE_* key
+# process-wide would leak the saved session's planner/F5/etc. settings into a
+# render running concurrently in another tab.
+MIX_ENV_PREFIXES = (
+    "MOODSCAPE_SPECTRAL_DUCK",      # + _DEPTH/_LO/_HI
+    "MOODSCAPE_SHARED_REVERB",      # + _SEND_DB
+    "MOODSCAPE_BED_",               # BED_RISE_LIMIT/_DB_PER_SEC/_MAX_DB, BED_*_OFFSET_LU
+    "MOODSCAPE_ADAPTIVE_BED",
+    "MOODSCAPE_LOUDNESS_DUAL_MONO",
+)
+
+
+def _is_mix_key(key: str) -> bool:
+    return key.startswith(MIX_ENV_PREFIXES)
+
+
 @contextlib.contextmanager
 def _session_env(saved: dict):
-    """Apply the MOODSCAPE_* env the original mix ran with, then restore."""
-    current = {k: v for k, v in os.environ.items() if k.startswith("MOODSCAPE_")}
+    """Apply the mix-affecting env the original mix ran with, then restore.
+
+    Only keys matching MIX_ENV_PREFIXES are touched; every other variable is
+    left exactly as it is, during and after.
+    """
+    saved = {k: v for k, v in saved.items() if _is_mix_key(k)}
+    current = {k: v for k, v in os.environ.items() if _is_mix_key(k)}
     try:
         for k in current:
             if k not in saved:
@@ -36,7 +58,7 @@ def _session_env(saved: dict):
         yield
     finally:
         for k in list(os.environ):
-            if k.startswith("MOODSCAPE_") and k not in current:
+            if _is_mix_key(k) and k not in current:
                 os.environ.pop(k, None)
         os.environ.update(current)
 
