@@ -11,6 +11,7 @@ from core.elevenlabs_tts.direction import (
     default_direction,
     sanitize_direction,
 )
+from core.elevenlabs_tts.engine import ElevenLabsEngine, ElevenLabsParams, resolve_params
 from core.elevenlabs_tts.preprocessor import estimate_billed_chars, prepare_segments
 from core.elevenlabs_tts.voices import (
     ElevenLabsVoice,
@@ -24,6 +25,8 @@ __all__ = [
     "ElevenLabsAPIError",
     "ElevenLabsClient",
     "ElevenLabsConfigError",
+    "ElevenLabsEngine",
+    "ElevenLabsParams",
     "ElevenLabsVoice",
     "default_direction",
     "default_voice_id",
@@ -31,6 +34,7 @@ __all__ = [
     "has_api_key",
     "list_voices",
     "prepare_segments",
+    "resolve_params",
     "sanitize_direction",
     "voice_for_family",
 ]
