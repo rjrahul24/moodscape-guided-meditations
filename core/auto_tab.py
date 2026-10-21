@@ -125,6 +125,12 @@ def billing_note(meta_path: str) -> str:
             f"({el.get('cache_hits', 0)} chunks cached).")
 
 
+def engine_dropdown_visibility(provider: str):
+    """Show the local Voice Engine picker only for Local Models."""
+    from core.provider_ui import is_cloud
+    return gr.update(visible=not is_cloud(provider))
+
+
 def build_auto_tab(provider=None) -> dict:
     """Construct the Auto-Generate tab. Call inside a gr.Blocks() context.
 
@@ -191,12 +197,16 @@ def build_auto_tab(provider=None) -> dict:
                         elem_classes="dropdown-container",
                     )
                     from core.engine_registry import list_all_engines
-                    tts_engine = gr.Dropdown(
-                        choices=[(label, eid) for label, eid in list_all_engines()],
-                        value="f5",
-                        label="Voice Engine",
-                        elem_classes="dropdown-container",
-                    )
+                    # The provider toggle shows/hides this container, not the
+                    # dropdown itself: toggling a Dropdown's own visibility while
+                    # the tab is open did not bring it back (Gradio 6.8).
+                    with gr.Column() as tts_engine_group:
+                        tts_engine = gr.Dropdown(
+                            choices=[(label, eid) for label, eid in list_all_engines()],
+                            value="f5",
+                            label="Voice Engine",
+                            elem_classes="dropdown-container",
+                        )
 
                 with gr.Accordion(
                     "Models", open=False, elem_classes="accordion-section"
@@ -227,15 +237,19 @@ def build_auto_tab(provider=None) -> dict:
                     planner, generator, judge]
             + ([provider] if provider is not None else []),
             outputs=[audio, script, changelog, status],
+            # Same queue as the Manual tab's Generate/Remix: one render at a
+            # time (32 GB RAM; remix swaps mix env vars process-wide).
+            concurrency_id="render",
+            concurrency_limit=1,
         )
         if provider is not None:
-            from core.provider_ui import is_cloud
-            provider.change(fn=lambda p: gr.update(visible=not is_cloud(p)),
-                            inputs=[provider], outputs=[tts_engine])
+            provider.change(fn=engine_dropdown_visibility,
+                            inputs=[provider], outputs=[tts_engine_group])
 
     return {
         "genre": genre, "band": band, "steer": steer,
         "content_type": content_type, "tts_engine": tts_engine,
+        "tts_engine_group": tts_engine_group,
         "planner": planner, "generator": generator, "judge": judge, "button": button,
         "audio": audio, "status": status, "script": script, "changelog": changelog,
     }

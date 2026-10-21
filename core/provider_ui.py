@@ -19,6 +19,19 @@ def is_cloud(provider: str) -> bool:
     return provider == "ElevenLabs"
 
 
+def restore_provider(value) -> str:
+    """Whitelist a provider restored from the browser (localStorage)."""
+    return value if value in PROVIDERS else DEFAULT_PROVIDER
+
+
+def generate_enabled(provider: str, mode: str) -> bool:
+    """Generate is disabled only for a voiced ElevenLabs run with no API key."""
+    if not is_cloud(provider) or mode == "Instrumental Only":
+        return True
+    from core.elevenlabs_tts.client import has_api_key
+    return has_api_key()
+
+
 def resolve_tts_engine(provider: str, local_choice: str) -> str:
     if is_cloud(provider):
         return "elevenlabs"

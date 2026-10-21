@@ -85,3 +85,21 @@ def test_remix_ui_os_error_returns_message(monkeypatch):
     monkeypatch.setattr(remix_mod, "remix", boom)
     path, msg = ui.remix_ui("r1", 0.0, 0.0)
     assert path is None and "read-only" in msg
+
+
+def test_restore_provider_whitelists():
+    assert ui.restore_provider("ElevenLabs") == "ElevenLabs"
+    assert ui.restore_provider("Local Models") == "Local Models"
+    for bad in (None, "", "evil<script>", 3):
+        assert ui.restore_provider(bad) == ui.DEFAULT_PROVIDER
+
+
+def test_generate_enabled(monkeypatch):
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("ELEVEN_LABS_API_KEY", raising=False)
+    assert ui.generate_enabled("ElevenLabs", "Instrumental + Vocal") is False
+    assert ui.generate_enabled("ElevenLabs", "Vocals Only") is False
+    assert ui.generate_enabled("ElevenLabs", "Instrumental Only") is True
+    assert ui.generate_enabled("Local Models", "Instrumental + Vocal") is True
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "k")
+    assert ui.generate_enabled("ElevenLabs", "Instrumental + Vocal") is True

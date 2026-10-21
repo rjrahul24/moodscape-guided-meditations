@@ -1224,12 +1224,13 @@ with gr.Blocks(
                     gr.update(visible=show_upload),   # upload_settings
                     gr.update(visible=show_f5),       # f5_settings
                     gr.update(visible=cloud and not is_inst),  # elevenlabs_settings
+                    gr.update(interactive=provider_ui.generate_enabled(provider, mode)),  # generate_btn
                 )
 
             generation_mode.change(
                 fn=toggle_mode_settings,
                 inputs=[generation_mode, music_model_dropdown, tts_engine_radio, provider_radio],
-                outputs=[script_input, music_prompt, music_duration, kokoro_settings, speed_slider, duck_slider, music_volume_slider, reverb_slider, lyria_settings, upload_settings, f5_settings, elevenlabs_settings],
+                outputs=[script_input, music_prompt, music_duration, kokoro_settings, speed_slider, duck_slider, music_volume_slider, reverb_slider, lyria_settings, upload_settings, f5_settings, elevenlabs_settings, generate_btn],
             )
 
             def toggle_music_engine_ui(model, mode):
@@ -1321,12 +1322,11 @@ with gr.Blocks(
                     gr.update(visible=vis["elevenlabs_settings"]),
                 ]
                 if cloud:
-                    from core.elevenlabs_tts.client import has_api_key
                     validation = provider_ui.validate_account_voices()
                     updates += [gr.update(value=0.0),
                                 gr.update(choices=provider_ui.voice_choices(validation)),
                                 gr.update(value=provider_ui.api_key_banner()),
-                                gr.update(interactive=has_api_key() or mode == "Instrumental Only")]
+                                gr.update(interactive=provider_ui.generate_enabled(provider, mode))]
                 else:
                     # Restore the local reverb exactly as apply_content_profile sets it.
                     from core.content_profiles import get_profile, normalize_content_type
@@ -1431,11 +1431,15 @@ with gr.Blocks(
         build_auto_tab(provider=provider_radio)
         build_sandbox_tab()
 
+    # Restore the last Voice Provider. A js-only load (fn=None) never applied
+    # its value in Gradio 6.8, so the js result is fed through a server fn
+    # (whitelisted again there), whose output sets the radio and fires its
+    # .change handlers like a user toggle would.
     demo.load(
-        None, inputs=None, outputs=[provider_radio],
+        fn=provider_ui.restore_provider, inputs=[provider_radio], outputs=[provider_radio],
         js="() => { try { const v = localStorage.getItem('moodscape_provider'); "
-           "return (v === 'ElevenLabs' || v === 'Local Models') ? v : 'Local Models'; } "
-           "catch (e) { return 'Local Models'; } }",
+           "return [(v === 'ElevenLabs' || v === 'Local Models') ? v : 'Local Models']; } "
+           "catch (e) { return ['Local Models']; } }",
     )
 
 if __name__ == "__main__":

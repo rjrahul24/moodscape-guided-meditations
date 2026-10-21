@@ -223,5 +223,33 @@ def test_billing_note(tmp_path):
     assert billing_note(str(p)) == ""
 
 
+def _deps_for(blocks, component):
+    return [fn for fn in blocks.fns.values()
+            if any(t[0] == component._id for t in fn.targets)]
+
+
+def test_auto_generate_click_shares_the_render_queue():
+    with gr.Blocks() as demo:
+        comps = build_auto_tab()
+    (dep,) = _deps_for(demo, comps["button"])
+    assert dep.concurrency_id == "render" and dep.concurrency_limit == 1
+
+
+def test_engine_dropdown_visibility_follows_provider():
+    from core.auto_tab import engine_dropdown_visibility
+    assert engine_dropdown_visibility("ElevenLabs")["visible"] is False
+    assert engine_dropdown_visibility("Local Models")["visible"] is True
+
+
+def test_provider_toggles_the_engine_container_not_the_dropdown():
+    with gr.Blocks() as demo:
+        provider = gr.Radio(choices=["ElevenLabs", "Local Models"], value="Local Models")
+        comps = build_auto_tab(provider=provider)
+    assert isinstance(comps["tts_engine_group"], gr.Column)
+    outputs = [o for fn in _deps_for(demo, provider) for o in fn.outputs]
+    assert comps["tts_engine_group"] in outputs
+    assert comps["tts_engine"] not in outputs
+
+
 if __name__ == "__main__":
     unittest.main()
