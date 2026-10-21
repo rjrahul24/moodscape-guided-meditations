@@ -31,6 +31,7 @@ BUILTIN_ENGINES = {
         "name": "Kokoro",
         "description": "Kokoro-82M lightweight neural TTS with 54-blend voice manager.",
         "base_engine": "kokoro",
+        "provider": "local",
         "default_voice": "balanced_calm",
     },
     "f5": {
@@ -38,6 +39,7 @@ BUILTIN_ENGINES = {
         "name": "F5-TTS",
         "description": "Zero-shot voice cloning diffusion transformer (Flow Matching).",
         "base_engine": "f5",
+        "provider": "local",
         "default_voice": "calm_brittney",
     },
     "chatterbox": {
@@ -45,6 +47,7 @@ BUILTIN_ENGINES = {
         "name": "Chatterbox TTS",
         "description": "Resemble AI Chatterbox 500M TTS with zero-shot cloning and emotion tuning.",
         "base_engine": "chatterbox",
+        "provider": "local",
         "default_voice": "Brittney",
         "presets": {
             "speed": 0.90,
@@ -58,6 +61,15 @@ BUILTIN_ENGINES = {
             "top_p": 1.0,
             "repetition_penalty": 1.20,
         },
+    },
+    "elevenlabs": {
+        "id": "elevenlabs",
+        "name": "ElevenLabs",
+        "description": "ElevenLabs Eleven v4 cloud TTS (48 kHz, API).",
+        "base_engine": "elevenlabs",
+        "provider": "cloud",
+        "default_voice": None,  # from assets/elevenlabs/voices.toml
+        "presets": {"reverb_amount": 0.0},
     },
 }
 
@@ -173,6 +185,14 @@ def list_all_engines() -> list[tuple[str, str]]:
     return choices
 
 
+def list_engines(provider: str | None = None) -> list[tuple[str, str]]:
+    """Built-in engines as (label, id), optionally filtered by provider."""
+    return [
+        (info["name"], eid) for eid, info in BUILTIN_ENGINES.items()
+        if provider is None or info.get("provider") == provider
+    ]
+
+
 def get_engine_info(engine_id: str) -> dict[str, Any] | None:
     """Get metadata and presets for an engine (built-in or promoted)."""
     norm_id = engine_id.strip().lower()
@@ -214,6 +234,10 @@ def get_engine(
     if norm_id == "chatterbox":
         from core.chatterbox_tts.engine import ChatterboxEngine
         return ChatterboxEngine(voice_slug=voice_slug)
+
+    if norm_id == "elevenlabs":
+        from core.elevenlabs_tts.engine import ElevenLabsEngine
+        return ElevenLabsEngine(params=kwargs.get("elevenlabs_params"))
 
     # Check promoted models
     promoted = load_promoted_models()

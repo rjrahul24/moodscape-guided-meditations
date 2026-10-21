@@ -98,3 +98,24 @@ class TestEngineRegistry(unittest.TestCase):
     def test_promote_model_empty_id_raises_value_error(self):
         with self.assertRaises(ValueError):
             promote_model(model_id="   ", display_name="Empty", base_engine="f5")
+
+
+def test_elevenlabs_registered_as_cloud():
+    from core.engine_registry import BUILTIN_ENGINES, get_engine_info
+    info = get_engine_info("elevenlabs")
+    assert info["provider"] == "cloud" and info["base_engine"] == "elevenlabs"
+    assert {BUILTIN_ENGINES[k]["provider"] for k in ("f5", "kokoro", "chatterbox")} == {"local"}
+
+
+def test_list_all_engines_stays_local_only():
+    from core.engine_registry import list_all_engines, list_engines
+    assert "elevenlabs" not in [eid for _l, eid in list_all_engines()]
+    assert list_engines("cloud") == [("ElevenLabs", "elevenlabs")]
+
+
+def test_get_engine_elevenlabs():
+    from core.elevenlabs_tts.engine import ElevenLabsEngine, resolve_params
+    from core.engine_registry import get_engine
+    p = resolve_params(voice_id="v")
+    eng = get_engine("elevenlabs", elevenlabs_params=p)
+    assert isinstance(eng, ElevenLabsEngine) and eng.params == p
