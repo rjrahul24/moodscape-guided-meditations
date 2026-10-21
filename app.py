@@ -1428,7 +1428,7 @@ with gr.Blocks(
                 js="(p) => { try { localStorage.setItem('moodscape_provider', p); } catch (e) {} return p; }",
             )
 
-        build_auto_tab()
+        build_auto_tab(provider=provider_radio)
         build_sandbox_tab()
 
     demo.load(

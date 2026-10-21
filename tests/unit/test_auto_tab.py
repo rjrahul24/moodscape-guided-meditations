@@ -191,5 +191,37 @@ class TestStatusLineVoice(unittest.TestCase):
         self.assertIn("Voice: default.", self._status(""))
 
 
+def test_handler_uses_elevenlabs_when_provider_is_cloud(monkeypatch):
+    from core import auto_tab
+    seen = {}
+
+    class _Run:
+        result, error, invalid_input = None, "stop", True
+
+        def __init__(self, *a, config=None, **k):
+            seen["engine"] = config.tts_engine
+
+        def __iter__(self):
+            return iter(())
+
+    monkeypatch.setattr(auto_tab, "StreamingRun", _Run)
+    list(auto_tab.auto_generate_handler("stress_relief", "short", "", "meditation", "f5",
+                                        "", "", "", provider="ElevenLabs"))
+    assert seen["engine"] == "elevenlabs"
+    list(auto_tab.auto_generate_handler("stress_relief", "short", "", "meditation", "f5",
+                                        "", "", "", provider="Local Models"))
+    assert seen["engine"] == "f5"
+
+
+def test_billing_note(tmp_path):
+    import json
+    from core.auto_tab import billing_note
+    p = tmp_path / "m.json"
+    p.write_text(json.dumps({"elevenlabs": {"chars_billed": 1234, "cache_hits": 2}}))
+    assert billing_note(str(p)) == "ElevenLabs: 1,234 characters billed (2 chunks cached)."
+    p.write_text("{}")
+    assert billing_note(str(p)) == ""
+
+
 if __name__ == "__main__":
     unittest.main()

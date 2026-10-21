@@ -52,6 +52,7 @@ def auto_generate_handler(
     planner_spec,
     generator_spec,
     judge_spec,
+    provider="Local Models",
 ):
     """Genre + length -> finished meditation, streaming progress to the UI."""
     steer = steer or ""
@@ -66,6 +67,10 @@ def auto_generate_handler(
     if not genre:
         yield None, "", "", "Pick a genre first."
         return
+
+    from core.provider_ui import is_cloud
+    if is_cloud(provider):
+        tts_engine = "elevenlabs"
 
     # content_type comes from the dropdown, which the genre change handler
     # pre-filled from the pack. The user's override, if any, wins -- run()
@@ -99,11 +104,28 @@ def auto_generate_handler(
     advisories = "\n".join(f"- [{v.code}] {v.message}" for v in result.violations)
     if advisories:
         status = f"{status}\n\nAdvisories:\n{advisories}"
+    note = billing_note(getattr(result, "meta_path", "") or "")
+    if note:
+        status = f"{status}\n{note}"
 
     yield result.audio_path, result.script, result.changelog, status
 
 
-def build_auto_tab() -> dict:
+def billing_note(meta_path: str) -> str:
+    """One-line ElevenLabs billing summary from a job's meta.json ('' if none)."""
+    import json
+    try:
+        with open(meta_path, encoding="utf-8") as fh:
+            el = json.loads(fh.read()).get("elevenlabs")
+    except (OSError, ValueError):
+        return ""
+    if not el:
+        return ""
+    return (f"ElevenLabs: {el.get('chars_billed', 0):,} characters billed "
+            f"({el.get('cache_hits', 0)} chunks cached).")
+
+
+def build_auto_tab(provider=None) -> dict:
     """Construct the Auto-Generate tab. Call inside a gr.Blocks() context.
 
     Returns:
@@ -202,9 +224,14 @@ def build_auto_tab() -> dict:
         button.click(
             fn=auto_generate_handler,
             inputs=[genre, band, steer, content_type, tts_engine,
-                    planner, generator, judge],
+                    planner, generator, judge]
+            + ([provider] if provider is not None else []),
             outputs=[audio, script, changelog, status],
         )
+        if provider is not None:
+            from core.provider_ui import is_cloud
+            provider.change(fn=lambda p: gr.update(visible=not is_cloud(p)),
+                            inputs=[provider], outputs=[tts_engine])
 
     return {
         "genre": genre, "band": band, "steer": steer,
