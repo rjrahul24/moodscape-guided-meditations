@@ -13,7 +13,8 @@ Two kinds of values live here:
     and whatever value the slider holds is what reaches ``MeditationPipeline.generate``.
 
   * **Behavioural values** consumed inside the pipeline that have no slider:
-    ``kokoro_paragraph_pause_sec`` / ``f5_paragraph_pause_sec`` (how long a blank-line
+    ``kokoro_paragraph_pause_sec`` / ``f5_paragraph_pause_sec`` /
+    ``elevenlabs_paragraph_pause_sec`` (how long a blank-line
     paragraph break pauses for) and the ``bed`` block (sleep-story ducking that stays
     softer and more constant). These are looked up by ``content_type`` directly.
 
@@ -38,6 +39,7 @@ CONTENT_PROFILES: dict[str, dict] = {
         "export_lufs": -16.0,  # playback loudness target (dual-mono equivalent)
         "kokoro_paragraph_pause_sec": 6.5,
         "f5_paragraph_pause_sec": 3.0,
+        "elevenlabs_paragraph_pause_sec": 3.0,
         # None => mixer uses its existing meditation-tuned ducking/calibration.
         "bed": None,
     },
@@ -55,6 +57,7 @@ CONTENT_PROFILES: dict[str, dict] = {
         "export_lufs": -18.0,  # quieter bedtime target
         "kokoro_paragraph_pause_sec": 4.0,
         "f5_paragraph_pause_sec": 2.0,
+        "elevenlabs_paragraph_pause_sec": 2.0,
         # Gentler breathing-duck + narrower calibration so the bed stays soft and
         # nearly constant instead of swinging dramatically between speech and pauses.
         # NOTE: duck *depth* is the duck_amount_db slider (-11 above), so it is not

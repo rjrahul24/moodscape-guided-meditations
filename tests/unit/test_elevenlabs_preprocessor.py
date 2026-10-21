@@ -1,0 +1,76 @@
+import re
+
+from core.elevenlabs_tts.direction import DEFAULT_DIRECTION
+from core.elevenlabs_tts.preprocessor import (
+    HARD_MAX_CHARS, estimate_billed_chars, prepare_segments,
+)
+
+SCRIPT = (
+    "Find a comfortable position. Let your eyes close.\n\n"
+    "Notice your breath. [pause:4s]\n\n"
+    "[inhale] Breathe in slowly. [exhale] And let it go."
+)
+
+
+def _speech(segs):
+    return [s["text"] for s in segs if s["type"] == "speech"]
+
+
+def test_only_speech_and_pause_types():
+    assert {s["type"] for s in prepare_segments(SCRIPT)} == {"speech", "pause"}
+
+
+def test_direction_prefixes_every_chunk():
+    for text in _speech(prepare_segments(SCRIPT)):
+        assert text.startswith(DEFAULT_DIRECTION + " ")
+
+
+def test_breath_markers_become_pauses_of_breath_length():
+    segs = prepare_segments(SCRIPT)
+    pauses = [s["duration_sec"] for s in segs if s["type"] == "pause"]
+    assert 1.5 in pauses and 1.8 in pauses
+    assert 4.0 in pauses
+    assert 3.0 in pauses  # meditation paragraph pause
+
+
+def test_sleep_story_paragraph_pause():
+    segs = prepare_segments("One.\n\nTwo.", content_type="sleep_story")
+    assert [s["duration_sec"] for s in segs if s["type"] == "pause"] == [2.0]
+
+
+def test_no_sound_or_reaction_tags_reach_api_text():
+    for text in _speech(prepare_segments(SCRIPT)):
+        body = text[len(DEFAULT_DIRECTION):]
+        assert "[" not in body
+        assert not re.search(r"\b(breath|inhale|exhale|sigh)", text.split("]", 1)[0])
+
+
+def test_oversize_paragraph_splits_under_hard_ceiling(monkeypatch):
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_CHUNK_MAX_CHARS", "1500")
+    para = " ".join(f"Sentence number {i} drifts by softly." for i in range(400))
+    texts = _speech(prepare_segments(para))
+    assert len(texts) > 1
+    assert all(len(t) <= 1500 for t in texts)
+    assert all(len(t) <= HARD_MAX_CHARS for t in texts)
+
+
+def test_never_splits_inside_brackets(monkeypatch):
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_CHUNK_MAX_CHARS", "200")
+    para = ("Rest here. " * 8) + "[keep this. Together] " + ("Rest here. " * 8)
+    for text in _speech(prepare_segments(para)):
+        body = text[len(DEFAULT_DIRECTION):]
+        assert body.count("[") == body.count("]")
+
+
+def test_numbers_expanded():
+    assert "four" in _speech(prepare_segments("Count to 4."))[0].lower()
+
+
+def test_estimate_billed_chars():
+    segs = prepare_segments(SCRIPT)
+    assert estimate_billed_chars(segs) == sum(len(t) for t in _speech(segs))
+
+
+def test_custom_direction_applied():
+    texts = _speech(prepare_segments("Hello there.", direction="warm, low voice"))
+    assert texts == ["[warm, low voice] Hello there."]

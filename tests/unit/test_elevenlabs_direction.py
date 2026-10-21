@@ -1,0 +1,35 @@
+import pytest
+
+from core.elevenlabs_tts.direction import DEFAULT_DIRECTION, default_direction, sanitize_direction
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("[soft, slow, calm voice]", "[soft, slow, calm voice]"),
+    ("soft, slow, calm voice", "[soft, slow, calm voice]"),
+    ("  [warm]  [unhurried] ", "[warm unhurried]"),
+    ("", DEFAULT_DIRECTION),
+    (None, DEFAULT_DIRECTION),
+])
+def test_normalizes(raw, expected):
+    assert sanitize_direction(raw) == expected
+
+
+@pytest.mark.parametrize("bad", ["[sighs]", "soft with a breath", "[exhales slowly]",
+                                 "laughing softly", "[yawn]", "gentle humming"])
+def test_rejects_vocal_sound_words(bad):
+    with pytest.raises(ValueError, match="voice quality"):
+        sanitize_direction(bad)
+
+
+def test_allows_words_that_merely_contain_sound_substrings():
+    assert sanitize_direction("[human, humble tone]") == "[human, humble tone]"
+
+
+def test_too_long_rejected():
+    with pytest.raises(ValueError, match="80"):
+        sanitize_direction("calm " * 30)
+
+
+def test_env_default(monkeypatch):
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_DIRECTION", "warm, low voice")
+    assert default_direction() == "[warm, low voice]"
