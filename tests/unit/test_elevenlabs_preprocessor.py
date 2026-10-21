@@ -74,3 +74,28 @@ def test_estimate_billed_chars():
 def test_custom_direction_applied():
     texts = _speech(prepare_segments("Hello there.", direction="warm, low voice"))
     assert texts == ["[warm, low voice] Hello there."]
+
+
+def test_user_typed_tags_are_stripped():
+    texts = _speech(prepare_segments("Rest now. [sighs] Soft. [laughs] ok [whisper: hi] end."))
+    assert texts
+    for text in texts:
+        body = text[len(DEFAULT_DIRECTION):]
+        assert "[" not in body and "]" not in body
+    joined = " ".join(texts)
+    for word in ("Rest now", "Soft", "end"):
+        assert word in joined
+
+
+def test_unbroken_token_longer_than_limit_is_sliced(monkeypatch):
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_CHUNK_MAX_CHARS", "1500")
+    texts = _speech(prepare_segments("a" * 12000))
+    assert len(texts) > 1
+    assert all(len(t) <= 1500 and len(t) <= HARD_MAX_CHARS for t in texts)
+
+
+def test_malformed_chunk_env_names_variable(monkeypatch):
+    import pytest
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_CHUNK_MAX_CHARS", "lots")
+    with pytest.raises(ValueError, match="MOODSCAPE_ELEVENLABS_CHUNK_MAX_CHARS"):
+        prepare_segments("Hello.")

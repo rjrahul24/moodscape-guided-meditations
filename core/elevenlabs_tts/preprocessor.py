@@ -3,7 +3,8 @@
 Scripts stay engine-neutral ([pause:Xs], [breath]/[inhale]/[exhale], blank-line
 paragraphs). Pauses and breath markers become programmatic silence; speech
 between them becomes chunks, each prefixed with the delivery direction. No
-other tag is ever added.
+other tag is ever added, and every residual ``[...]`` group in user speech text
+is stripped: only the sanitized direction prefix may contain brackets.
 """
 
 from __future__ import annotations
@@ -18,12 +19,19 @@ from core.text_utils import expand_text
 
 HARD_MAX_CHARS = 9000  # < 10,000-char eleven_v4 request limit, incl. direction
 DEFAULT_CHUNK_MAX_CHARS = 1500
+_TAG_RE = re.compile(r"\[[^\]]*\]")
 _SENTENCE_END = re.compile(r"[.!?…]+[\"')]?\s+")
 
 
 def chunk_max_chars() -> int:
     raw = os.environ.get("MOODSCAPE_ELEVENLABS_CHUNK_MAX_CHARS", str(DEFAULT_CHUNK_MAX_CHARS))
-    return max(200, min(HARD_MAX_CHARS, int(raw)))
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(
+            f"MOODSCAPE_ELEVENLABS_CHUNK_MAX_CHARS must be an integer, got {raw!r}"
+        ) from None
+    return max(200, min(HARD_MAX_CHARS, value))
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -52,6 +60,14 @@ def _split_sentences(text: str) -> list[str]:
 def _split_words(sentence: str, limit: int) -> list[str]:
     out, buf = [], ""
     for word in sentence.split():
+        if len(word) > limit:
+            if buf:
+                out.append(buf)
+                buf = ""
+            slices = [word[i:i + limit] for i in range(0, len(word), limit)]
+            out.extend(slices[:-1])
+            buf = slices[-1]
+            continue
         if buf and len(buf) + 1 + len(word) > limit:
             out.append(buf)
             buf = word
@@ -101,7 +117,9 @@ def prepare_segments(script: str, content_type: str = "meditation",
     for seg in raw:
         kind = seg["type"]
         if kind == "speech":
-            speech_buf.append(expand_text(seg["text"]).strip())
+            text = re.sub(r"\s+", " ", _TAG_RE.sub(" ", expand_text(seg["text"]))).strip()
+            if text:
+                speech_buf.append(text)
         elif kind == "pause":
             flush()
             out.append({"type": "pause", "duration_sec": float(seg["duration_sec"])})
