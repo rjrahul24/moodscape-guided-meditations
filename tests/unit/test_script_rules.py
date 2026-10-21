@@ -113,5 +113,11 @@ class PlannerSystemPromptTest(unittest.TestCase):
         self.assertIn("brief", build_planner_system_prompt("meditation", 360.0, 600.0).lower())
 
 
+class ElevenLabsGuideAliasTest(unittest.TestCase):
+    def test_elevenlabs_uses_f5_guides(self):
+        for ct in ("meditation", "sleep_story"):
+            self.assertEqual(load_guide("elevenlabs", ct), load_guide("f5", ct))
+
+
 if __name__ == "__main__":
     unittest.main()

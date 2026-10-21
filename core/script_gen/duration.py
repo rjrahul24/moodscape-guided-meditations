@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_WPM: dict[str, float] = {
     "f5": 85.0,
     "kokoro": 90.0,
+    "elevenlabs": 85.0,  # seeded from F5; recalibrate from log_estimate_accuracy after real renders
 }
 
 # Silent-beat lengths for [breath]/[inhale]/[exhale]; every engine renders
@@ -70,8 +71,23 @@ def _load_prepare_segments(engine: str):
     if engine == "kokoro":
         from core.kokoro_tts.preprocessor import prepare_segments
         return prepare_segments
+    if engine == "elevenlabs":
+        from core.elevenlabs_tts.preprocessor import prepare_segments as _el
+
+        def prepare_segments(script, content_type="meditation"):
+            # The direction prefix is not spoken text; strip it so WPM counts
+            # words only. Split only when the text starts with a "[" tag.
+            segs = _el(script, content_type=content_type)
+            out = []
+            for s in segs:
+                text = s.get("text", "")
+                if s["type"] == "speech" and text.startswith("[") and "] " in text:
+                    s = {**s, "text": text.split("] ", 1)[1]}
+                out.append(s)
+            return out
+        return prepare_segments
     raise ValueError(
-        f"Unknown engine {engine!r}. Expected 'f5' or 'kokoro'."
+        f"Unknown engine {engine!r}. Expected 'f5', 'kokoro' or 'elevenlabs'."
     )
 
 
@@ -120,7 +136,7 @@ def estimate_duration_sec(
 
     Args:
         script: Raw script text with [pause:Xs] markers.
-        engine: "f5" or "kokoro" — selects the preprocessor and default WPM.
+        engine: "f5", "kokoro" or "elevenlabs" — selects the preprocessor and default WPM.
         content_type: "meditation" or "sleep_story". Changes paragraph-break
             pause length via the content profile.
         wpm: Override the engine's default speaking rate.

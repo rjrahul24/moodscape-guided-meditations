@@ -26,6 +26,11 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8").strip()
 
 
+# Engines that share another engine's prompting guide (the script format is
+# engine-neutral; ElevenLabs renders F5-style scripts).
+GUIDE_ENGINE_ALIASES = {"elevenlabs": "f5"}
+
+
 def load_guide(
     engine: str, content_type: str, guides_dir: Path | None = None
 ) -> str:
@@ -35,7 +40,8 @@ def load_guide(
     quotes the values the code actually enforces.
     """
     root = guides_dir if guides_dir is not None else GUIDES_DIR
-    filename = GUIDE_TEMPLATE.format(content_type=content_type, engine=engine)
+    guide_engine = GUIDE_ENGINE_ALIASES.get(engine, engine)
+    filename = GUIDE_TEMPLATE.format(content_type=content_type, engine=guide_engine)
     return render_guide(_read(root / filename), guide_context(engine, content_type))
 
 

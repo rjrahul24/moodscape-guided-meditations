@@ -249,5 +249,14 @@ class TestTotalPauseSec(unittest.TestCase):
         self.assertEqual(total_pause_sec("No pauses here."), 0.0)
 
 
+class TestElevenLabsEstimate(unittest.TestCase):
+    def test_close_to_f5_and_breaths_counted(self):
+        script = "Rest here now. [pause:5s]\n\nLet go. [exhale] Soften."
+        el = estimate_duration_sec(script, engine="elevenlabs")
+        f5 = estimate_duration_sec(script, engine="f5")
+        self.assertGreater(el, 5.0 + 1.8)
+        self.assertAlmostEqual(el, f5, delta=1.0)
+
+
 if __name__ == "__main__":
     unittest.main()
