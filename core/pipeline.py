@@ -40,6 +40,7 @@ class MeditationPipeline:
         self.last_stems = None
         self.last_speech_qa = None
         self.last_tts_cache_hit = None
+        self.last_tts_manifest = None
 
     def generate(
         self,
@@ -76,6 +77,10 @@ class MeditationPipeline:
         custom_tts_engine: Any = None,
         use_tts_cache: bool = True,
         reuse_last_voice: bool = False,
+        elevenlabs_voice_id: str | None = None,
+        elevenlabs_stability: float | None = None,
+        elevenlabs_similarity: float | None = None,
+        elevenlabs_direction: str | None = None,
     ) -> tuple[str, str]:
         """Run the full pipeline and return the path to the output audio file.
 
@@ -127,12 +132,21 @@ class MeditationPipeline:
                 voice parameters match an entry in var/tts_cache/.
             reuse_last_voice: If True, reuses the most recently synthesized
                 voice regardless of script hash.
+            elevenlabs_voice_id: ElevenLabs voice id (ElevenLabs engine only;
+                None = configured default voice). Ignored by local engines.
+            elevenlabs_stability: ElevenLabs stability 0–1 (None = env/default).
+            elevenlabs_similarity: ElevenLabs similarity_boost 0–1 (None = env/default).
+            elevenlabs_direction: Bracketed voice-quality direction prepended to
+                each ElevenLabs chunk, e.g. "[soft, slow, calm voice]". Empty or
+                None falls back to the env/default; non-voice-quality tags raise
+                ValueError before any TTS work.
 
         Returns:
             Tuple of (path_to_output_file, status_message).
         """
         self.last_speech_qa = None
         self.last_tts_cache_hit = None
+        self.last_tts_manifest = None
         status_message = ""
 
         # Resolve the content profile (meditation vs sleep story). The profile
@@ -169,8 +183,22 @@ class MeditationPipeline:
         from core.engine_registry import get_engine_info
         engine_info = get_engine_info(tts_engine)
         base_engine = engine_info.get("base_engine", tts_engine) if engine_info else tts_engine
-        if base_engine not in ("f5", "kokoro", "chatterbox"):
+        if base_engine not in ("f5", "kokoro", "chatterbox", "elevenlabs"):
             base_engine = "f5" if "f5" in str(tts_engine).lower() else ("chatterbox" if "chatterbox" in str(tts_engine).lower() else "kokoro")
+
+        # ElevenLabs: resolve params + direction once, up front, so a bad
+        # direction raises before any TTS work. Local engines leave both None.
+        el_params = el_direction = None
+        if base_engine == "elevenlabs":
+            from core.elevenlabs_tts.direction import default_direction, sanitize_direction
+            from core.elevenlabs_tts.engine import resolve_params
+            el_direction = (sanitize_direction(elevenlabs_direction)
+                            if elevenlabs_direction else default_direction())
+            el_params = resolve_params(
+                voice_id=elevenlabs_voice_id, stability=elevenlabs_stability,
+                similarity=elevenlabs_similarity,
+                seed=seed if seed_is_explicit else None,
+            )
 
         mix_sr = 48000 if (use_lyria or use_upload or base_engine != "kokoro") else TARGET_SR
 
@@ -182,13 +210,17 @@ class MeditationPipeline:
                 # ── Step 1: Parse script ────────────────────────────────────────
                 _progress(progress_cb, 0.0, "Parsing meditation script...")
 
-                if base_engine == "chatterbox":
-                    from core.chatterbox_tts.preprocessor import prepare_segments as _prepare
-                elif base_engine == "f5":
-                    from core.f5_tts.preprocessor import prepare_segments as _prepare
+                if base_engine == "elevenlabs":
+                    from core.elevenlabs_tts.preprocessor import prepare_segments as _el_prepare
+                    segments = _el_prepare(script, content_type=content_type, direction=el_direction)
                 else:
-                    from core.kokoro_tts.preprocessor import prepare_segments as _prepare
-                segments = _prepare(script, content_type=content_type)
+                    if base_engine == "chatterbox":
+                        from core.chatterbox_tts.preprocessor import prepare_segments as _prepare
+                    elif base_engine == "f5":
+                        from core.f5_tts.preprocessor import prepare_segments as _prepare
+                    else:
+                        from core.kokoro_tts.preprocessor import prepare_segments as _prepare
+                    segments = _prepare(script, content_type=content_type)
 
                 if not segments:
                     raise ValueError("Script is empty or contains no content.")
@@ -217,7 +249,8 @@ class MeditationPipeline:
                     else:
                         cfg_val = float(os.environ.get("MOODSCAPE_F5_CFG", "2.0"))
                     microprosody = os.environ.get("MOODSCAPE_F5_MICROPROSODY", "0") == "1"
-                    cache_voice_id = f5_voice_slug if base_engine in ("f5", "chatterbox") else voice
+                    cache_voice_id = (el_params.voice_id if base_engine == "elevenlabs"
+                                      else (f5_voice_slug if base_engine in ("f5", "chatterbox") else voice))
                     cache_key = compute_cache_key(
                         script=script,
                         content_type=content_type,
@@ -229,6 +262,7 @@ class MeditationPipeline:
                         microprosody=microprosody,
                         seed=seed if seed_is_explicit else None,
                         env_fingerprint=tts_env_fingerprint(),
+                        extra=el_params.cache_extra(el_direction) if el_params else None,
                     )
                     cached_voice = get_cached_tts(cache_key)
                     if cached_voice is not None:
@@ -239,6 +273,12 @@ class MeditationPipeline:
                     self.last_tts_cache_hit = True
                     voice_audio = cached_voice["voice_audio"]
                     voice_activity = cached_voice["voice_activity"]
+                    tts_sr = int(cached_voice.get("sample_rate", SAMPLE_RATE))
+                    cached_el = (cached_voice.get("metadata") or {}).get("elevenlabs")
+                    self.last_tts_manifest = cached_el if isinstance(cached_el, dict) else None
+                    if (base_engine == "elevenlabs" and self.last_tts_manifest
+                            and "direction" not in self.last_tts_manifest):
+                        self.last_tts_manifest = {**self.last_tts_manifest, "direction": el_direction}
                     cached_qa = (cached_voice.get("metadata") or {}).get("speech_qa")
                     self.last_speech_qa = cached_qa if isinstance(cached_qa, dict) else None
                     status_message += "Voice: Reused cached TTS. "
@@ -247,6 +287,10 @@ class MeditationPipeline:
                     if custom_tts_engine is not None:
                         tts = custom_tts_engine
                         _progress(progress_cb, 0.05, f"Loading {tts_engine} voice model...")
+                    elif base_engine == "elevenlabs":
+                        from core.elevenlabs_tts.engine import ElevenLabsEngine
+                        tts = ElevenLabsEngine(params=el_params)
+                        _progress(progress_cb, 0.05, "Connecting to ElevenLabs...")
                     elif tts_engine == "f5":
                         from core.f5_tts.engine import F5Engine
                         tts = F5Engine(voice_slug=f5_voice_slug)
@@ -278,6 +322,10 @@ class MeditationPipeline:
                             segments, voice=f5_voice_slug, speed=speed,
                             progress_cb=tts_progress, seed=seed,
                         )
+                    elif base_engine == "elevenlabs":
+                        voice_audio, voice_activity = tts.synthesize(
+                            segments, voice=el_params.voice_id, progress_cb=tts_progress,
+                        )
                     else:
                         voice_audio, voice_activity = tts.synthesize(
                             segments, voice=voice, speed=speed,
@@ -285,7 +333,14 @@ class MeditationPipeline:
                         )
 
                     self.last_tts_cache_hit = False
-                    logger.info("TTS complete — %.1fs of audio", len(voice_audio) / SAMPLE_RATE)
+                    tts_sr = int(getattr(tts, "sample_rate", SAMPLE_RATE))
+                    logger.info("TTS complete — %.1fs of audio", len(voice_audio) / tts_sr)
+                    manifest = getattr(tts, "last_manifest", None)
+                    if isinstance(manifest, dict) and manifest:
+                        manifest = {**manifest, "direction": el_direction}
+                        self.last_tts_manifest = manifest
+                    else:
+                        self.last_tts_manifest = None
                     tts_qa = getattr(tts, "last_qa", None)
                     self.last_speech_qa = tts_qa if isinstance(tts_qa, dict) else None
 
@@ -294,7 +349,7 @@ class MeditationPipeline:
                         from core.tts_cache import save_cached_tts
                         meta = {
                             "tts_engine": tts_engine,
-                            "voice": f5_voice_slug if base_engine in ("f5", "chatterbox") else voice,
+                            "voice": cache_voice_id,
                             "speed": speed,
                             "content_type": content_type,
                             "f5_target_wpm": f5_target_wpm,
@@ -302,10 +357,12 @@ class MeditationPipeline:
                         }
                         if self.last_speech_qa:
                             meta["speech_qa"] = self.last_speech_qa
+                        if self.last_tts_manifest:
+                            meta["elevenlabs"] = self.last_tts_manifest
                         try:
                             save_cached_tts(
                                 cache_key, voice_audio, voice_activity,
-                                sample_rate=SAMPLE_RATE, metadata=meta,
+                                sample_rate=tts_sr, metadata=meta,
                             )
                         except Exception as e:
                             logger.warning("Failed to save TTS cache: %s", e)
@@ -365,38 +422,44 @@ class MeditationPipeline:
                     _progress(progress_cb, 0.38, "Preparing Chatterbox mastering chain...")
                     from core.chatterbox_tts.postprocessor import ChatterboxMasteringEngine
                     mastering_engine = ChatterboxMasteringEngine(sample_rate=SAMPLE_RATE)
+                # ElevenLabs: no mastering engine; de-essed after the upsample step.
 
                 # Upsample Voice to the mix sample rate:
                 #   Lyria / Upload path → 48 kHz (preserves native music resolution)
                 # Always use high_accuracy=True (soxr_vhq) — mathematically zero
                 # aliasing artifacts, avoids subtle metallic shimmer on non-integer
                 # ratio conversions (24 kHz → 44.1 kHz).
-                if mix_sr == 48000:
-                    from core.audio_processor import upsample_audio
-                    _progress(progress_cb, 0.39, "Upsampling TTS audio to 48kHz (High Fidelity sinc)...")
-                    voice_audio = upsample_audio(
-                        voice_audio, from_sr=SAMPLE_RATE, to_sr=48000,
-                        high_accuracy=True,
-                    )
-                    # 48000 / 24000 = 2 exactly — clean integer repeat
-                    voice_activity = np.repeat(voice_activity, 2)
+                if tts_sr == mix_sr:
+                    pass  # ElevenLabs returns pcm_48000 — already at the mix rate
                 else:
-                    from core.audio_processor import resample_highly_accurate
-                    _progress(progress_cb, 0.39, "Upsampling TTS audio to 44.1kHz (soxr_vhq)...")
-                    voice_audio = resample_highly_accurate(voice_audio, SAMPLE_RATE, TARGET_SR)
-                    voice_activity = np.repeat(voice_activity, TARGET_SR // SAMPLE_RATE)
-                pad_diff = len(voice_audio) - len(voice_activity)
-                if pad_diff > 0:
-                     voice_activity = np.concatenate([voice_activity, np.zeros(pad_diff, dtype=bool)])
-                else:
-                     voice_activity = voice_activity[:len(voice_audio)]
+                    if tts_sr != SAMPLE_RATE:
+                        raise ValueError(f"Unsupported TTS sample rate {tts_sr} for mix rate {mix_sr}.")
+                    if mix_sr == 48000:
+                        from core.audio_processor import upsample_audio
+                        _progress(progress_cb, 0.39, "Upsampling TTS audio to 48kHz (High Fidelity sinc)...")
+                        voice_audio = upsample_audio(
+                            voice_audio, from_sr=SAMPLE_RATE, to_sr=48000,
+                            high_accuracy=True,
+                        )
+                        # 48000 / 24000 = 2 exactly — clean integer repeat
+                        voice_activity = np.repeat(voice_activity, 2)
+                    else:
+                        from core.audio_processor import resample_highly_accurate
+                        _progress(progress_cb, 0.39, "Upsampling TTS audio to 44.1kHz (soxr_vhq)...")
+                        voice_audio = resample_highly_accurate(voice_audio, SAMPLE_RATE, TARGET_SR)
+                        voice_activity = np.repeat(voice_activity, TARGET_SR // SAMPLE_RATE)
+                    pad_diff = len(voice_audio) - len(voice_activity)
+                    if pad_diff > 0:
+                         voice_activity = np.concatenate([voice_activity, np.zeros(pad_diff, dtype=bool)])
+                    else:
+                         voice_activity = voice_activity[:len(voice_audio)]
 
                 # Neural denoising: DeepFilterNet MLX removes TTS synthesis noise
                 # at 48 kHz using learned spectral masks. Much better than noisereduce
                 # spectral gating — preserves soft consonants (/h/, /f/) and breath
                 # sounds that statistical methods would damage. Falls back to
                 # noisereduce if mlx-audio is not installed.
-                if mix_sr == 48000:
+                if mix_sr == 48000 and base_engine != "elevenlabs":
                     _progress(progress_cb, 0.39, "Neural denoising (DeepFilterNet MLX)...")
                     from core.deepfilter_enhancer import enhance_voice_deepfilter
                     # Kokoro's ISTFTNet output is clean enough that full-strength
@@ -410,6 +473,9 @@ class MeditationPipeline:
                     else:
                         df_wet = 1.0
                     voice_audio = enhance_voice_deepfilter(voice_audio, sr=mix_sr, wet=df_wet)
+                if base_engine == "elevenlabs":
+                    from core.elevenlabs_tts import postprocessor as el_post
+                    voice_audio = el_post.deess_elevenlabs(voice_audio, mix_sr)
 
                 # F5-TTS Phase B mastering (Kokoro skips — unified voice chain in Step 7)
                 if mastering_engine is not None:
@@ -538,10 +604,14 @@ class MeditationPipeline:
                     # explicitly overridden with MOODSCAPE_CHATTERBOX_REVERB=1.
                     chatterbox_reverb = reverb_amount if os.environ.get("MOODSCAPE_CHATTERBOX_REVERB", "0") == "1" else 0.0
                     voice_chain = build_chatterbox_voice_chain(reverb_amount=chatterbox_reverb, ir_name=reverb_ir)
+                elif base_engine == "elevenlabs":
+                    from core.elevenlabs_tts.postprocessor import build_elevenlabs_voice_chain
+                    from core.kokoro_tts.postprocessor import apply_fx
+                    voice_chain = build_elevenlabs_voice_chain(reverb_amount=reverb_amount, ir_name=reverb_ir)
                 else:
                     from core.kokoro_tts.postprocessor import build_voice_chain, apply_fx
                     voice_chain = build_voice_chain(reverb_amount=reverb_amount, ir_name=reverb_ir)
-                voice_audio = apply_fx(voice_audio, voice_chain, mix_sr, engine=base_engine)
+                voice_audio = apply_fx(voice_audio, voice_chain, mix_sr, tape_saturation=(base_engine != "elevenlabs"), engine=base_engine)
 
                 # Align voice_activity to post-FX voice length (reverb tail trim
                 # may change length slightly)
