@@ -250,12 +250,15 @@ class TestTotalPauseSec(unittest.TestCase):
 
 
 class TestElevenLabsEstimate(unittest.TestCase):
-    def test_close_to_f5_and_breaths_counted(self):
+    def test_faster_than_f5_and_breaths_counted(self):
         script = "Rest here now. [pause:5s]\n\nLet go. [exhale] Soften."
         el = estimate_duration_sec(script, engine="elevenlabs")
         f5 = estimate_duration_sec(script, engine="f5")
-        self.assertGreater(el, 5.0 + 1.8)
-        self.assertAlmostEqual(el, f5, delta=1.0)
+        self.assertGreater(el, 5.0 + 1.8)   # pause + [exhale] silence still counted
+        self.assertLess(el, f5)
+
+    def test_elevenlabs_wpm_is_measured_value(self):
+        self.assertEqual(DEFAULT_WPM["elevenlabs"], 130.0)
 
 
 if __name__ == "__main__":

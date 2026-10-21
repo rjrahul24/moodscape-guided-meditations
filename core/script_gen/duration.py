@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_WPM: dict[str, float] = {
     "f5": 85.0,
     "kokoro": 90.0,
-    "elevenlabs": 85.0,  # seeded from F5; recalibrate from log_estimate_accuracy after real renders
+    "elevenlabs": 130.0,  # measured 2026-10-21: eleven_v4 ~132 WPM (body_scan smoke, Brittney+Serena); provisional, recalibrate via log_estimate_accuracy
 }
 
 # Silent-beat lengths for [breath]/[inhale]/[exhale]; every engine renders
