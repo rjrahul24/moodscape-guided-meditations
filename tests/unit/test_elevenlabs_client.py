@@ -125,3 +125,20 @@ def test_key_name_fallback(monkeypatch):
     assert get_api_key() == "abc" and has_api_key()
     monkeypatch.setenv("ELEVENLABS_API_KEY", "primary")
     assert get_api_key() == "primary"
+
+
+def test_408_is_transient():
+    c = _client([_Err(408), b"\x00\x01"])
+    assert _convert(c)[0] == b"\x00\x01"
+    assert len(c._sdk.calls) == 2
+
+
+@pytest.mark.parametrize("exc_type", [TypeError, AttributeError])
+def test_programming_errors_are_not_retried(exc_type):
+    calls = []
+    def broken():
+        calls.append(1)
+        raise exc_type("bug")
+    with pytest.raises(exc_type):
+        with_retries(broken, attempts=3, sleep=lambda s: None)
+    assert len(calls) == 1

@@ -1,6 +1,6 @@
 """Thin wrapper over the elevenlabs SDK — the ONLY module that imports it.
 
-Retries transient failures (network/timeout, 429, 5xx) with exponential
+Retries transient failures (network/timeout, 408, 429, 5xx) with exponential
 backoff; other 4xx fail immediately with a readable message.
 """
 
@@ -56,7 +56,7 @@ def _status_of(exc: BaseException) -> int | None:
 
 
 def _is_transient(status: int | None) -> bool:
-    return status is None or status == 429 or status >= 500
+    return status is None or status in (408, 429) or status >= 500
 
 
 def _describe(status: int | None, exc: BaseException) -> str:
@@ -69,7 +69,9 @@ def with_retries(fn, *, attempts: int, sleep=time.sleep):
     for attempt in range(1, attempts + 1):
         try:
             return fn()
-        except ElevenLabsAPIError:
+        except (ElevenLabsAPIError, TypeError, AttributeError):
+            # Programming errors (bad kwargs, SDK API drift) are not transient:
+            # surface them unchanged instead of retrying and masking them.
             raise
         except Exception as exc:  # noqa: BLE001 — classified below
             status = _status_of(exc)
