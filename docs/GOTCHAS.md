@@ -25,9 +25,9 @@ Hard-won lessons. The most load-bearing entries are repeated in `CLAUDE.md`; the
 
 - **No vocal sounds**: breath markers render as silence in every engine. ElevenLabs strips every user-typed `[...]` tag from speech, and `direction.sanitize_direction()` rejects sound words (breath/sigh/laugh/yawn/hum etc., including inflections and interjections like "mm-hmm"). Don't reintroduce sound samples or sound-word directions.
 - **Eleven v4 has no speed/style**: pacing = direction + punctuation + programmatic silence. The UI hides Speed for ElevenLabs; speed is not in its cache key.
-- **Cache keys**: `MOODSCAPE_ELEVENLABS_*` vars affect only ElevenLabs keys (`tts_env_fingerprint(engine="elevenlabs")`), never F5/Kokoro/Chatterbox keys. A whole-render cache hit reports `chars_billed` 0.
+- **Cache keys**: All `MOODSCAPE_ELEVENLABS_*` vars except `_CACHE_DIR` and `_MAX_RETRIES` are fingerprinted, and only into ElevenLabs keys (`tts_env_fingerprint(engine="elevenlabs")`); they never affect F5/Kokoro/Chatterbox keys. A whole-render cache hit reports `chars_billed` 0.
 - **API key**: `ELEVENLABS_API_KEY`, falling back to `ELEVEN_LABS_API_KEY`. Stitching sends up to 3 `previous_request_ids`.
-- **Mix sessions**: ~350 MB each for 15 min; newest `MOODSCAPE_MIX_SESSIONS_KEEP` (5) kept. Remix and Generate share one Gradio concurrency group.
+- **Mix sessions** exist only for voice + music renders (not Vocals Only / Instrumental Only), so Remix needs one. ~350 MB each for 15 min; newest `MOODSCAPE_MIX_SESSIONS_KEEP` (5) kept. Remix and Generate share one Gradio concurrency group.
 - **`tests/__init__.py` must stay**: it stops site-packages `tests` packages from shadowing the repo's.
 
 ## Mixing & Mastering

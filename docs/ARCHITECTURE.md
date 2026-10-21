@@ -547,7 +547,7 @@ is ADVISORY. The full code-by-code reference is in
 
 ## Remix
 
-`mix()` inputs (processed voice, activity mask, processed music, params, and the `MOODSCAPE_*` env in effect) are saved as a mix session in `var/mix_sessions/` (`core/mix_session.py`) at the end of each run; the newest `MOODSCAPE_MIX_SESSIONS_KEEP` (5) are kept (~350 MB each for 15 min). `core/remix.py` reloads one and re-runs only mix → master → export with new voice/music trims, bed/duck and fade settings, so no TTS or music is regenerated. Remix and Generate share one Gradio concurrency group.
+`mix()` inputs (processed voice, activity mask, processed music, params, and the `MOODSCAPE_*` env in effect) are saved as a mix session (voice + music renders only, not Vocals Only / Instrumental Only) in `var/mix_sessions/` (`core/mix_session.py`) at the end of each run; the newest `MOODSCAPE_MIX_SESSIONS_KEEP` (5) are kept (~350 MB each for 15 min). `core/remix.py` reloads one and re-runs only mix → master → export with new voice/music trims, bed/duck and fade settings, so no TTS or music is regenerated. Remix and Generate share one Gradio concurrency group.
 
 ## Test Coverage Map
 

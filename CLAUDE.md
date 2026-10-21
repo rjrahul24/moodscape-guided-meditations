@@ -61,7 +61,7 @@ python scripts/ab_export.py --a <base>/<config> --b <new>/<config> --out var/eva
 │   ├── streaming_run.py               # threaded progress streaming for the UI
 │   └── auto_tab.py                    # Gradio "Auto-Generate" tab (peer of "Manual" under app.py's gr.Tabs())
 ├── eval/testset.toml               # fixed 24-job evaluation set
-├── scripts/                          # generate.py · separate_worker.py ·  tag_backgrounds.py · eval_genres.py · ab_export.py · ab_listen_page.py · ab_import_answers.py · ab_score.py · ab_chain.py (spec → chain.sh) · ab_review.py (spec → REVIEW.md)
+├── scripts/                          # generate.py · separate_worker.py · tag_backgrounds.py · eval_genres.py · ab_export.py · ab_listen_page.py · ab_import_answers.py · ab_score.py · ab_chain.py (spec → chain.sh) · ab_review.py (spec → REVIEW.md)
 ├── tests/unit/  tests/integration/   # tests/__init__.py exists so site-packages `tests` packages don't shadow the repo's
 │   └── conftest.py                   # pytest fixtures for genre tests
 ├── assets/                           # tracked in git
@@ -89,7 +89,7 @@ python scripts/ab_export.py --a <base>/<config> --b <new>/<config> --out var/eva
 6. **TTS upsample** (local only; ElevenLabs is already 48 kHz) 24 → 48 kHz via `audio_processor.upsample_audio(high_accuracy=True)`; then per-chunk humanize (Kokoro)
 7. **Voice FX** → `build_voice_chain()` + `apply_fx()`; then `mixer.normalize_loudness()` to −18 LUFS
 8. **Music FX** → `make_{engine}_music_chain()` + `make_vocal_pocket_chain()`
-9. **Mix** → `mixer.mix()` (breathing sidechain duck — deep gradual S-curve, rises in pauses; exponential fades). Saves a mix session (`var/mix_sessions/`) so Remix can re-run mix → export without TTS. Bed + duck levels auto-calibrated per session from measured stem LUFS (`mixer.calibrate_music_bed`; disable with `MOODSCAPE_ADAPTIVE_BED=0`)
+9. **Mix** → `mixer.mix()` (breathing sidechain duck — deep gradual S-curve, rises in pauses; exponential fades). Saves a mix session (`var/mix_sessions/`; voice + music renders only, not Vocals Only / Instrumental Only) so Remix can re-run mix → export without TTS. Bed + duck levels auto-calibrated per session from measured stem LUFS (`mixer.calibrate_music_bed`; disable with `MOODSCAPE_ADAPTIVE_BED=0`)
 10. **Master** → `make_master_chain()` (HPF → gentle bus comp → +1 dB air shelf; **no** limiter)
 11. **QA** → `qa_monitor.run_qa_checks()`
 12. **Export** → `mixer.export_audio()` (LUFS-normalize to playback −16 (sleep −18); mono files sit 3 dB lower so dual-mono playback hits the target → `true_peak_limit()` to −1 dBTP → WAV/MP3)
@@ -174,7 +174,7 @@ The ones that bite most often. Full list in [docs/GOTCHAS.md](docs/GOTCHAS.md).
 - **Breathing duck** → `mixer.mix()` uses `apply_breathing_duck` (deep gradual S-curve, rises in pauses). Bed/duck levels are auto-calibrated per session (`calibrate_music_bed`, targets: bed 14.5 LU under voice in pauses, 30.5 LU under during speech); `MOODSCAPE_ADAPTIVE_BED=0` restores the fixed −16/−16 constants. The old multiband/`hold_ms` reactive ducker has been removed.
 - **Intro fade-in** → default **1.5 s**, gentle exponential (rising steepness **2.0**, not 4.0). A 3 s steepness-4 fade read as "2–3 s of silence then music". `apply_fades` uses steepness 2.0 for the rising curve only (fade-out stays 4.0). Slider in `app.py`, default in `pipeline.generate`.
 - **Prompting guides are templates.** `{{NAME}}` placeholders in `docs/prompting_guides/vocal_*` are rendered from code constants by `script_gen/guide_context.py`. Never hard-code a chunk limit, speed, WPM or pause length in a guide. An unknown placeholder fails the run before any LLM call.
-- **TTS cache keys include every `MOODSCAPE_F5_*` / `MOODSCAPE_CHATTERBOX_*` env var** → a new TTS-affecting env var must use that prefix or the cache serves a stale voice. `MOODSCAPE_ELEVENLABS_*` vars count only for ElevenLabs keys (`tts_env_fingerprint(engine="elevenlabs")`) and never touch F5/Kokoro/Chatterbox keys.
+- **TTS cache keys include every `MOODSCAPE_F5_*` / `MOODSCAPE_CHATTERBOX_*` env var** → a new TTS-affecting env var must use that prefix or the cache serves a stale voice. `MOODSCAPE_ELEVENLABS_*` vars count only for ElevenLabs keys (`tts_env_fingerprint(engine="elevenlabs")`) and never touch F5/Kokoro/Chatterbox keys. The prefix is necessary but not sufficient: `_TTS_ENV_EXCLUDE` in `core/tts_cache.py` leaves out `MOODSCAPE_ELEVENLABS_CACHE_DIR` and `_MAX_RETRIES`.
 - **No vocal sounds** → breath markers (`[breath]`/`[inhale]`/`[exhale]`) render as silence in every engine (the breath-sample feature is gone). ElevenLabs strips every user-typed `[...]` tag from speech, and the direction sanitizer (`core/elevenlabs_tts/direction.py`) rejects sound words (breath/sigh/laugh/yawn/hum etc., incl. inflections and "mm-hmm"). Don't reintroduce sound samples or sound-word directions.
 - **Eleven v4 has no speed/style** → pacing = bracketed direction + punctuation + programmatic silence; the UI hides Speed for ElevenLabs and speed is not in its cache key. A whole-render cache hit reports `chars_billed` 0. Stitching sends up to 3 `previous_request_ids`. Details: [docs/model_implementation_guides/elevenlabs_v4.md](docs/model_implementation_guides/elevenlabs_v4.md).
 - **Mix sessions are big** → each is ~350 MB for 15 min; only the newest `MOODSCAPE_MIX_SESSIONS_KEEP` (5) are kept. Remix and Generate share one Gradio concurrency group.
@@ -223,13 +223,13 @@ From the 2026-06-13 research pass ([Research Execution Process Outline.md]). Bug
 | `MOODSCAPE_CONTENT_CHECK` (**1**) | Judge-model check for sensitive wording (illness/medical, pregnancy, medication/surgery, medical settings, children/younger self, non-grief death, self-harm, weight); the pack's own subject is allowed; one `SENSITIVE_CONTENT` repair, ADVISORY after; result in meta `content_check`. `0` = off. | `core/script_gen/content_check.py`, `core/auto_generate.py` |
 | `MOODSCAPE_VOICE_BY_FAMILY` (**0**) | `1` picks the narrator per genre family from measured clip traits; `0` keeps Brittney. `voice_map.toml` overrides apply either way. | `core/voice_selection.py` |
 | `MOODSCAPE_DF_STREAMING` (**0**) | `1` streams DeepFilterNet in 4 s chunks (bounded MLX graph, numerically equivalent, ~21× slower); default offline. MLX cache freed after every call. | `core/deepfilter_enhancer.py` |
-| `MOODSCAPE_ELEVENLABS_MODEL` (`eleven_v4`) | ElevenLabs model override (experiments only). All `MOODSCAPE_ELEVENLABS_*` vars are in the cache key for ElevenLabs only. | `core/elevenlabs_tts/client.py` |
+| `MOODSCAPE_ELEVENLABS_MODEL` (`eleven_v4`) | ElevenLabs model override (experiments only). All `MOODSCAPE_ELEVENLABS_*` vars except `_CACHE_DIR` and `_MAX_RETRIES` are fingerprinted, and only into ElevenLabs keys. | `core/elevenlabs_tts/client.py` |
 | `MOODSCAPE_ELEVENLABS_STABILITY` / `_SIMILARITY` (0.5/0.75) | Defaults behind the ElevenLabs UI sliders. | `core/elevenlabs_tts/engine.py` |
 | `MOODSCAPE_ELEVENLABS_DIRECTION` (`[soft, slow, calm voice]`) | Default delivery direction prefixed to every chunk; sound words rejected. | `core/elevenlabs_tts/direction.py` |
 | `MOODSCAPE_ELEVENLABS_SEED` (42) | Best-effort determinism. | `core/elevenlabs_tts/engine.py` |
-| `MOODSCAPE_ELEVENLABS_CHUNK_MAX_CHARS` (1500) / `_XFADE_MS` (30) / `_CHUNK_LUFS` (−21, `off`) | Chunk size, join crossfade, per-chunk loudness match. | `core/elevenlabs_tts/preprocessor.py`, `assembly.py` |
-| `MOODSCAPE_ELEVENLABS_STITCH` (**1**) / `_MAX_RETRIES` (3) | Send up to 3 `previous_request_ids`; transient retry budget. | `core/elevenlabs_tts/client.py` |
-| `MOODSCAPE_ELEVENLABS_DEESS` (**1**) | Gentle split-band de-ess on the ElevenLabs voice (applied after the cache). | `core/elevenlabs_tts/postprocessor.py` |
+| `MOODSCAPE_ELEVENLABS_CHUNK_MAX_CHARS` (1500) / `_XFADE_MS` (30) / `_CHUNK_LUFS` (−21, `off`) | Chunk size, join crossfade, per-chunk loudness match. | `core/elevenlabs_tts/engine.py` (`_XFADE_MS`, `_STITCH`), `preprocessor.py`, `assembly.py` |
+| `MOODSCAPE_ELEVENLABS_STITCH` (**1**) / `_MAX_RETRIES` (3) | Send up to 3 `previous_request_ids`; transient retry budget. | `core/elevenlabs_tts/engine.py` (`_STITCH`); `client.py` caps at 3 ids and reads `_MAX_RETRIES` |
+| `MOODSCAPE_ELEVENLABS_DEESS` (**1**) | Gentle split-band de-ess on the ElevenLabs voice (applied after the TTS cache, but its prefix still puts it in the ElevenLabs cache key; harmless). | `core/elevenlabs_tts/postprocessor.py` |
 | `MOODSCAPE_ELEVENLABS_CACHE_DIR` (`var/elevenlabs_cache`) | Per-chunk PCM cache location. | `core/elevenlabs_tts/chunk_cache.py` |
 | `MOODSCAPE_MIX_SESSIONS_KEEP` (**5**) | Newest mix sessions kept for Remix (~350 MB each for 15 min); not a TTS var. | `core/mix_session.py::prune_sessions` |
 

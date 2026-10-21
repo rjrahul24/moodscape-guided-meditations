@@ -25,10 +25,10 @@ Released 2026-09-28. Sources: [What is Eleven v4](https://elevenlabs.io/docs/hel
 - **48 kHz, clean chain**: audio is requested as `pcm_48000`, so there is no 24 to 48 kHz upsample and no DeepFilterNet or F5 mastering engine. Post-processing is a gentle split-band de-ess (`MOODSCAPE_ELEVENLABS_DEESS`), an HPF and optional room reverb.
 - **Caches**:
   - Per-chunk PCM cache in `var/elevenlabs_cache` (`MOODSCAPE_ELEVENLABS_CACHE_DIR`). Request ids are excluded from the key, and speed is not part of it (v4 has no speed).
-  - Whole-render cache via `core/tts_cache.py`. `MOODSCAPE_ELEVENLABS_*` vars enter the fingerprint only for ElevenLabs keys (`tts_env_fingerprint(engine="elevenlabs")`); they never affect F5/Kokoro/Chatterbox keys.
+  - Whole-render cache via `core/tts_cache.py`. All `MOODSCAPE_ELEVENLABS_*` vars except `_CACHE_DIR` and `_MAX_RETRIES` enter the fingerprint, and only for ElevenLabs keys (`tts_env_fingerprint(engine="elevenlabs")`); they never affect F5/Kokoro/Chatterbox keys.
   - A whole-render cache hit reports `chars_billed: 0` in meta (the original count is kept as `chars_cached`).
 - **Billing**: per character; the UI shows a cost line and `meta.json` records `chars_billed`.
-- **Remix**: after mixing, the pipeline saves a mix session (`var/mix_sessions/`, `core/mix_session.py`) so `core/remix.py` can re-run only mix, master and export without paying for TTS again. Sessions are large (~350 MB for 15 min of 48 kHz float32); the newest `MOODSCAPE_MIX_SESSIONS_KEEP` (default 5) are kept. Remix and Generate share one Gradio concurrency group so they never run together.
+- **Remix**: for voice + music renders only (not Vocals Only / Instrumental Only), after mixing, the pipeline saves a mix session (`var/mix_sessions/`, `core/mix_session.py`) so `core/remix.py` can re-run only mix, master and export without paying for TTS again. Sessions are large (~350 MB for 15 min of 48 kHz float32); the newest `MOODSCAPE_MIX_SESSIONS_KEEP` (default 5) are kept. Remix and Generate share one Gradio concurrency group so they never run together.
 
 ## Tuning knobs
 
@@ -44,7 +44,7 @@ Released 2026-09-28. Sources: [What is Eleven v4](https://elevenlabs.io/docs/hel
 | `MOODSCAPE_ELEVENLABS_CHUNK_LUFS` | -21 (`off` disables) | Per-chunk loudness match |
 | `MOODSCAPE_ELEVENLABS_STITCH` | 1 | Send `previous_request_ids` (max 3) |
 | `MOODSCAPE_ELEVENLABS_MAX_RETRIES` | 3 | Transient retry budget |
-| `MOODSCAPE_ELEVENLABS_DEESS` | 1 | Gentle split-band de-ess (applied after the cache) |
+| `MOODSCAPE_ELEVENLABS_DEESS` | 1 | Gentle split-band de-ess (applied after the cache, but still in the ElevenLabs cache key via its prefix; harmless) |
 | `MOODSCAPE_ELEVENLABS_CACHE_DIR` | `var/elevenlabs_cache` | Per-chunk PCM cache |
 | `MOODSCAPE_MIX_SESSIONS_KEEP` | 5 | Remix session retention (not a TTS var) |
 
