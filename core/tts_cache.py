@@ -26,7 +26,11 @@ logger = logging.getLogger("moodscape.tts_cache")
 # Default directory for persistent TTS cache (under project var/)
 DEFAULT_CACHE_DIR = Path(__file__).resolve().parent.parent / "var" / "tts_cache"
 
-_TTS_ENV_PREFIXES = ("MOODSCAPE_F5_", "MOODSCAPE_CHATTERBOX_", "MOODSCAPE_ELEVENLABS_")
+# Shared prefixes are fingerprinted for every engine (unchanged legacy keys);
+# MOODSCAPE_ELEVENLABS_* only for the ElevenLabs engine, so a cloud setting in
+# .env never invalidates F5/Kokoro/Chatterbox cache entries.
+_TTS_ENV_PREFIXES = ("MOODSCAPE_F5_", "MOODSCAPE_CHATTERBOX_")
+_ELEVENLABS_ENV_PREFIX = "MOODSCAPE_ELEVENLABS_"
 # Prefixed vars that never change rendered audio (paths, retry budgets).
 _TTS_ENV_EXCLUDE = {"MOODSCAPE_ELEVENLABS_CACHE_DIR", "MOODSCAPE_ELEVENLABS_MAX_RETRIES"}
 
@@ -38,10 +42,14 @@ def get_cache_dir() -> Path:
     return cache_dir
 
 
-def tts_env_fingerprint(environ: Mapping[str, str] | None = None) -> str:
-    """Stable string of every set TTS-affecting env var, so flag arms never share a cache entry."""
+def tts_env_fingerprint(environ: Mapping[str, str] | None = None, *, engine: str | None = None) -> str:
+    """Stable string of every set TTS-affecting env var, so flag arms never share a cache entry.
+
+    ``MOODSCAPE_ELEVENLABS_*`` vars count only when ``engine == "elevenlabs"``.
+    """
     env = os.environ if environ is None else environ
-    items = sorted((k, v) for k, v in env.items() if k.startswith(_TTS_ENV_PREFIXES) and k not in _TTS_ENV_EXCLUDE)
+    prefixes = _TTS_ENV_PREFIXES + ((_ELEVENLABS_ENV_PREFIX,) if engine == "elevenlabs" else ())
+    items = sorted((k, v) for k, v in env.items() if k.startswith(prefixes) and k not in _TTS_ENV_EXCLUDE)
     return ";".join(f"{k}={v}" for k, v in items)
 
 

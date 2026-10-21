@@ -30,6 +30,18 @@ def test_too_long_rejected():
         sanitize_direction("calm " * 30)
 
 
+def test_whitespace_only_uses_env_default(monkeypatch):
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_DIRECTION", "warm, low voice")
+    assert sanitize_direction("   ") == "[warm, low voice]"
+
+
+@pytest.mark.parametrize("env_val", ["   ", "[ ]", ""])
+def test_blank_env_falls_back_to_default(monkeypatch, env_val):
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_DIRECTION", env_val)
+    assert default_direction() == DEFAULT_DIRECTION
+    assert sanitize_direction("   ") == DEFAULT_DIRECTION
+
+
 def test_env_default(monkeypatch):
     monkeypatch.setenv("MOODSCAPE_ELEVENLABS_DIRECTION", "warm, low voice")
     assert default_direction() == "[warm, low voice]"

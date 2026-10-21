@@ -27,7 +27,10 @@ class FakeEL(SpeechEngine):
 
     def __init__(self):
         self.synth = 0
-        self.last_manifest = {"chars_billed": 42, "cache_hits": 0}
+        self.last_manifest = {"model_id": "eleven_v4", "voice_id": "v", "stability": 0.5,
+                              "similarity": 0.75, "seed": 42, "chars_billed": 42,
+                              "chars_cached": 8, "cache_hits": 1, "cache_misses": 2,
+                              "request_ids": ["r1", "r2"]}
         self.last_qa = None
 
     def load_model(self): pass

@@ -37,11 +37,51 @@ def test_elevenlabs_branch_skips_upsample_and_denoise(env):
 
 
 def test_cache_hit_restores_48k_and_manifest(env):
+    from core.elevenlabs_tts.preprocessor import prepare_segments
     pipe, eng = MeditationPipeline(), FakeEL()
     _run(pipe, eng)
+    first = dict(pipe.last_tts_manifest)
+    assert first["chars_billed"] == 42 and "tts_cache_hit" not in first
     _run(pipe, eng)
     assert eng.synth == 1 and pipe.last_tts_cache_hit is True
-    assert pipe.last_tts_manifest["chars_billed"] == 42
+    m = pipe.last_tts_manifest
+    # A free re-run reports this run's billing, not the original render's.
+    assert m["chars_billed"] == 0 and m["cache_misses"] == 0
+    assert m["chars_cached"] == 42 + 8
+    n_speech = sum(1 for s in prepare_segments("Close your eyes. [pause:2s]\n\nRest.",
+                                               direction=first["direction"])
+                   if s["type"] == "speech")
+    assert m["cache_hits"] == n_speech
+    assert m["tts_cache_hit"] is True
+    # Settings, request ids and direction survive.
+    for k in ("model_id", "voice_id", "stability", "similarity", "seed", "request_ids", "direction"):
+        assert m[k] == first[k]
+
+
+def test_injected_elevenlabs_engine_uses_pipeline_params(env, tmp_path, monkeypatch):
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_CACHE_DIR", str(tmp_path / "el_chunks"))
+    import numpy as np
+    from core.elevenlabs_tts.engine import ElevenLabsEngine, resolve_params
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+        def convert(self, text, voice_id, **kw):
+            self.calls.append(dict(text=text, voice_id=voice_id, **kw))
+            t = np.arange(24000) / 48000
+            return (0.3 * np.sin(2 * np.pi * 220 * t) * 32767).astype(np.int16).tobytes(), "rid"
+
+    client = FakeClient()
+    eng = ElevenLabsEngine(params=resolve_params(voice_id="v", stability=0.5), client=client)
+    _run(MeditationPipeline(), eng, elevenlabs_stability=0.6)
+    assert client.calls and all(c["stability"] == 0.6 for c in client.calls)
+
+
+def test_speed_change_does_not_miss_elevenlabs_cache(env):
+    pipe, eng = MeditationPipeline(), FakeEL()
+    _run(pipe, eng, speed=0.8)
+    _run(pipe, eng, speed=0.75)
+    assert eng.synth == 1 and pipe.last_tts_cache_hit is True
 
 
 def test_changed_elevenlabs_param_misses_cache(env):
@@ -81,6 +121,7 @@ def test_local_engine_cache_key_ignores_elevenlabs_params(tmp_path, monkeypatch)
     monkeypatch.setenv("MOODSCAPE_TTS_CACHE_DIR", str(tmp_path / "tts"))
     monkeypatch.setenv("MOODSCAPE_MIX_SESSIONS_DIR", str(tmp_path / "sessions"))
     monkeypatch.setattr("core.upload_music.UploadMusicEngine", FakeMusic)
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_STABILITY", "0.6")
     from core import tts_cache
     seen = []
     real = tts_cache.compute_cache_key
@@ -91,3 +132,4 @@ def test_local_engine_cache_key_ignores_elevenlabs_params(tmp_path, monkeypatch)
                                   uploaded_music_path="dummy.wav",
                                   elevenlabs_stability=0.9, elevenlabs_voice_id="zzz")
     assert seen and seen[0].get("extra") is None
+    assert "MOODSCAPE_ELEVENLABS_" not in seen[0]["env_fingerprint"]

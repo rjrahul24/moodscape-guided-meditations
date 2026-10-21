@@ -26,11 +26,24 @@ _SOUND_RE = re.compile(
 
 
 def sanitize_direction(text: str | None) -> str:
-    """Normalize to a single ``[...]`` group; reject sound words and overlong text."""
+    """Normalize to a single ``[...]`` group; reject sound words and overlong text.
+
+    Input with no content (empty, whitespace, ``[ ]``) resolves to ``default_direction()``.
+    """
+    return _sanitize(text, empty=default_direction)
+
+
+def default_direction() -> str:
+    raw = (os.environ.get("MOODSCAPE_ELEVENLABS_DIRECTION") or "").strip() or DEFAULT_DIRECTION
+    # A contentless env value (e.g. "[ ]") falls back to the constant, never recursing.
+    return _sanitize(raw, empty=lambda: DEFAULT_DIRECTION)
+
+
+def _sanitize(text: str | None, empty) -> str:
     inner = re.sub(r"[\[\]]", " ", text or "")
     inner = re.sub(r"\s+", " ", inner).strip(" ,")
     if not inner:
-        return DEFAULT_DIRECTION
+        return empty()
     match = _SOUND_RE.search(re.sub(r"[_-]", " ", inner))
     if match:
         raise ValueError(
@@ -41,7 +54,3 @@ def sanitize_direction(text: str | None) -> str:
     if len(result) > MAX_DIRECTION_CHARS:
         raise ValueError(f"Delivery direction is {len(result)} chars; max is {MAX_DIRECTION_CHARS}.")
     return result
-
-
-def default_direction() -> str:
-    return sanitize_direction(os.environ.get("MOODSCAPE_ELEVENLABS_DIRECTION") or DEFAULT_DIRECTION)

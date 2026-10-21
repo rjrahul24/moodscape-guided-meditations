@@ -1,5 +1,7 @@
 """Unit tests for core/tts_cache.py."""
 
+import os
+
 import numpy as np
 import pytest
 from pathlib import Path
@@ -165,5 +167,25 @@ class TestElevenLabsCacheKey:
     def test_elevenlabs_env_in_fingerprint_except_non_audio_vars(self):
         fp = tts_env_fingerprint({"MOODSCAPE_ELEVENLABS_SEED": "7",
                                   "MOODSCAPE_ELEVENLABS_CACHE_DIR": "/x",
-                                  "MOODSCAPE_ELEVENLABS_MAX_RETRIES": "5"})
+                                  "MOODSCAPE_ELEVENLABS_MAX_RETRIES": "5"}, engine="elevenlabs")
         assert fp == "MOODSCAPE_ELEVENLABS_SEED=7"
+
+    @pytest.mark.parametrize("engine", [None, "f5", "kokoro", "chatterbox"])
+    def test_elevenlabs_env_excluded_for_other_engines(self, engine):
+        env = {"MOODSCAPE_F5_CFG": "1.2", "MOODSCAPE_ELEVENLABS_STABILITY": "0.6"}
+        assert tts_env_fingerprint(env, engine=engine) == "MOODSCAPE_F5_CFG=1.2"
+
+    def test_elevenlabs_fingerprint_includes_shared_and_own_prefixes(self):
+        env = {"MOODSCAPE_F5_CFG": "1.2", "MOODSCAPE_ELEVENLABS_STABILITY": "0.6"}
+        assert tts_env_fingerprint(env, engine="elevenlabs") == \
+            "MOODSCAPE_ELEVENLABS_STABILITY=0.6;MOODSCAPE_F5_CFG=1.2"
+
+    def test_f5_cache_key_unchanged_by_elevenlabs_env(self, monkeypatch):
+        for k in [k for k in os.environ if k.startswith("MOODSCAPE_")]:
+            monkeypatch.delenv(k, raising=False)
+        before = compute_cache_key("x", tts_engine="f5", seed=1,
+                                   env_fingerprint=tts_env_fingerprint(engine="f5"))
+        monkeypatch.setenv("MOODSCAPE_ELEVENLABS_STABILITY", "0.6")
+        after = compute_cache_key("x", tts_engine="f5", seed=1,
+                                  env_fingerprint=tts_env_fingerprint(engine="f5"))
+        assert before == after == compute_cache_key("x", tts_engine="f5", seed=1)

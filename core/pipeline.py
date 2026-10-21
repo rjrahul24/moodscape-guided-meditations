@@ -256,12 +256,13 @@ class MeditationPipeline:
                         content_type=content_type,
                         tts_engine=tts_engine,
                         voice=cache_voice_id,
-                        speed=speed,
+                        # Eleven v4 ignores speed, so a slider move must not miss the cache.
+                        speed=None if base_engine == "elevenlabs" else speed,
                         f5_target_wpm=f5_target_wpm,
                         f5_cfg_strength=cfg_val,
                         microprosody=microprosody,
                         seed=seed if seed_is_explicit else None,
-                        env_fingerprint=tts_env_fingerprint(),
+                        env_fingerprint=tts_env_fingerprint(engine=base_engine),
                         extra=el_params.cache_extra(el_direction) if el_params else None,
                     )
                     cached_voice = get_cached_tts(cache_key)
@@ -275,7 +276,19 @@ class MeditationPipeline:
                     voice_activity = cached_voice["voice_activity"]
                     tts_sr = int(cached_voice.get("sample_rate", SAMPLE_RATE))
                     cached_el = (cached_voice.get("metadata") or {}).get("elevenlabs")
-                    self.last_tts_manifest = cached_el if isinstance(cached_el, dict) else None
+                    if isinstance(cached_el, dict):
+                        # This run is free: report its own billing, not the original render's.
+                        self.last_tts_manifest = {
+                            **cached_el,
+                            "chars_billed": 0,
+                            "chars_cached": int(cached_el.get("chars_billed", 0) or 0)
+                                            + int(cached_el.get("chars_cached", 0) or 0),
+                            "cache_misses": 0,
+                            "cache_hits": sum(1 for s in segments if s["type"] == "speech"),
+                            "tts_cache_hit": True,
+                        }
+                    else:
+                        self.last_tts_manifest = None
                     if (base_engine == "elevenlabs" and self.last_tts_manifest
                             and "direction" not in self.last_tts_manifest):
                         self.last_tts_manifest = {**self.last_tts_manifest, "direction": el_direction}
@@ -323,6 +336,10 @@ class MeditationPipeline:
                             progress_cb=tts_progress, seed=seed,
                         )
                     elif base_engine == "elevenlabs":
+                        from core.elevenlabs_tts.engine import ElevenLabsEngine
+                        if isinstance(tts, ElevenLabsEngine):
+                            # An injected engine must render what the cache key describes.
+                            tts.params = el_params
                         voice_audio, voice_activity = tts.synthesize(
                             segments, voice=el_params.voice_id, progress_cb=tts_progress,
                         )
