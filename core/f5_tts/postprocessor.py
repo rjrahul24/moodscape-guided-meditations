@@ -360,6 +360,26 @@ class F5MasteringEngine:
         return np.clip(processed.squeeze(0), -1.0, 1.0).astype(np.float32)
 
 
+def parallel_reverb_mix(reverb_amount: float, ir_name: str = "warm_studio") -> "Mix":
+    """Dry + (IR -> HPF300 -> LPF6k) wet in parallel -- the "Abbey Road trick"."""
+    from core.audio_processor import IR_CATALOG, DEFAULT_IR
+    from pedalboard import Mix, Gain
+
+    reverb_amount = float(np.clip(reverb_amount, 0.0, 0.5))
+    ir_path = IR_CATALOG.get(ir_name, IR_CATALOG[DEFAULT_IR])["path"]
+    dry_db = 20 * np.log10(max(1.0 - reverb_amount, 1e-5))
+    wet_db = 20 * np.log10(max(reverb_amount, 1e-5))
+    return Mix([
+        Gain(gain_db=dry_db),
+        Pedalboard([
+            Convolution(impulse_response_filename=ir_path, mix=1.0),
+            HighpassFilter(cutoff_frequency_hz=300),
+            LowpassFilter(cutoff_frequency_hz=6000),
+            Gain(gain_db=wet_db),
+        ]),
+    ])
+
+
 def build_f5_voice_chain(reverb_amount: float = 0.15, ir_name: str = "warm_studio") -> Pedalboard:
     """F5-TTS / Vocos voice FX chain: convolution reverb (with Abbey Road EQ) + limiter.
 
@@ -367,30 +387,4 @@ def build_f5_voice_chain(reverb_amount: float = 0.15, ir_name: str = "warm_studi
     with an HPF at 300 Hz and LPF at 6 kHz on the wet return, keeping the dry
     voice completely clear of reverb mud.
     """
-    from core.audio_processor import IR_CATALOG, DEFAULT_IR
-    from pedalboard import Mix, Gain
-
-    reverb_amount = float(np.clip(reverb_amount, 0.0, 0.5))
-    ir_path = IR_CATALOG.get(ir_name, IR_CATALOG[DEFAULT_IR])["path"]
-    
-    dry_gain = 1.0 - reverb_amount
-    wet_gain = reverb_amount
-    
-    dry_db = 20 * np.log10(max(dry_gain, 1e-5))
-    wet_db = 20 * np.log10(max(wet_gain, 1e-5))
-
-    return Pedalboard([
-        Mix([
-            Gain(gain_db=dry_db),
-            Pedalboard([
-                Convolution(
-                    impulse_response_filename=ir_path,
-                    mix=1.0,
-                ),
-                HighpassFilter(cutoff_frequency_hz=300),
-                LowpassFilter(cutoff_frequency_hz=6000),
-                Gain(gain_db=wet_db),
-            ])
-        ]),
-        Limiter(threshold_db=-1.0),
-    ])
+    return Pedalboard([parallel_reverb_mix(reverb_amount, ir_name), Limiter(threshold_db=-1.0)])
