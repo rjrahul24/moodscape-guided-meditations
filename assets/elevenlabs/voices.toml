@@ -1,0 +1,53 @@
+# ElevenLabs voices offered in the UI. Seeded from moodscape-mix-lib's curated
+# meditation list; the user will add reviewed Eleven v4 voices later.
+# Community voices must be added to the account ("Add to my voices") first.
+default_voice = "pjcYQlDFKMbcOUp6F5GD"   # Brittney (matches the local narrator)
+
+[[voice]]
+id = "pjcYQlDFKMbcOUp6F5GD"
+name = "Brittney"
+notes = "female · calm narrator"
+
+[[voice]]
+id = "pMsXgVXv3BLzUgSXRplE"
+name = "Serena"
+notes = "female · warm, meditative · stock"
+
+[[voice]]
+id = "Qggl4b0xRMiqOwhPtVWT"
+name = "Clara"
+notes = "female"
+
+[[voice]]
+id = "VhxAIIZM8IRmnl5fyeyk"
+name = "Valory"
+notes = "female"
+
+[[voice]]
+id = "BpjGufoPiobT79j2vtj4"
+name = "Priyanka"
+notes = "female"
+
+[[voice]]
+id = "WuBPEavIaQB56EnsGvFh"
+name = "Eryn"
+notes = "female · calm therapist"
+
+[[voice]]
+id = "zA6D7RyKdc2EClouEMkP"
+name = "AImee"
+notes = "female · soft, ASMR"
+
+[[voice]]
+id = "wgHvco1wiREKN0BdyVx5"
+name = "Drew"
+notes = "male · deep, soothing"
+
+[[voice]]
+id = "xGDJhCwcqw94ypljc95Z"
+name = "Archer"
+notes = "male · narration"
+
+# Genre family -> voice id. Empty until the v4 voice review; unmapped
+# families use default_voice.
+[family_map]
