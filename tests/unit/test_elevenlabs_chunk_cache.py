@@ -32,3 +32,22 @@ def test_any_setting_change_misses(change):
 def test_payload_has_no_request_ids():
     assert "previous_request_ids" not in _p()
     assert _p()["output_format"] == "pcm_48000"
+
+
+def test_alignment_payload_differs_from_default():
+    assert _p(alignment=True) != _p()
+    assert _p(alignment=False) == _p()
+    assert "alignment" not in _p()
+
+
+def test_alignment_round_trips():
+    al = {"characters": ["H", "i"], "starts": [0.0, 0.1], "ends": [0.1, 0.2]}
+    chunk_cache.store(_p(alignment=True), b"\x01\x02", "req-1", alignment=al)
+    assert chunk_cache.load(_p(alignment=True)) == (b"\x01\x02", "req-1")
+    assert chunk_cache.load_alignment(_p(alignment=True)) == al
+
+
+def test_load_alignment_missing():
+    assert chunk_cache.load_alignment(_p(alignment=True)) is None
+    chunk_cache.store(_p(), b"\x01\x02", "req-1")
+    assert chunk_cache.load_alignment(_p()) is None

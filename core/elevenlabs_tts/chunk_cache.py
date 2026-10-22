@@ -3,6 +3,9 @@
 Key = SHA-256 of the payload (text, voice, model, settings, seed, format).
 Request ids are stored beside the PCM but are NOT part of the key — they are
 render-time continuity hints, not inputs that change the audio contract.
+Pacing renders (timestamps endpoint) add ``"alignment": True`` to the payload,
+so their key differs and a plain hit is never used for pacing; the character
+alignment itself lives in the ``.json`` sidecar.
 """
 
 from __future__ import annotations
@@ -25,12 +28,15 @@ def cache_dir() -> Path:
 
 
 def chunk_payload(text: str, voice_id: str, model_id: str, stability: float,
-                  similarity: float, seed: int) -> dict:
-    return {
+                  similarity: float, seed: int, *, alignment: bool = False) -> dict:
+    payload = {
         "text": text, "voice_id": voice_id, "model_id": model_id,
         "stability": round(float(stability), 3), "similarity": round(float(similarity), 3),
         "seed": int(seed), "output_format": OUTPUT_FORMAT,
     }
+    if alignment:
+        payload["alignment"] = True
+    return payload
 
 
 def _key(payload: dict) -> str:
@@ -57,10 +63,27 @@ def load(payload: dict) -> tuple[bytes, str | None] | None:
     return pcm_path.read_bytes(), request_id
 
 
-def store(payload: dict, pcm: bytes, request_id: str | None) -> None:
+def load_alignment(payload: dict) -> dict | None:
+    """The character alignment stored with this chunk, or None if absent/unreadable."""
+    meta_path = (cache_dir() / _key(payload)).with_suffix(".json")
+    if not meta_path.is_file():
+        return None
+    try:
+        al = json.loads(meta_path.read_text(encoding="utf-8")).get("char_alignment")
+    except (OSError, ValueError):
+        return None
+    if not isinstance(al, dict) or not all(k in al for k in ("characters", "starts", "ends")):
+        return None
+    return al
+
+
+def store(payload: dict, pcm: bytes, request_id: str | None,
+          alignment: dict | None = None) -> None:
     base = cache_dir() / _key(payload)
     tmp = base.with_suffix(".pcm.part")
     tmp.write_bytes(pcm)
     tmp.rename(base.with_suffix(".pcm"))
     meta = {**payload, "request_id": request_id, "created_at": time.time()}
+    if alignment is not None:
+        meta["char_alignment"] = alignment
     base.with_suffix(".json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")

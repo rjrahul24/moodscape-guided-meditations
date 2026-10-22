@@ -17,6 +17,7 @@ from core.elevenlabs_tts.assembly import (
     activity_mask, chunk_lufs_target, crossfade_concat, normalize_chunk_lufs, pcm16_to_float,
 )
 from core.elevenlabs_tts.client import ElevenLabsAPIError, ElevenLabsClient, model_id
+from core.elevenlabs_tts.pacing import apply_pacing, pacing_enabled, pacing_params
 from core.elevenlabs_tts.voices import default_voice_id, list_voices
 from core.speech_engine import SpeechEngine
 
@@ -39,10 +40,19 @@ class ElevenLabsParams:
     seed: int
 
     def cache_extra(self, direction: str) -> dict:
-        """Everything that changes ElevenLabs audio, for the whole-render TTS cache key."""
-        return {"voice_id": self.voice_id, "stability": self.stability,
-                "similarity": self.similarity, "model_id": self.model_id,
-                "seed": self.seed, "direction": direction}
+        """Everything that changes ElevenLabs audio, for the whole-render TTS cache key.
+        Pacing appears only when enabled, so pacing-off keys are unchanged."""
+        extra = {"voice_id": self.voice_id, "stability": self.stability,
+                 "similarity": self.similarity, "model_id": self.model_id,
+                 "seed": self.seed, "direction": direction}
+        if pacing_enabled():
+            extra["pacing"] = _pacing_block()
+        return extra
+
+
+def _pacing_block() -> dict:
+    stretch, sentence_sec, clause_sec = pacing_params()
+    return {"stretch": stretch, "sentence_sec": sentence_sec, "clause_sec": clause_sec}
 
 
 def resolve_params(voice_id: str | None = None, stability: float | None = None,
@@ -80,7 +90,9 @@ class ElevenLabsEngine(SpeechEngine):
         return [{"id": v.id, "name": v.name, "description": v.notes} for v in list_voices()]
 
     def synthesize(self, segments, voice=None, speed=None, progress_cb=None, **kwargs):
-        """Render segments; `speed` is ignored (Eleven v4 has no speed setting)."""
+        """Render segments; `speed` is ignored (Eleven v4 ignores voice_settings.speed).
+        Opt-in pacing (MOODSCAPE_ELEVENLABS_PACING=1) stretches each chunk and
+        inserts timestamp-located pauses."""
         if self._client is None:
             self.load_model()
         p = self.params
@@ -89,13 +101,26 @@ class ElevenLabsEngine(SpeechEngine):
         target = chunk_lufs_target()
         xfade_ms = _env_float("MOODSCAPE_ELEVENLABS_XFADE_MS", 30.0)
 
+        pacing = pacing_enabled()
+        if pacing:
+            stretch, sentence_sec, clause_sec = pacing_params()
+
+        def render(text, ids):
+            kw = dict(model_id=p.model_id, stability=p.stability, similarity=p.similarity,
+                      seed=p.seed, previous_request_ids=ids)
+            if pacing:
+                return self._client.convert_with_alignment(text, voice_id, **kw)
+            pcm_, rid_ = self._client.convert(text, voice_id, **kw)
+            return pcm_, rid_, None
+
         total_speech = sum(1 for s in segments if s["type"] == "speech")
         pieces: list[np.ndarray] = []
         masks: list[np.ndarray] = []
         recent: list[str] = []
         manifest = {"model_id": p.model_id, "voice_id": voice_id, "stability": p.stability,
                     "similarity": p.similarity, "seed": p.seed, "chars_billed": 0,
-                    "chars_cached": 0, "cache_hits": 0, "cache_misses": 0, "request_ids": []}
+                    "chars_cached": 0, "cache_hits": 0, "cache_misses": 0, "request_ids": [],
+                    "pacing": _pacing_block() if pacing else {"enabled": False}}
         done = 0
         for idx, seg in enumerate(segments):
             if seg["type"] == "pause":
@@ -105,8 +130,14 @@ class ElevenLabsEngine(SpeechEngine):
             elif seg["type"] == "speech":
                 text = seg["text"]
                 payload = chunk_cache.chunk_payload(text, voice_id, p.model_id,
-                                                    p.stability, p.similarity, p.seed)
+                                                    p.stability, p.similarity, p.seed,
+                                                    alignment=pacing)
                 hit = chunk_cache.load(payload)
+                alignment = None
+                if hit is not None and pacing:
+                    alignment = chunk_cache.load_alignment(payload)
+                    if alignment is None:
+                        hit = None  # unreadable sidecar: never pace without timestamps
                 if hit is not None:
                     pcm, rid = hit
                     manifest["cache_hits"] += 1
@@ -115,11 +146,7 @@ class ElevenLabsEngine(SpeechEngine):
                     ids = list(recent) if (stitch and recent) else None
                     try:
                         try:
-                            pcm, rid = self._client.convert(
-                                text, voice_id, model_id=p.model_id, stability=p.stability,
-                                similarity=p.similarity, seed=p.seed,
-                                previous_request_ids=ids,
-                            )
+                            pcm, rid, alignment = render(text, ids)
                         except ElevenLabsAPIError as exc:
                             if not (ids and exc.status in _STALE_IDS_STATUSES):
                                 raise
@@ -131,11 +158,7 @@ class ElevenLabsEngine(SpeechEngine):
                                 "retrying chunk %d without stitching for the rest of this render",
                                 exc.status, done + 1)
                             recent, stitch = [], False
-                            pcm, rid = self._client.convert(
-                                text, voice_id, model_id=p.model_id, stability=p.stability,
-                                similarity=p.similarity, seed=p.seed,
-                                previous_request_ids=None,
-                            )
+                            pcm, rid, alignment = render(text, None)
                     except Exception as exc:
                         status = getattr(exc, "status", None)
                         raise ElevenLabsAPIError(
@@ -143,13 +166,17 @@ class ElevenLabsEngine(SpeechEngine):
                             f"{exc} — {done} of {total_speech} chunks rendered before failure "
                             "(cached; re-run resumes).",
                         ) from exc
-                    chunk_cache.store(payload, pcm, rid)
+                    chunk_cache.store(payload, pcm, rid, alignment=alignment)
                     manifest["cache_misses"] += 1
                     manifest["chars_billed"] += len(text)
                 if rid:
                     recent = (recent + [rid])[-3:]
                     manifest["request_ids"].append(rid)
                 y = pcm16_to_float(pcm)
+                if pacing:
+                    # Before LUFS + mask: inserted gaps read inactive.
+                    y = apply_pacing(y, SR, alignment, stretch=stretch,
+                                     sentence_sec=sentence_sec, clause_sec=clause_sec)
                 if target is not None:
                     y = normalize_chunk_lufs(y, SR, target)
                 pieces.append(y)

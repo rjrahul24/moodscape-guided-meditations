@@ -6,6 +6,7 @@ backoff; other 4xx fail immediately with a readable message.
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import time
@@ -91,6 +92,17 @@ def _request_id(headers) -> str | None:
     return None
 
 
+def _alignment_dict(body) -> dict:
+    al = getattr(body, "alignment", None) or getattr(body, "normalized_alignment", None)
+    if al is None:
+        return {"characters": [], "starts": [], "ends": []}
+    return {
+        "characters": list(al.characters),
+        "starts": [float(t) for t in al.character_start_times_seconds],
+        "ends": [float(t) for t in al.character_end_times_seconds],
+    }
+
+
 class ElevenLabsClient:
     def __init__(self, api_key: str | None = None, sdk=None, sleep=time.sleep):
         key = api_key or get_api_key()
@@ -126,6 +138,37 @@ class ElevenLabsClient:
             if not data:
                 raise RuntimeError("ElevenLabs returned no audio data.")
             return data, rid
+
+        return with_retries(call, attempts=self._attempts, sleep=self._sleep)
+
+    def convert_with_alignment(self, text: str, voice_id: str, *, model_id: str,
+                               stability: float, similarity: float, seed: int,
+                               previous_request_ids: list[str] | None = None,
+                               ) -> tuple[bytes, str | None, dict]:
+        """Like ``convert`` but via the timestamps endpoint (same cost): returns
+        (pcm, request_id, {"characters", "starts", "ends"}). The alignment
+        includes the leading [direction] tag characters."""
+        from elevenlabs.types import VoiceSettings
+
+        kwargs = dict(
+            text=text, voice_id=voice_id, model_id=model_id, output_format=OUTPUT_FORMAT,
+            voice_settings=VoiceSettings(stability=stability, similarity_boost=similarity,
+                                         use_speaker_boost=True),
+            seed=int(seed), apply_text_normalization="auto",
+        )
+        if previous_request_ids:
+            kwargs["previous_request_ids"] = list(previous_request_ids)[-3:]
+
+        def call() -> tuple[bytes, str | None, dict]:
+            # Non-streaming endpoint: the raw response is a plain HttpResponse
+            # (.headers, .data), not a context manager.
+            resp = self._sdk.text_to_speech.with_raw_response.convert_with_timestamps(**kwargs)
+            rid = _request_id(resp.headers)
+            body = resp.data
+            data = base64.b64decode(getattr(body, "audio_base_64", "") or "")
+            if not data:
+                raise RuntimeError("ElevenLabs returned no audio data.")
+            return data, rid, _alignment_dict(body)
 
         return with_retries(call, attempts=self._attempts, sleep=self._sleep)
 

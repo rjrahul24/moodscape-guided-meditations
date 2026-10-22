@@ -1,6 +1,6 @@
 """ElevenLabs v4 cloud TTS engine."""
 
-from core.elevenlabs_tts import chunk_cache
+from core.elevenlabs_tts import chunk_cache, pacing
 from core.elevenlabs_tts.client import (
     ElevenLabsAPIError,
     ElevenLabsClient,
@@ -41,5 +41,6 @@ __all__ = [
     "voice_for_family",
     "build_elevenlabs_voice_chain",
     "chunk_cache",
+    "pacing",
     "deess_elevenlabs",
 ]
