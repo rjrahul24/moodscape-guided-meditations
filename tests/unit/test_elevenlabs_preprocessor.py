@@ -126,3 +126,78 @@ def test_package_exports_postprocessor_and_cache():
     assert callable(pkg.deess_elevenlabs)
     assert callable(pkg.build_elevenlabs_voice_chain)
     assert hasattr(pkg.chunk_cache, "chunk_payload")
+
+
+# ── experiments: sentence gaps + direction mode (env-only, default off) ──────
+
+SENTENCES = ("One calm sentence. Two calm sentence. Three calm sentence. "
+             "[pause:5s] Four after pause. Five after pause. [pause:1s] Six.")
+
+
+def _kinds(segs):
+    return [("P%g" % s["duration_sec"]) if s["type"] == "pause" else "S" for s in segs]
+
+
+def test_defaults_unchanged_sentences_stay_packed(monkeypatch):
+    monkeypatch.delenv("MOODSCAPE_ELEVENLABS_SENTENCE_GAP_MS", raising=False)
+    monkeypatch.delenv("MOODSCAPE_ELEVENLABS_DIRECTION_MODE", raising=False)
+    segs = prepare_segments(SENTENCES)
+    assert _kinds(segs) == ["S", "P5", "S", "P1", "S"]
+    assert all(t.startswith(DEFAULT_DIRECTION + " ") for t in _speech(segs))
+
+
+def test_sentence_gap_splits_chunks_with_silence(monkeypatch):
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_SENTENCE_GAP_MS", "700")
+    segs = prepare_segments(SENTENCES)
+    assert _kinds(segs) == ["S", "P0.7", "S", "P0.7", "S", "P5", "S", "P0.7", "S", "P1", "S"]
+
+
+def test_sentence_gap_rejects_garbage_and_clamps(monkeypatch):
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_SENTENCE_GAP_MS", "abc")
+    with pytest.raises(ValueError):
+        prepare_segments(SENTENCES)
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_SENTENCE_GAP_MS", "999999")
+    from core.elevenlabs_tts.preprocessor import sentence_gap_ms
+    assert sentence_gap_ms() == 5000
+
+
+def test_direction_mode_first(monkeypatch):
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_DIRECTION_MODE", "first")
+    texts = _speech(prepare_segments(SENTENCES))
+    assert texts[0].startswith(DEFAULT_DIRECTION + " ")
+    assert all(not t.startswith("[") for t in texts[1:])
+
+
+def test_direction_mode_after_long_pause(monkeypatch):
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_DIRECTION_MODE", "after_long_pause")
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_DIRECTION_PAUSE_SEC", "3")
+    texts = _speech(prepare_segments(SENTENCES))
+    # chunk 1 (first) + chunk after the 5 s pause prefixed; chunk after the 1 s pause not
+    assert [t.startswith("[") for t in texts] == [True, True, False]
+
+
+def test_direction_mode_after_long_pause_with_gaps_counts_only_real_pauses(monkeypatch):
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_DIRECTION_MODE", "after_long_pause")
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_SENTENCE_GAP_MS", "700")
+    texts = _speech(prepare_segments(SENTENCES))
+    assert [t.startswith("[") for t in texts] == [True, False, False, True, False, False]
+
+
+def test_direction_mode_invalid_raises(monkeypatch):
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_DIRECTION_MODE", "sometimes")
+    with pytest.raises(ValueError):
+        prepare_segments(SENTENCES)
+
+
+def test_direction_mode_cuts_billed_chars(monkeypatch):
+    base = estimate_billed_chars(prepare_segments(SENTENCES))
+    monkeypatch.setenv("MOODSCAPE_ELEVENLABS_DIRECTION_MODE", "first")
+    assert estimate_billed_chars(prepare_segments(SENTENCES)) < base
+
+
+def test_sanitizer_still_rejects_sounds_for_stronger_direction():
+    from core.elevenlabs_tts.direction import sanitize_direction
+    assert sanitize_direction("very slow, soft, unhurried voice")
+    for bad in ("slow, with a sigh", "[soft breathy voice]", "long exhale"):
+        with pytest.raises(ValueError):
+            sanitize_direction(bad)
