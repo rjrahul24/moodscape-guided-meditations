@@ -120,8 +120,21 @@ class ElevenLabsGuideAliasTest(unittest.TestCase):
         f5_wpm, el_wpm = (f"{DEFAULT_WPM[e]:.0f}" for e in ("f5", "elevenlabs"))
         for ct in ("meditation", "sleep_story"):
             el = load_guide("elevenlabs", ct)
-            self.assertEqual(el, load_guide("f5", ct).replace(f5_wpm, el_wpm))
             self.assertIn(f"about {el_wpm} words per minute", el)
+            self.assertNotIn(f"about {f5_wpm} words per minute", el)
+
+
+class PlannerRateHintTest(unittest.TestCase):
+    def test_local_engines_keep_the_local_range(self):
+        from core.script_gen.rules import build_planner_system_prompt
+        for engine in (None, "f5", "kokoro"):
+            prompt = build_planner_system_prompt("meditation", 600, 900, engine=engine)
+            self.assertIn("roughly 85-90 words per minute", prompt)
+
+    def test_elevenlabs_planner_uses_its_own_rate(self):
+        from core.script_gen.rules import build_planner_system_prompt
+        prompt = build_planner_system_prompt("meditation", 600, 900, engine="elevenlabs")
+        self.assertIn("about 130 words per minute", prompt)
 
 
 if __name__ == "__main__":

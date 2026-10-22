@@ -56,15 +56,18 @@ def _duration_clause(
 ) -> str:
     """State the duration window and the speaking rate the estimator assumes.
 
-    With an engine (writer, judge) the rate is that engine's DEFAULT_WPM. The
-    planner has no engine, so it gets the range across engines.
+    With an engine (writer, judge, and the planner for ElevenLabs) the rate is
+    that engine's DEFAULT_WPM. Without one (planner on a local engine) it is
+    the range across the local engines, so adding a cloud provider never
+    changes local planner prompts.
     """
     from core.script_gen.duration import DEFAULT_WPM
 
     if engine is not None:
         rate = f"about {DEFAULT_WPM[engine]:.0f}"
     else:
-        rate = f"roughly {min(DEFAULT_WPM.values()):.0f}-{max(DEFAULT_WPM.values()):.0f}"
+        local = [v for k, v in DEFAULT_WPM.items() if k != "elevenlabs"]
+        rate = f"roughly {min(local):.0f}-{max(local):.0f}"
     return (
         f"The finished audio must run between {target_min_sec / 60:.0f} and "
         f"{target_max_sec / 60:.0f} minutes. Spoken delivery is {rate} "
@@ -131,8 +134,12 @@ def build_planner_system_prompt(
     target_min_sec: float,
     target_max_sec: float,
     guides_dir: Path | None = None,
+    engine: str | None = None,
 ) -> str:
     """System prompt for pass 0 — turning a genre pack into a creative brief.
+
+    ``engine`` only matters for ElevenLabs, whose speaking rate differs from
+    the local engines; local engines share one engine-agnostic rate range.
 
     Deliberately omits the engine formatting guide. The planner produces a
     brief for the writer, not a script for the TTS engine, so the ~3,000-word
@@ -150,7 +157,11 @@ def build_planner_system_prompt(
             "sections, and the emotional movement. A vague brief produces a "
             "generic meditation. Work within the material you are given "
             "rather than inventing a different practice.",
-            _duration_clause(target_min_sec, target_max_sec),
+            _duration_clause(
+                target_min_sec,
+                target_max_sec,
+                engine if engine == "elevenlabs" else None,
+            ),
             "# Content safety rules\n\n" + load_safety_rules(guides_dir),
             "Output the brief as plain prose, 150-250 words. No headings, no "
             "bullet lists, no preamble, and no script text.",

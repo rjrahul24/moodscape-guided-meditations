@@ -112,9 +112,10 @@ class TestDurationClause(unittest.TestCase):
                 self.assertIn(wpm, prompt, (engine, ct, build.__name__))
                 self.assertNotIn("85-95", prompt)
 
-    def test_planner_states_the_range_across_engines(self):
+    def test_planner_states_the_range_across_local_engines(self):
         from core.script_gen.duration import DEFAULT_WPM
-        lo, hi = min(DEFAULT_WPM.values()), max(DEFAULT_WPM.values())
+        local = [v for k, v in DEFAULT_WPM.items() if k != "elevenlabs"]
+        lo, hi = min(local), max(local)
         prompt = build_planner_system_prompt("meditation", 360, 600)
         self.assertIn(f"roughly {lo:.0f}-{hi:.0f} words per minute", prompt)
         self.assertNotIn("85-95", prompt)

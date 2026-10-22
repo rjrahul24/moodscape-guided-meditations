@@ -463,7 +463,10 @@ def generate_script(
             if progress_cb:
                 progress_cb(0.02, f"Planning a {pack.label} session")
             planner_system = build_planner_system_prompt(
-                config.content_type, config.target_min_sec, config.target_max_sec
+                config.content_type,
+                config.target_min_sec,
+                config.target_max_sec,
+                engine=config.tts_engine,
             )
             avoid = avoid_terms(
                 load_corpus(genre=config.genre, limit=5, corpus_dir=config.corpus_dir),
