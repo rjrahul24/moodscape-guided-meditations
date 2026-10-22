@@ -8,7 +8,7 @@ Released 2026-09-28. Sources: [What is Eleven v4](https://elevenlabs.io/docs/hel
 
 - Model IDs: `eleven_v4` (long-form/narration) and `eleven_v4_turbo` (real-time). MoodScape defaults to `eleven_v4`.
 - 10,000 characters per request (v3: 5,000); 90+ languages.
-- Only **Stability** and **Similarity** apply. Style and Speed sliders do not exist in v4 and SSML is unsupported, so all pacing comes from text (direction, punctuation, ellipses) and programmatic silence.
+- Only **Stability** and **Similarity** apply. v4 has no style control, SSML is unsupported, and it **ignores `voice_settings.speed`** (verified live 2026-10-22: 0.75 / 0.85 / unset render byte-identical lengths). By default all pacing comes from text (direction, punctuation, ellipses) and programmatic silence; native v4 delivery (~130 WPM) is the default by the user's choice.
 - Audio tags are free-text in square brackets; delivery is best-effort and voice-dependent. Descriptive voice-quality phrasing (`[low, gravelly voice]`) avoids being read as a sound effect.
 - Request stitching is back (v3 rejected it) and is "significantly more reliable in v4". The API takes up to 3 `previous_request_ids`.
 - `seed` (0-4294967295) gives best-effort determinism. `output_format` includes `pcm_48000`.
@@ -22,9 +22,10 @@ Released 2026-09-28. Sources: [What is Eleven v4](https://elevenlabs.io/docs/hel
 - **No vocal sounds**: the preprocessor strips every user-typed `[...]` tag from the spoken text. `[breath]`, `[inhale]`, `[exhale]` and `[pause:Xs]` become programmatic silence.
 - **Stitching**: each request sends up to 3 `previous_request_ids` (`MOODSCAPE_ELEVENLABS_STITCH`, default on) for prosodic continuity across chunks. If a request carrying ids fails 400/422 (stale ids, e.g. from old cache hits), the chunk is retried once without ids and stitching stays off for the rest of that render.
 - **Silence and joins**: pauses are inserted programmatically; chunk joins use 30 ms equal-power crossfades; each chunk is loudness-matched to -21 LUFS before joining.
+- **Pacing (opt-in experiment, `MOODSCAPE_ELEVENLABS_PACING=1`, default 0)**: v4 speaks a multi-sentence chunk as one continuous breath (no internal gap > 60 ms), so there is nothing on the waveform to stretch. With pacing on, chunks are rendered through `text_to_speech.convert_with_timestamps` (same cost, same text, `pcm_48000`, seed and stitching unchanged) and `core/elevenlabs_tts/pacing.py` uses the character alignment (leading `[direction]` chars skipped) to insert silence after sentence ends (`.` `!` `?` `…`, default 0.9 s) and clause marks (`,` `;` `:` `—`, default 0.35 s), after a 0.9× formant-preserving pedalboard time-stretch. Inserted gaps use ~5 ms cosine fades and read inactive in the activity mask, so the bed rises in them. Applied before per-chunk LUFS matching. Prototype: 127 → ~100 WPM. The manifest records a `pacing` block. Turning pacing on changes the chunk-cache key (`"alignment": True` in the payload) and the whole-render key, so the first paced render re-bills every chunk once; turning it off again reuses the original entries.
 - **48 kHz, clean chain**: audio is requested as `pcm_48000`, so there is no 24 to 48 kHz upsample and no DeepFilterNet or F5 mastering engine. Post-processing is a gentle split-band de-ess (`MOODSCAPE_ELEVENLABS_DEESS`), an HPF and optional room reverb.
 - **Caches**:
-  - Per-chunk PCM cache in `var/elevenlabs_cache` (`MOODSCAPE_ELEVENLABS_CACHE_DIR`). Request ids are excluded from the key, and speed is not part of it (v4 has no speed). It is never pruned: 48 kHz int16 PCM is ~5.5 MB per minute of speech for every voice/settings/direction combination. Delete the directory to clear it (the next render re-bills those chunks).
+  - Per-chunk PCM cache in `var/elevenlabs_cache` (`MOODSCAPE_ELEVENLABS_CACHE_DIR`). Request ids are excluded from the key, and speed is not part of it (v4 ignores speed). Pacing renders add `"alignment": True` to the payload and store the character alignment in the `.json` sidecar. It is never pruned: 48 kHz int16 PCM is ~5.5 MB per minute of speech for every voice/settings/direction combination. Delete the directory to clear it (the next render re-bills those chunks).
   - Whole-render cache via `core/tts_cache.py`. All `MOODSCAPE_ELEVENLABS_*` vars except `_CACHE_DIR` and `_MAX_RETRIES` enter the fingerprint, and only for ElevenLabs keys (`tts_env_fingerprint(engine="elevenlabs")`); they never affect F5/Kokoro/Chatterbox keys.
   - A whole-render cache hit reports `chars_billed: 0` in meta (the original count is kept as `chars_cached`).
 - **Billing**: per character; the UI shows a cost line and `meta.json` records `chars_billed`.
@@ -45,12 +46,16 @@ Released 2026-09-28. Sources: [What is Eleven v4](https://elevenlabs.io/docs/hel
 | `MOODSCAPE_ELEVENLABS_STITCH` | 1 | Send `previous_request_ids` (max 3) |
 | `MOODSCAPE_ELEVENLABS_MAX_RETRIES` | 3 | Transient retry budget (network/timeout, 408, 429, 5xx; TypeError/AttributeError are never retried) |
 | `MOODSCAPE_ELEVENLABS_DEESS` | 1 | Gentle split-band de-ess (applied after the cache, but still in the ElevenLabs cache key via its prefix; harmless) |
+| `MOODSCAPE_ELEVENLABS_PACING` | 0 | Opt-in experiment: timestamp-driven pauses + gentle stretch (changes the chunk-cache key; one-time re-bill) |
+| `MOODSCAPE_ELEVENLABS_STRETCH` | 0.90 (clamp 0.75–1.0) | Pacing: time-stretch factor (<1 = slower) |
+| `MOODSCAPE_ELEVENLABS_SENTENCE_PAUSE_SEC` | 0.9 (clamp 0–3) | Pacing: silence after sentence ends |
+| `MOODSCAPE_ELEVENLABS_CLAUSE_PAUSE_SEC` | 0.35 (clamp 0–2) | Pacing: silence after `,` `;` `:` `—` |
 | `MOODSCAPE_ELEVENLABS_CACHE_DIR` | `var/elevenlabs_cache` | Per-chunk PCM cache |
 | `MOODSCAPE_MIX_SESSIONS_KEEP` | 5 | Remix session retention (not a TTS var) |
 
 ## Known limits
 
-- No speed or style control; the UI hides Speed for ElevenLabs. Pacing is direction + punctuation + programmatic silence.
+- No style control, and v4 ignores `voice_settings.speed` (verified live); the UI hides Speed for ElevenLabs. Default pacing is direction + punctuation + programmatic silence (native ~130 WPM, by the user's choice); `MOODSCAPE_ELEVENLABS_PACING=1` adds timestamp-driven pauses + a gentle stretch as an experiment.
 - Direction tags are best-effort and voice-dependent.
 - Older cloned voices may need retraining for v4.
 - Billed per character; a whole-render cache hit costs nothing.
