@@ -4,12 +4,6 @@
 # track changes. 'declared' is yours: instrument and source identity
 # that analysis cannot determine. It is never overwritten.
 
-[tracks."alan_frijns-valley-of-voices-meditation-yoga-zen-relaxation-work-study-sleep-music-123428.mp3"]
-measured = ["bright", "evolving", "steady", "textured"]
-declared = []
-size = 36866304
-mtime = 1779314152.235
-
 [tracks."freemusicforvideo-meditation-background-409198.mp3"]
 measured = ["busy", "tonal", "warm"]
 declared = []
