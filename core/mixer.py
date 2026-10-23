@@ -386,10 +386,12 @@ def calibrate_music_bed(
     material (a hot or whisper-quiet upload, an unusual voice level) is
     corrected to the same targets.
 
-    Degenerate inputs (no phrases, silent/short stems) return the legacy
-    ``(-16.0, -16.0)``.
+    Degenerate inputs (no phrases, silent/short stems) return what a nominal
+    session calibrates to, ``(-19.0, -16.0)``: the legacy -16 dB bed moved by
+    the same 3 LU as the targets, so a fallback is never louder than normal.
+    (``MOODSCAPE_ADAPTIVE_BED=0`` still means the legacy fixed -16/-16.)
     """
-    legacy = (-16.0, -16.0)
+    legacy = (-16.0 - (BED_PAUSE_OFFSET_LU - 14.5), -16.0)
     if voice_audio.shape[-1] < int(2 * win_s * sample_rate):
         return legacy
     if music_audio.shape[-1] < int(2 * win_s * sample_rate):

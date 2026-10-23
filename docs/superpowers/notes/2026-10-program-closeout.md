@@ -17,7 +17,7 @@ decided, what stays opt-in, and what is left.
 | Memory (Phase 3) | TTS unloaded before denoise; MLX cache freed | Whole-pipeline peak 43 GB → 24 GB on 32 GB |
 | Loudness (R5a) | Playback-referenced export (−16 / sleep −18; mono 3 dB lower) | Every R3 file −16.0 LUFS as played |
 | Mix level (close-out) | Bed 3 LU further under the voice (meditation 33.5/17.5 LU, sleep 25/19) | R3: "music loud in every test" |
-| Library (close-out) | `Valley of Voices` removed (moved to `var/removed_backgrounds/`) | R3: unusable bed regardless of level |
+| Library (close-out) | `Valley of Voices` removed (moved to `var/removed_backgrounds/`); tag matching falls back to closest partial matches | R3: unusable bed regardless of level; review: 9 packs had no full tag match |
 | No vocal sounds | Breath markers render as silence in every engine (ElevenLabs track, cbed7ea) | R3: "sound of breathing out" came from breath samples |
 | Voice provider | ElevenLabs v4 cloud TTS behind the Voice Provider toggle, with Remix | Separate spec: `specs/2026-10-12-elevenlabs-v4-tts-design.md` |
 
@@ -50,7 +50,9 @@ Scored results: `var/eval/r1/RESULTS.md`, `var/eval/r2/RESULTS.md`,
 3. **The track is moved out of the library, not deleted.** The mp3s are gitignored, so git cannot restore them. Cost if wrong: none.
 4. **Pause-dominated length repair: proportional target, not a skip.** The parked fix ("skip when pauses ≥ midpoint") would also have skipped a long script built of repeated paragraphs, where cutting passages works. The repair now asks to cut whole passages with their pauses, at the whole-script ratio. Cost if wrong: one repair whose target is approximate.
 5. **No experiment is promoted, and none is deleted.** Every losing flag stays as an opt-in env var, documented with its result. Cost if wrong: some dead-by-default code paths to remove later.
-6. **The close-out ran inline with TDD, plus one final review**, instead of the full spec → plan → subagent cycle. It was four small, listening-driven changes, the same precedent as the R1 follow-up. Cost if wrong: less review depth on about 80 changed lines.
+6. **Music-tag fallback is graded.** The final review found that 9 packs ask for tag pairs no track carries; `panic_sos`, `box_breathing`, `study`, `worry_and_rumination` and `decision_clarity` all ask for steady+tonal. This was pre-existing, since Valley of Voices was never tagged `tonal`. Those packs were drawing from the whole library, bright and busy tracks included. The picker now uses the tracks matching the most requested tags, and falls back to the whole library only when none match. Cost if wrong: a slightly narrower random pool. The real fix is library content: add steady/tonal and drone beds.
+7. **The calibration fallback follows the new level.** Degenerate inputs (no phrases, short or silent stems) now return (−19, −16), not the legacy (−16, −16). `MOODSCAPE_ADAPTIVE_BED=0` still means the legacy fixed levels. Cost if wrong: none in practice; these are rare inputs.
+8. **The close-out ran inline with TDD, plus one final review**, instead of the full spec → plan → subagent cycle. It was four small, listening-driven changes, the same precedent as the R1 follow-up. Cost if wrong: less review depth on about 80 changed lines.
 
 ## Robotic delivery: where it stands
 
@@ -65,6 +67,13 @@ Scored results: `var/eval/r1/RESULTS.md`, `var/eval/r2/RESULTS.md`,
   and is already integrated. The next decision is a blind F5 vs ElevenLabs round
   on the same scripts. `eval_genres.py --engine elevenlabs` supports it, and the
   ElevenLabs chunk cache makes re-runs free. It bills per character.
+
+## Library gap
+
+No track carries steady+tonal, drone+steady, drone+sparse, dark+steady or
+steady+sustained. Adding two or three calm, steady, tonal or drone beds to
+`assets/backgrounds/` (then `scripts/tag_backgrounds.py`) would serve 9 packs
+properly.
 
 ## Known deferred minors
 

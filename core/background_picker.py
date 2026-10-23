@@ -35,8 +35,9 @@ def pick_background(
             would leave nothing, the full pool is used instead — variety is a
             preference, not a reason to fail a job.
         rng: Inject a seeded Random for reproducible selection.
-        prefer_tags: Only consider tracks carrying ALL of these tags. If that
-            leaves nothing, the tag filter is dropped. Genre packs supply
+        prefer_tags: Only consider tracks carrying ALL of these tags. If none
+            does, the tracks carrying the most of them are used; if no track
+            carries any, the tag filter is dropped. Genre packs supply
             these so a running meditation does not land on a sleep drone.
         tag_lookup: Callable mapping [path, ...] -> {path: [tag, ...]}.
             Defaults to background_tags.tags_for. Only called when
@@ -66,18 +67,22 @@ def pick_background(
             from core.background_tags import tags_for as lookup
         wanted = set(prefer_tags)
         tags = lookup([path for _label, path in candidates])
-        tagged = [
-            entry
-            for entry in candidates
-            if wanted.issubset(set(tags.get(entry[1], ())))
-        ]
-        if tagged:
-            candidates = tagged
-        else:
+        overlap = {
+            entry[1]: len(wanted & set(tags.get(entry[1], ()))) for entry in candidates
+        }
+        best = max(overlap.values(), default=0)
+        if best == 0:
             logger.info(
                 "No background matches tags %s; using the full library.",
                 sorted(wanted),
             )
+        else:
+            if best < len(wanted):
+                logger.info(
+                    "No background carries all of %s; using the closest matches (%d of %d).",
+                    sorted(wanted), best, len(wanted),
+                )
+            candidates = [entry for entry in candidates if overlap[entry[1]] == best]
 
     excluded = set(exclude)
     candidates = [entry for entry in candidates if entry[1] not in excluded] or candidates

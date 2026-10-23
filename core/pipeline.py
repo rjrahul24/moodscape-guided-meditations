@@ -715,10 +715,10 @@ class MeditationPipeline:
             # Replaces the fixed -16 dB bed / -16 dB duck constants with values
             # derived from the actual post-FX stem loudness, so the bed always
             # sits at the reference offsets under the voice regardless of how
-            # hot or quiet the source material is. Targets are locked to the
-            # measured golden-path mix, so nominal sessions calibrate back to
-            # (-16, -16). Set MOODSCAPE_ADAPTIVE_BED=0 to force the legacy
-            # constants.
+            # hot or quiet the source material is. Targets started at the
+            # measured golden-path mix and sit 3 LU quieter since R3, so nominal
+            # sessions calibrate to about (-19, -16). Set MOODSCAPE_ADAPTIVE_BED=0
+            # to force the legacy fixed (-16, -16).
             effective_music_volume_db = music_volume_db
             mix_phrases = None
             adaptive_bed = os.environ.get("MOODSCAPE_ADAPTIVE_BED", "1") == "1"

@@ -177,12 +177,12 @@ class TestCalibrateMusicBed(unittest.TestCase):
     def test_degenerate_silent_voice_returns_legacy(self):
         voice = np.zeros(self.SR * 20, dtype=np.float32)
         music = _tone(997.0, 20.0, self.SR, rms_db=-20.0)
-        self.assertEqual(calibrate_music_bed(voice, music, self.SR), (-16.0, -16.0))
+        self.assertEqual(calibrate_music_bed(voice, music, self.SR), (-19.0, -16.0))
 
     def test_degenerate_short_input_returns_legacy(self):
         voice = _tone(997.0, 2.0, self.SR, -21.0)
         music = _tone(997.0, 2.0, self.SR, -20.0)
-        self.assertEqual(calibrate_music_bed(voice, music, self.SR), (-16.0, -16.0))
+        self.assertEqual(calibrate_music_bed(voice, music, self.SR), (-19.0, -16.0))
 
 
 def _rms(x: np.ndarray) -> float:

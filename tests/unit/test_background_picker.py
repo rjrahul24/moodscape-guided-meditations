@@ -95,6 +95,25 @@ class PreferTagsTest(unittest.TestCase):
         )
         self.assertIn(path, {p for _, p in self.POOL})
 
+    def test_no_full_match_prefers_the_closest_partial_match(self):
+        """No track is both steady and drone: pick among the tracks matching the
+        most requested tags (pad has steady, drone has drone), never the piano."""
+        for _ in range(20):
+            _label, path = pick_background(
+                scan=self._scan,
+                prefer_tags=["steady", "drone"],
+                tag_lookup=self._lookup,
+            )
+            self.assertIn(path, {"/bg/drone.mp3", "/bg/pad.mp3"})
+
+    def test_partial_match_ranks_by_overlap(self):
+        _label, path = pick_background(
+            scan=self._scan,
+            prefer_tags=["dark", "sustained", "steady", "rhythmic"],
+            tag_lookup=self._lookup,
+        )
+        self.assertEqual(path, "/bg/pad.mp3")  # 3 of 4, drone has 2
+
     def test_exclude_still_applies_within_a_tag_filter(self):
         _label, path = pick_background(
             scan=self._scan,
