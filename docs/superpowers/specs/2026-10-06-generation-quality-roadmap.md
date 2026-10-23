@@ -1,7 +1,7 @@
 # Generation Quality Program: Roadmap
 
 **Date:** 2026-10-06
-**Status:** Approved structure; per-sub-project specs follow
+**Status:** Closed 2026-10-23 — see `docs/superpowers/notes/2026-10-program-closeout.md`
 **Source:** `artifact_research_output.md` (deep-research report, Oct 2026), verified against this codebase.
 
 ## Goal
@@ -151,7 +151,20 @@ See `docs/superpowers/specs/2026-10-10-phase3-design.md`. Results that drove it 
 
 R3b, R4b and R5b follow, in an order set by that eval.
 
+## Close-out (2026-10-23, after the R3 eval)
+
+R3 was null or leaning toward today's defaults in every round, and every
+listener note named robotic F5 delivery as the remaining problem. The program
+closed with the listening-driven fixes only (bed 3 LU quieter, one track
+removed, a duration-repair fix). R3b, R4b and R5b move to Parked: none
+addresses the binding limit, which is now a voice-engine question (a blind F5
+vs ElevenLabs v4 round, or new reference recordings). Full record:
+`docs/superpowers/notes/2026-10-program-closeout.md`.
+
 ## Parked
+
+- **R3b / R4b / R5b** as listed above (breath-cycle tags, best-of-3 drafts, sleep post-roll, music matching).
+- **Blind F5 vs ElevenLabs v4** on the same scripts (paid; the harness supports `--engine elevenlabs`).
 
 - **Multi-phase reference set:** needs recordings (spec written in R1).
 - F5 / LLM fine-tuning (needs 300+ approved scripts).
