@@ -355,13 +355,21 @@ def _short_term_lufs_curve(
     return np.asarray(times), np.asarray(vals)
 
 
+# Bed targets (LU under the voice's speech loudness). Measured from the June 2026
+# golden-path mix as 30.5 / 14.5, then moved 3 LU further under the voice after
+# the R3 blind eval (2026-10), where the music read as too loud in every test.
+# The duck depth (speech - pause = 16 dB) is unchanged.
+BED_SPEECH_OFFSET_LU = 33.5
+BED_PAUSE_OFFSET_LU = 17.5
+
+
 def calibrate_music_bed(
     voice_audio: np.ndarray,
     music_audio: np.ndarray,
     sample_rate: int,
     phrases: list[tuple[float, float]] | None = None,
-    speech_offset_lu: float = 30.5,
-    pause_offset_lu: float = 14.5,
+    speech_offset_lu: float = BED_SPEECH_OFFSET_LU,
+    pause_offset_lu: float = BED_PAUSE_OFFSET_LU,
     volume_clamp_db: tuple[float, float] = (-24.0, -8.0),
     duck_clamp_db: tuple[float, float] = (-20.0, -10.0),
     win_s: float = 3.0,
@@ -371,11 +379,12 @@ def calibrate_music_bed(
     Automates the bed level instead of trusting fixed constants: the bed gain
     is set so the raw music's short-term loudness sits ``pause_offset_lu``
     below the voice's speech-region loudness, and the duck depth covers the
-    remaining ``speech_offset_lu`` separation. The default offsets were
-    measured from the reference F5 + uploaded-instrumental mix at the legacy
-    constants (-16 dB bed, -16 dB duck), so a session at today's nominal
-    levels calibrates back to (-16, -16) and only off-nominal material
-    (a hot or whisper-quiet upload, an unusual voice level) gets corrected.
+    remaining ``speech_offset_lu`` separation. The offsets started as the
+    reference F5 + uploaded-instrumental mix at the legacy constants (-16 dB
+    bed, -16 dB duck) and sit 3 LU lower since R3 (see BED_*_OFFSET_LU), so a
+    session at today's nominal levels calibrates to about (-19, -16); off-nominal
+    material (a hot or whisper-quiet upload, an unusual voice level) is
+    corrected to the same targets.
 
     Degenerate inputs (no phrases, silent/short stems) return the legacy
     ``(-16.0, -16.0)``.

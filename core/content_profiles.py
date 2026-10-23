@@ -70,9 +70,10 @@ CONTENT_PROFILES: dict[str, dict] = {
                 "lift_db": 0.5,         # minimal pause lift (meditation 1.5)
             },
             # calibrate_music_bed target overrides — small speech/pause gap keeps the
-            # bed from rising/falling drastically (meditation 30.5 / 14.5).
-            "speech_offset_lu": 22.0,
-            "pause_offset_lu": 16.0,
+            # bed from rising/falling drastically (meditation 33.5 / 17.5). Both
+            # moved 3 LU quieter after R3 (was 22 / 16).
+            "speech_offset_lu": 25.0,
+            "pause_offset_lu": 19.0,
         },
     },
 }

@@ -72,6 +72,13 @@ class TestContentProfiles(unittest.TestCase):
         self.assertIsNotNone(sleep["bed"])
         self.assertNotIn("duck_depth_db", sleep["bed"]["duck_kwargs"])
 
+    def test_sleep_bed_sits_3lu_quieter_than_before_r3(self):
+        """R3 listening: music read as too loud everywhere, so both content types'
+        pause targets moved 3 LU further under the voice (sleep 16 -> 19)."""
+        bed = get_profile("sleep_story")["bed"]
+        self.assertEqual(bed["pause_offset_lu"], 19.0)
+        self.assertEqual(bed["speech_offset_lu"], 25.0)
+
 
 class TestMeditationPathUnchanged(unittest.TestCase):
     SCRIPT = "Breathe in.\n\nNow breathe out. [pause:3s] Rest here."

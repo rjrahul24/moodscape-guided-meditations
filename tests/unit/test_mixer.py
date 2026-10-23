@@ -141,13 +141,14 @@ class TestDetectPhrasesAdaptive(unittest.TestCase):
 class TestCalibrateMusicBed(unittest.TestCase):
     SR = 48000
 
-    def test_invariance_at_golden_levels(self):
-        """Stems at today's nominal pre-mix levels must calibrate back to the
-        legacy constants (within rounding) — the golden path must not move."""
+    def test_golden_levels_sit_3db_under_legacy(self):
+        """Stems at today's nominal pre-mix levels calibrate to a bed 3 dB under
+        the legacy -16 dB constant (R3 listening: music read as too loud in every
+        test), with the same -16 dB duck depth."""
         voice = _gated_voice(self.SR, rms_db=-21.2)
         music = _tone(997.0, len(voice) / self.SR, self.SR, rms_db=-19.7)
         vol_db, duck_db = calibrate_music_bed(voice, music, self.SR)
-        self.assertAlmostEqual(vol_db, -16.0, delta=0.75)
+        self.assertAlmostEqual(vol_db, -19.0, delta=0.75)
         self.assertAlmostEqual(duck_db, -16.0, delta=0.01)
 
     def test_hot_music_gets_attenuated_more(self):
@@ -169,9 +170,9 @@ class TestCalibrateMusicBed(unittest.TestCase):
         voice = _gated_voice(self.SR, rms_db=-21.2)
         music = _tone(997.0, len(voice) / self.SR, self.SR, rms_db=-22.0)
         vol_db, duck_db = calibrate_music_bed(voice, music, self.SR)
-        # V ≈ -21.2, M ≈ -22.0 → (V - 14.5) - M = -13.7
-        self.assertAlmostEqual(vol_db, -13.7, delta=0.75)
-        self.assertAlmostEqual(duck_db, -(30.5 - 14.5), delta=0.01)
+        # V ≈ -21.2, M ≈ -22.0 → (V - 17.5) - M = -16.7
+        self.assertAlmostEqual(vol_db, -16.7, delta=0.75)
+        self.assertAlmostEqual(duck_db, -(33.5 - 17.5), delta=0.01)
 
     def test_degenerate_silent_voice_returns_legacy(self):
         voice = np.zeros(self.SR * 20, dtype=np.float32)
