@@ -63,10 +63,9 @@ Scored results: `var/eval/r1/RESULTS.md`, `var/eval/r2/RESULTS.md`,
   prosody of its reference clip, so a longer, genuinely meditative and expressive
   read, possibly multi-phase (`assets/speakers/voices.toml`), is the only
   untried F5 input of substance. It needs a human recording session.
-- The **ElevenLabs v4 provider** is the answer to the commercial-engine question,
-  and is already integrated. The next decision is a blind F5 vs ElevenLabs round
-  on the same scripts. `eval_genres.py --engine elevenlabs` supports it, and the
-  ElevenLabs chunk cache makes re-runs free. It bills per character.
+- The **ElevenLabs v4 provider** is the answer to the commercial-engine question.
+  It is already integrated. The user judged it clearly better than F5 and
+  declined a blind F5 vs ElevenLabs round as unnecessary (2026-10-23).
 
 ## Library gap
 

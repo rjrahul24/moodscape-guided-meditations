@@ -157,14 +157,13 @@ R3 was null or leaning toward today's defaults in every round, and every
 listener note named robotic F5 delivery as the remaining problem. The program
 closed with the listening-driven fixes only (bed 3 LU quieter, one track
 removed, a duration-repair fix). R3b, R4b and R5b move to Parked: none
-addresses the binding limit, which is now a voice-engine question (a blind F5
-vs ElevenLabs v4 round, or new reference recordings). Full record:
+addresses the binding limit, which is a voice-engine question: ElevenLabs v4 (judged clearly
+better by the user) or new F5 reference recordings. Full record:
 `docs/superpowers/notes/2026-10-program-closeout.md`.
 
 ## Parked
 
 - **R3b / R4b / R5b** as listed above (breath-cycle tags, best-of-3 drafts, sleep post-roll, music matching).
-- **Blind F5 vs ElevenLabs v4** on the same scripts (paid; the harness supports `--engine elevenlabs`).
 
 - **Multi-phase reference set:** needs recordings (spec written in R1).
 - F5 / LLM fine-tuning (needs 300+ approved scripts).
