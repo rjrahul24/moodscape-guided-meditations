@@ -17,7 +17,7 @@ import logging
 import re
 
 from core.script_gen.engine import ScriptEngine
-from core.script_gen.linter import Violation, _strip_tags
+from core.script_gen.linter import Violation, strip_tags
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +201,7 @@ def content_findings(
         clean; ``None`` when the check could not run (two malformed replies
         or an engine error). ``None`` is logged here; the caller skips.
     """
-    prose = _strip_tags(script)
+    prose = strip_tags(script)
     prose_norm = _normalise(prose)
     user = _build_user(prose, genre, label, technique)
 
@@ -224,7 +224,7 @@ def content_findings(
 
 def verify_findings(findings: list[dict], script: str) -> list[dict]:
     """Keep only findings whose quote is present in ``script`` (tags stripped)."""
-    return _verified(findings, _normalise(_strip_tags(script)))
+    return _verified(findings, _normalise(strip_tags(script)))
 
 
 def findings_to_violations(findings: list[dict], *, severity: str) -> list[Violation]:

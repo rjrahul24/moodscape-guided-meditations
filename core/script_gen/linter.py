@@ -74,9 +74,12 @@ class Violation:
     span: tuple[int, int] | None = None
 
 
-def _strip_tags(script: str) -> str:
+def strip_tags(script: str) -> str:
     """Remove all bracket tags so prose checks do not trip over them."""
     return _ANY_TAG.sub(" ", script)
+
+
+_strip_tags = strip_tags  # historical private name, still used inside this package
 
 
 def check_format(script: str) -> list[Violation]:

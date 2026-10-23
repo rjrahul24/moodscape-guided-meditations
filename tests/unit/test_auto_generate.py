@@ -1303,10 +1303,13 @@ class DurationControlTest(unittest.TestCase):
         est = _est(LONG_SCRIPT)
         mid = (config.target_min_sec + config.target_max_sec) / 2
         from core.script_gen.duration import total_pause_sec
-        from core.script_gen.linter import _strip_tags
-        words = len(_strip_tags(LONG_SCRIPT).split())
+        from core.script_gen.linter import strip_tags
+        words = len(strip_tags(LONG_SCRIPT).split())
         pauses = total_pause_sec(LONG_SCRIPT)
-        expected = round(words * max(1.0, mid - pauses) / max(1.0, est - pauses))
+        # LONG_SCRIPT is pause-dominated (its pauses exceed the midpoint), so
+        # the target scales the whole script rather than speech alone.
+        self.assertGreaterEqual(pauses, mid)
+        expected = round(words * mid / est)
         self.assertIn(f"about {expected} words", judge.calls[1]["user"])
         self.assertIn(f"aiming for {mid:.0f}s", judge.calls[1]["user"])
 
@@ -1324,6 +1327,21 @@ class DurationControlTest(unittest.TestCase):
         old = round(len(script.split()) * 120.0 / est)
         self.assertEqual((expected, old), (13, 20))
         self.assertLess(expected, old)
+
+    def test_pause_dominated_length_target_is_proportional_not_one_word(self):
+        """When pauses alone fill the window's midpoint, the speech-only formula
+        collapses to "about 1 word". Then the target scales the whole script and
+        asks for passages to be cut with their pauses (phase 3 parked minor)."""
+        from core.auto_generate import _length_repair_violation
+        from core.script_gen.duration import total_pause_sec
+        from core.script_gen.linter import strip_tags
+        script = "One two three four five six seven eight nine ten.\n\n[pause:40s]\n\n" * 3
+        est, lo, hi = 200.0, 60.0, 120.0
+        self.assertGreaterEqual(total_pause_sec(script), (lo + hi) / 2)
+        v = _length_repair_violation(script, est, lo, hi)
+        words = len(strip_tags(script).split())
+        self.assertIn(f"about {round(words * 90.0 / est)} words", v.message)
+        self.assertIn("with their pauses", v.message)
 
     def test_ten_percent_over_scales_pauses_without_repair(self):
         est = _est(PAUSY_SCRIPT)

@@ -42,7 +42,7 @@ from core.script_gen.linter import (
     check_pack_rules,
     fatal_violations,
 )
-from core.script_gen.linter import _strip_tags
+from core.script_gen.linter import strip_tags
 from core.script_gen.planner import plan
 from core.script_gen.rules import (
     build_generator_system_prompt,
@@ -364,20 +364,28 @@ def _length_repair_violation(
 ) -> Violation:
     """An ADVISORY violation asking the judge to rewrite to the window's midpoint."""
     target_mid = (min_sec + max_sec) / 2
-    # Scale SPEECH only: pauses are not words, so a pause-heavy script must not
-    # have its word count scaled by the pause-inclusive time ratio.
-    speech_words = len(_strip_tags(script).split())
+    speech_words = len(strip_tags(script).split())
     pauses = total_pause_sec(script)
-    target_words = round(
-        speech_words * max(1.0, target_mid - pauses) / max(1.0, estimated_sec - pauses)
-    )
+    if pauses >= target_mid:
+        # Pauses alone fill the target, so the speech-only formula would ask for
+        # "about 1 word". Scale the whole script instead: cutting a passage
+        # removes its pauses too.
+        target_words = max(1, round(speech_words * target_mid / max(1.0, estimated_sec)))
+        how = "cut whole passages together with their pauses"
+    else:
+        # Scale SPEECH only: pauses are not words, so a pause-heavy script must not
+        # have its word count scaled by the pause-inclusive time ratio.
+        target_words = round(
+            speech_words * (target_mid - pauses) / max(1.0, estimated_sec - pauses)
+        )
+        how = "keep the same [pause] marker style"
     return Violation(
         code="DURATION_OUT_OF_WINDOW",
         severity=ADVISORY,
         message=(
             f"Estimated runtime {estimated_sec:.0f}s; target {min_sec:.0f}-{max_sec:.0f}s. "
-            f"Rewrite to about {target_words} words of speech (keep the same "
-            f"[pause] marker style), aiming for {target_mid:.0f}s."
+            f"Rewrite to about {target_words} words of speech ({how}), "
+            f"aiming for {target_mid:.0f}s."
         ),
     )
 

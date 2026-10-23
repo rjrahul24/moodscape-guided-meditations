@@ -50,9 +50,9 @@ class SlopHit:
 def _prose(text: str) -> str:
     # Lazy import: linter.check_slop imports this module lazily too, but keeping
     # this lazy means neither module needs the other at import time.
-    from core.script_gen.linter import _normalize_apostrophes, _strip_tags
+    from core.script_gen.linter import _normalize_apostrophes, strip_tags
 
-    return _normalize_apostrophes(_strip_tags(text)).lower()
+    return _normalize_apostrophes(strip_tags(text)).lower()
 
 
 def _phrase_regex(phrase: str) -> re.Pattern:

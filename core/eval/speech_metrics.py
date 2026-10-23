@@ -12,7 +12,7 @@ from typing import Protocol
 
 import numpy as np
 
-from core.script_gen.linter import _normalize_apostrophes, _strip_tags
+from core.script_gen.linter import _normalize_apostrophes, strip_tags
 
 _CLOSERS = "\"'\u2019\u201d)\\]"
 _SENTENCE_END = re.compile(rf"[.!?\u2026][{_CLOSERS}]*$")
@@ -155,7 +155,7 @@ def _spell_number(match: re.Match) -> str:
 
 def normalize_text(text: str) -> str:
     """Lowercase, tags removed, digits spelled, punctuation dropped."""
-    text = _normalize_apostrophes(_strip_tags(text)).lower()
+    text = _normalize_apostrophes(strip_tags(text)).lower()
     text = re.sub(r"\d+", _spell_number, text)
     text = re.sub(r"[^a-z' ]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()

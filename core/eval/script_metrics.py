@@ -6,7 +6,7 @@ import re
 from collections import Counter
 
 from core.eval.slop import slop_density, slop_hits
-from core.script_gen.linter import ADVISORY, FATAL, _normalize_apostrophes, _strip_tags
+from core.script_gen.linter import ADVISORY, FATAL, _normalize_apostrophes, strip_tags
 
 _WORD = re.compile(r"[A-Za-z']+")
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
@@ -36,7 +36,7 @@ def script_metrics(
     """Counts, silence budget, lint codes, slop and draft-vs-final edit ratio."""
     from core.script_gen.linter import check
 
-    prose = _normalize_apostrophes(_strip_tags(script))
+    prose = _normalize_apostrophes(strip_tags(script))
     sentences = [s for s in _SENTENCE_SPLIT.split(prose.strip()) if _WORD.search(s)]
     sentence_words = [len(_WORD.findall(s)) for s in sentences]
 
